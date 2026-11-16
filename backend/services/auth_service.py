@@ -239,6 +239,26 @@ class AuthService:
         )
         return self._public_user(row)
 
+    def verify_admin_password(self, admin_user_id: str, password: str) -> bool:
+        """Re-authenticate an administrator for a high-risk operation.
+
+        Returns ``False`` for an unknown, inactive, or mismatched account. The
+        caller is responsible for recording a failed-attempt audit event.
+        """
+        if not admin_user_id or not password:
+            return False
+        row = self.db.fetch_one(
+            """
+            SELECT password_hash, is_active
+              FROM admin_users
+             WHERE id = %s
+            """,
+            (admin_user_id,),
+        )
+        if not row or not row.get("is_active"):
+            return False
+        return verify_password(password, row["password_hash"])
+
     def change_password(
         self,
         *,

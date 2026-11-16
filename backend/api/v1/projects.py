@@ -1,45 +1,64 @@
-"""NexOra Phase 1 & 2 — Project and Reader Key Management API endpoints (Admin only)."""
+"""NexOra Phase 2/4 — Project and Reader Key Management API (Admin only).
+
+Creation and key generation are one operation: ``POST /projects/generate-key``
+creates the project and its single Reader Key atomically. There is deliberately
+no standalone create-project route and no bulk key route.
+"""
 
 from __future__ import annotations
 
 from flask import Blueprint, g, jsonify, request
 
+from ...errors import ApiError, ValidationError
 from ...security.decorators import require_auth
 from ...serialization import jsonable
+from ...services.audit import audit
 from ...validation import Payload, require_json
-from ..helpers import project_service, request_meta
+from ..helpers import auth_service, project_service, request_meta
 
 bp = Blueprint("v1_projects", __name__)
+
+DELETE_ALL_PHRASE = "DELETE ALL PROJECTS"
+
+
+# ----------------------------------------------------------------------------
+# Generate Key (creates the project automatically)
+# ----------------------------------------------------------------------------
+
+@bp.post("/projects/generate-key")
+@require_auth("owner", "admin")
+def generate_project_key():
+    """Create one project and exactly one Reader Key.
+
+    A 201 response contains the plaintext key once. A duplicate project name
+    returns 409 with safe metadata and never a plaintext key.
+    """
+    payload = Payload(require_json(request))
+    project_name = payload.string(
+        "project_name", required=True, min_length=1, max_length=200
+    )
+    label = payload.string("label", required=False, max_length=100, default="")
+    payload.finish()
+
+    ip, agent = request_meta()
+    result = project_service().generate_project_key(
+        project_name=project_name or "",
+        label=label or "",
+        created_by=g.actor["id"],
+        ip_address=ip,
+        user_agent=agent,
+    )
+    return jsonify(jsonable(result)), 201
 
 
 # ----------------------------------------------------------------------------
 # Project Management
 # ----------------------------------------------------------------------------
 
-@bp.post("/projects")
-@require_auth("owner", "admin")
-def create_project():
-    """Create a new database project managed by NexOra."""
-    payload = Payload(require_json(request))
-    name = payload.string("project_name", required=True, min_length=1, max_length=200)
-    database_url_ref = payload.string("database_url_ref", required=False, max_length=500, default="")
-    payload.finish()
-
-    ip, agent = request_meta()
-    project = project_service().create_project(
-        name=name or "",
-        database_url_ref=database_url_ref or "",
-        created_by=g.actor["id"],
-        ip_address=ip,
-        user_agent=agent,
-    )
-    return jsonify({"project": jsonable(project)}), 201
-
-
 @bp.get("/projects")
 @require_auth("owner", "admin", "viewer")
 def list_projects():
-    """List all managed projects with key and installation counts."""
+    """List managed projects with reader-key, installation, and auto-delete data."""
     include_deleted = request.args.get("include_deleted", "false").lower() == "true"
     search = request.args.get("search", None)
     projects = project_service().list_projects(
@@ -52,7 +71,7 @@ def list_projects():
 @bp.get("/projects/<project_id>")
 @require_auth("owner", "admin", "viewer")
 def get_project(project_id: str):
-    """Get project details and active installation status."""
+    """Get project details and its Reader Key / installation status."""
     project = project_service().get_project(project_id)
     return jsonify({"project": jsonable(project)}), 200
 
@@ -60,7 +79,11 @@ def get_project(project_id: str):
 @bp.patch("/projects/<project_id>/status")
 @require_auth("owner", "admin")
 def set_project_status(project_id: str):
-    """Activate or deactivate a project."""
+    """Activate or deactivate a project.
+
+    Deactivation blocks new activations and existing device credentials without
+    touching the key's lifecycle status.
+    """
     payload = Payload(require_json(request))
     status = payload.string("status", required=True, min_length=1, max_length=20)
     payload.finish()
@@ -76,72 +99,128 @@ def set_project_status(project_id: str):
     return jsonify({"project": jsonable(project)}), 200
 
 
+@bp.patch("/projects/<project_id>/auto-delete")
+@require_auth("owner", "admin")
+def set_project_auto_delete(project_id: str):
+    """Configure or clear a project's scheduled hard-delete date.
+
+    Send ``{"auto_delete_at": "2026-12-16T23:59:59Z"}`` to schedule deletion or
+    ``{"auto_delete_at": null}`` to disable it. Automatic deletion only happens
+    when the server-side scheduler command runs and the date is due.
+    """
+    payload = Payload(require_json(request))
+    if not payload.has("auto_delete_at"):
+        payload.error(
+            "auto_delete_at",
+            "This field is required (send null to clear the schedule).",
+        )
+        payload.finish()
+    auto_delete_at = payload.datetime_utc(
+        "auto_delete_at", required=False, allow_null=True
+    )
+    payload.finish()
+
+    ip, agent = request_meta()
+    project = project_service().set_project_auto_delete(
+        project_id,
+        auto_delete_at=auto_delete_at,
+        actor_id=g.actor["id"],
+        ip_address=ip,
+        user_agent=agent,
+    )
+    return jsonify({"project": jsonable(project)}), 200
+
+
 @bp.delete("/projects/<project_id>")
 @require_auth("owner")
 def delete_project(project_id: str):
-    """Soft-delete a project and revoke all active reader authorizations."""
+    """Permanently delete one project and all project-owned records.
+
+    The administrator must repeat the exact project name in
+    ``confirm_project_name``. This is a database hard delete, not a soft delete.
+    """
+    payload = Payload(require_json(request))
+    confirm_name = payload.string(
+        "confirm_project_name", required=True, min_length=1, max_length=200
+    )
+    payload.finish()
+
+    service = project_service()
+    project = service.get_project(project_id)
+    if (confirm_name or "").strip() != (project["project_name"] or "").strip():
+        raise ValidationError(
+            {
+                "confirm_project_name": (
+                    "Type the exact project name to confirm permanent deletion."
+                )
+            }
+        )
+
     ip, agent = request_meta()
-    result = project_service().soft_delete_project(
+    result = service.hard_delete_project(
         project_id,
         actor_id=g.actor["id"],
         ip_address=ip,
         user_agent=agent,
     )
-    return jsonify({"project": jsonable(result), "status": "deleted"}), 200
+    return jsonify(jsonable(result)), 200
 
 
-# ----------------------------------------------------------------------------
-# Reader Key Management
-# ----------------------------------------------------------------------------
+@bp.delete("/projects")
+@require_auth("owner")
+def delete_all_projects():
+    """Permanently delete every NexOra project in one transaction.
 
-@bp.post("/projects/<project_id>/keys")
-@require_auth("owner", "admin")
-def generate_reader_key(project_id: str):
-    """Generate a single reader key for a project. Plaintext returned once."""
-    payload = Payload(request.get_json(silent=True) or {})
-    is_permanent = payload.boolean("is_permanent", default=True)
-    label = payload.string("label", required=False, max_length=100, default="")
-    payload.finish()
-
-    ip, agent = request_meta()
-    result = project_service().generate_key(
-        project_id=project_id,
-        is_permanent=is_permanent,
-        label=label or "",
-        created_by=g.actor["id"],
-        ip_address=ip,
-        user_agent=agent,
-    )
-    return jsonify(jsonable(result)), 201
-
-
-@bp.post("/projects/<project_id>/keys/bulk")
-@require_auth("owner", "admin")
-def generate_reader_keys_bulk(project_id: str):
-    """Generate a batch of reader keys for a project."""
+    Requires the exact phrase ``DELETE ALL PROJECTS`` and a fresh password
+    re-authentication. Admin accounts, sessions, settings, audit history, and
+    the legacy SMS Reader tables are preserved.
+    """
     payload = Payload(require_json(request))
-    quantity = payload.integer("quantity", required=True, minimum=1, maximum=2000)
-    is_permanent = payload.boolean("is_permanent", default=True)
-    label = payload.string("label", required=False, max_length=100, default="")
+    confirmation = payload.string(
+        "confirmation", required=True, min_length=1, max_length=64
+    )
+    password = payload.string(
+        "password", required=True, min_length=1, max_length=128, strip=False
+    )
     payload.finish()
 
+    if confirmation != DELETE_ALL_PHRASE:
+        raise ValidationError(
+            {"confirmation": f"Type {DELETE_ALL_PHRASE} exactly to confirm."}
+        )
+
+    if not auth_service().verify_admin_password(g.actor["id"], password or ""):
+        audit(
+            auth_service().db,
+            actor=g.actor,
+            action="project.delete_all",
+            target_type="project",
+            outcome="failure",
+            details={"reason": "reauth_failed"},
+        )
+        raise ApiError(
+            403,
+            "reauth_failed",
+            "Password confirmation failed. Sign in again and retry.",
+        )
+
     ip, agent = request_meta()
-    results = project_service().generate_bulk_keys(
-        project_id=project_id,
-        quantity=quantity or 1,
-        is_permanent=is_permanent,
-        label=label or "",
-        created_by=g.actor["id"],
+    result = project_service().hard_delete_all_projects(
+        actor_id=g.actor["id"],
         ip_address=ip,
         user_agent=agent,
     )
-    return jsonify({"keys": jsonable(results), "count": len(results)}), 201
+    return jsonify(jsonable(result)), 200
 
+
+# ----------------------------------------------------------------------------
+# Reader Key Revocation (destructive operations are intentionally elsewhere)
+# ----------------------------------------------------------------------------
 
 @bp.post("/keys/<key_id>/revoke")
 @require_auth("owner", "admin")
 def revoke_reader_key(key_id: str):
-    """Revoke a reader key permanently."""
+    """Revoke a generated reader key permanently."""
     payload = Payload(require_json(request))
     reason = payload.string("reason", required=True, min_length=1, max_length=500)
     payload.finish()

@@ -96,26 +96,30 @@ export const api = {
   // Project Management
   projects: (params) => request(`/api/v1/projects?${query(params)}`),
   project: (id) => request(`/api/v1/projects/${encodeURIComponent(id)}`),
-  createProject: (body) => request("/api/v1/projects", { method: "POST", body }),
+  generateProjectKey: (body) =>
+    request("/api/v1/projects/generate-key", { method: "POST", body }),
   setProjectStatus: (id, status) =>
     request(`/api/v1/projects/${encodeURIComponent(id)}/status`, {
       method: "PATCH",
       body: { status },
     }),
-  deleteProject: (id) =>
-    request(`/api/v1/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  setProjectAutoDelete: (id, autoDeleteAt) =>
+    request(`/api/v1/projects/${encodeURIComponent(id)}/auto-delete`, {
+      method: "PATCH",
+      body: { auto_delete_at: autoDeleteAt },
+    }),
+  deleteProject: (id, confirmProjectName) =>
+    request(`/api/v1/projects/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: { confirm_project_name: confirmProjectName },
+    }),
+  deleteAllProjects: (confirmation, password) =>
+    request("/api/v1/projects", {
+      method: "DELETE",
+      body: { confirmation, password },
+    }),
 
   // Reader Key Management & Generation
-  generateReaderKey: (projectId, body) =>
-    request(`/api/v1/projects/${encodeURIComponent(projectId)}/keys`, {
-      method: "POST",
-      body,
-    }),
-  generateBulkReaderKeys: (projectId, body) =>
-    request(`/api/v1/projects/${encodeURIComponent(projectId)}/keys/bulk`, {
-      method: "POST",
-      body,
-    }),
   readerKeys: (params) => request(`/api/v1/keys?${query(params)}`),
   readerKey: (id) => request(`/api/v1/keys/${encodeURIComponent(id)}`),
   revokeReaderKey: (keyId, reason) =>

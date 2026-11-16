@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
 from uuid import UUID, uuid4
 
@@ -58,8 +58,14 @@ class ProjectService:
         user_agent: str | None = None,
         details: dict[str, Any] | None = None,
         project_id: UUID | str | None = None,
+        strict: bool = False,
     ) -> None:
-        """Write an audit entry safely inside an existing cursor or via db connection."""
+        """Write an audit entry safely inside an existing cursor or via db connection.
+
+        ``strict`` is used for destructive operations: a deletion must never
+        commit without its audit record, so an audit failure aborts the whole
+        transaction instead of being swallowed.
+        """
         resolved_actor_id = None
         actor_email = None
         if actor and isinstance(actor, dict):
@@ -87,6 +93,14 @@ class ProjectService:
             str(project_id) if project_id else None,
         )
 
+        if strict:
+            if hasattr(cursor_or_db, "execute"):
+                cursor_or_db.execute(sql, params)
+            else:
+                with cursor_or_db.cursor() as cur:
+                    cur.execute(sql, params)
+            return
+
         try:
             if hasattr(cursor_or_db, "execute"):
                 cursor_or_db.execute(sql, params)
@@ -94,77 +108,285 @@ class ProjectService:
                 with cursor_or_db.cursor() as cur:
                     cur.execute(sql, params)
         except Exception:
-            # Audit failures in mock environments must not block business operations
+            # Non-destructive audit failures must not block business operations
             pass
 
     # ------------------------------------------------------------------------
     # Project Management
     # ------------------------------------------------------------------------
 
-    def create_project(
+    def get_auto_delete_days(self) -> int:
+        """Return the configured automatic-deletion retention period in days.
+
+        ``0`` means automatic deletion is disabled. The setting is optional and
+        has no seeded default, so a fresh installation never deletes projects
+        on its own.
+        """
+        try:
+            row = self.db.fetch_one(
+                "SELECT value FROM system_settings WHERE key = 'nexora.auto_delete_days'"
+            )
+            value = int((row or {}).get("value") or 0)
+        except Exception:
+            return 0
+        return value if 0 <= value <= 3650 else 0
+
+    def generate_project_key(
         self,
         *,
-        name: str,
-        database_url_ref: str = "",
+        project_name: str,
+        label: str = "",
         created_by: UUID | str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new managed project with case-insensitive collision check."""
+        """Create one project and exactly one Reader Key in one transaction.
+
+        This is the only creation path for NexOra projects. A duplicate name
+        (case-insensitive, including names retired by a permanent deletion or
+        held by a legacy soft-deleted row) returns a safe 409 response with
+        project/key metadata and never reveals a plaintext key.
+        """
         try:
-            normalized = normalize_project_name(name)
+            normalized = normalize_project_name(project_name)
         except ValueError as exc:
             raise ValidationError({"project_name": str(exc)}) from None
 
-        # Check existing active projects
-        existing = self.db.fetch_one(
-            """
-            SELECT id FROM nexora_projects
-            WHERE project_name_normalized = %s AND deleted_at IS NULL
-            """,
-            (normalized,),
+        display_name = (project_name or "").strip()
+        if not display_name or len(display_name) > 200:
+            raise ValidationError(
+                {"project_name": "Project name must be between 1 and 200 characters."}
+            )
+
+        auto_delete_days = self.get_auto_delete_days()
+        now = utcnow()
+        auto_delete_at = (
+            now + timedelta(days=auto_delete_days) if auto_delete_days > 0 else None
         )
-        if existing:
+
+        spec = KeySpec()
+        plaintext = generate_plaintext_key(spec)
+        normalized_key = normalize_key(plaintext)
+        if not normalized_key:
+            raise RuntimeError("Generated key failed normalization.")
+
+        key_hash = hash_reader_key(self.pepper, normalized_key)
+        hint = masked_hint(spec, plaintext)
+        project_id = uuid4()
+        key_id = uuid4()
+
+        try:
+            with self.db.cursor() as cursor:
+                # Serialize name decisions against permanent deletion. Deleting
+                # a name takes the same lock, so a tombstone cannot appear
+                # between the existence check and the project INSERT.
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (normalized,),
+                )
+
+                cursor.execute(
+                    """
+                    SELECT project_name FROM nexora_deleted_project_names
+                    WHERE project_name_normalized = %s
+                    """,
+                    (normalized,),
+                )
+                if cursor.fetchone():
+                    raise ApiError(
+                        409,
+                        "PROJECT_NAME_RETIRED",
+                        "This project name belonged to a permanently deleted project and cannot be reused.",
+                        {"project_name": display_name, "retired": True},
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT id, project_name, status, deleted_at
+                    FROM nexora_projects
+                    WHERE project_name_normalized = %s
+                    ORDER BY (deleted_at IS NULL) DESC, created_at ASC
+                    LIMIT 1
+                    """,
+                    (normalized,),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    self._raise_existing_project(cursor, existing)
+
+                cursor.execute(
+                    """
+                    INSERT INTO nexora_projects
+                        (id, project_name, project_name_normalized, database_url_ref,
+                         status, auto_delete_at, created_at, updated_at, created_by)
+                    VALUES (%s, %s, %s, '', 'active', %s, %s, %s, %s)
+                    ON CONFLICT (project_name_normalized) WHERE deleted_at IS NULL
+                    DO NOTHING
+                    RETURNING id
+                    """,
+                    (
+                        str(project_id),
+                        display_name,
+                        normalized,
+                        auto_delete_at,
+                        now,
+                        now,
+                        str(created_by) if created_by else None,
+                    ),
+                )
+                created = cursor.fetchone()
+                if not created:
+                    cursor.execute(
+                        """
+                        SELECT id, project_name, status, deleted_at
+                        FROM nexora_projects
+                        WHERE project_name_normalized = %s
+                        ORDER BY (deleted_at IS NULL) DESC, created_at ASC
+                        LIMIT 1
+                        """,
+                        (normalized,),
+                    )
+                    raced = cursor.fetchone()
+                    if raced:
+                        self._raise_existing_project(cursor, raced)
+                    raise ApiError(
+                        409,
+                        "PROJECT_ALREADY_EXISTS",
+                        "This project already exists. No additional reader key was generated.",
+                    )
+
+                cursor.execute(
+                    """
+                    INSERT INTO reader_keys
+                        (id, project_id, key_hash, key_hint, label, status,
+                         is_permanent, expires_at, created_by, created_at)
+                    VALUES (%s, %s, %s, %s, %s, 'generated', true, NULL, %s, %s)
+                    """,
+                    (
+                        str(key_id),
+                        str(project_id),
+                        key_hash,
+                        hint,
+                        label.strip(),
+                        str(created_by) if created_by else None,
+                        now,
+                    ),
+                )
+
+                self._write_audit(
+                    cursor,
+                    actor_id=created_by,
+                    action="project.create",
+                    target_type="project",
+                    target_id=str(project_id),
+                    project_id=str(project_id),
+                    outcome="success",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    details={
+                        "project_name": display_name,
+                        "normalized": normalized,
+                        "source": "generate_key",
+                        "auto_delete_at": auto_delete_at,
+                    },
+                )
+                self._write_audit(
+                    cursor,
+                    actor_id=created_by,
+                    action="reader_key.generate",
+                    target_type="reader_key",
+                    target_id=str(key_id),
+                    project_id=str(project_id),
+                    outcome="success",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    details={
+                        "project_name": display_name,
+                        "key_hint": hint,
+                        "is_permanent": True,
+                    },
+                )
+        except Exception as exc:
+            if is_unique_violation(exc):
+                raise ApiError(
+                    409,
+                    "KEY_ALREADY_EXISTS",
+                    "This project already has a reader key. A project can only own one key.",
+                ) from None
+            raise
+
+        return {
+            "created": True,
+            "project": {
+                "id": str(project_id),
+                "project_name": display_name,
+                "status": "active",
+                "created_at": now.isoformat(),
+                "auto_delete_at": auto_delete_at.isoformat() if auto_delete_at else None,
+            },
+            "reader_key": {
+                "id": str(key_id),
+                "project_id": str(project_id),
+                "project_name": display_name,
+                "plaintext_key": plaintext,
+                "key_hint": hint,
+                "label": label.strip(),
+                "status": "generated",
+                "is_permanent": True,
+                "expires_at": None,
+                "created_at": now.isoformat(),
+            },
+        }
+
+    def _raise_existing_project(self, cursor: Any, project_row: Sequence[Any]) -> None:
+        """Raise a safe 409 conflict for an existing project name.
+
+        Only status/hint metadata is returned. A plaintext key is never
+        recoverable, and an existing project never receives a second key.
+        """
+        project_id = str(project_row[0])
+        cursor.execute(
+            """
+            SELECT id, key_hint, status, created_at, used_at, revoked_at
+            FROM reader_keys
+            WHERE project_id = %s
+            LIMIT 1
+            """,
+            (project_id,),
+        )
+        key = cursor.fetchone()
+        details: dict[str, Any] = {
+            "project": {
+                "id": project_id,
+                "project_name": project_row[1],
+                "status": "deleted" if project_row[3] else project_row[2],
+                "deleted": bool(project_row[3]),
+            },
+            "reader_key": None,
+            "has_reader_key": bool(key),
+        }
+        if key:
+            details["reader_key"] = {
+                "id": str(key[0]),
+                "key_hint": key[1],
+                "status": key[2],
+                "created_at": key[3],
+                "used_at": key[4],
+                "revoked_at": key[5],
+            }
+        if project_row[3]:
             raise ApiError(
                 409,
-                "PROJECT_NAME_CONFLICT",
-                f"A project named '{name.strip()}' already exists.",
+                "PROJECT_NAME_RETIRED",
+                "This project name belongs to a deleted project and cannot be reused.",
+                details,
             )
-
-        project_id = uuid4()
-        now = utcnow()
-        with self.db.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO nexora_projects
-                    (id, project_name, project_name_normalized, database_url_ref,
-                     status, created_at, updated_at, created_by)
-                VALUES (%s, %s, %s, %s, 'active', %s, %s, %s)
-                """,
-                (
-                    str(project_id),
-                    name.strip(),
-                    normalized,
-                    (database_url_ref or "").strip(),
-                    now,
-                    now,
-                    str(created_by) if created_by else None,
-                ),
-            )
-            self._write_audit(
-                cursor,
-                actor_id=created_by,
-                action="project.create",
-                target_type="project",
-                target_id=str(project_id),
-                project_id=str(project_id),
-                outcome="success",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                details={"project_name": name.strip(), "normalized": normalized},
-            )
-
-        return self.get_project(str(project_id))
+        raise ApiError(
+            409,
+            "PROJECT_ALREADY_EXISTS",
+            "This project already exists. No additional reader key was generated.",
+            details,
+        )
 
     def get_project(self, project_id: str) -> dict[str, Any]:
         """Fetch project details including active installation summary and key counts."""
@@ -172,23 +394,38 @@ class ProjectService:
             """
             SELECT p.id, p.project_name, p.project_name_normalized,
                    p.database_url_ref, p.status, p.created_at, p.updated_at,
-                   p.deleted_at, p.created_by,
+                   p.deleted_at, p.created_by, p.auto_delete_at,
+                   CASE WHEN p.auto_delete_at IS NULL THEN NULL
+                        ELSE GREATEST(
+                            0,
+                            CEIL(EXTRACT(EPOCH FROM (p.auto_delete_at - now())) / 86400)
+                        )::int
+                   END AS days_remaining,
+                   CASE WHEN p.auto_delete_at IS NULL THEN false
+                        WHEN p.auto_delete_at <= now() THEN true
+                        ELSE false
+                   END AS auto_delete_due,
                    i.id AS active_installation_id,
                    i.device_id AS active_device_id,
                    i.activated_at AS active_installation_activated_at,
                    i.last_seen_at AS active_installation_last_seen,
-                   COUNT(DISTINCT k.id) AS total_keys,
-                   COUNT(DISTINCT CASE WHEN k.status = 'generated' THEN k.id END) AS available_keys,
-                   COUNT(DISTINCT CASE WHEN k.status = 'used' THEN k.id END) AS used_keys,
-                   COUNT(DISTINCT CASE WHEN k.status = 'revoked' THEN k.id END) AS revoked_keys,
-                   COUNT(DISTINCT CASE WHEN k.status = 'expired' THEN k.id END) AS expired_keys
+                   k.id AS reader_key_id,
+                   k.key_hint AS reader_key_hint,
+                   k.status AS reader_key_status,
+                   k.created_at AS reader_key_created_at,
+                   k.used_at AS reader_key_used_at,
+                   k.revoked_at AS reader_key_revoked_at,
+                   CASE WHEN k.id IS NULL THEN 0 ELSE 1 END AS total_keys,
+                   CASE WHEN k.status = 'generated' THEN 1 ELSE 0 END AS available_keys,
+                   CASE WHEN k.status = 'used' THEN 1 ELSE 0 END AS used_keys,
+                   CASE WHEN k.status = 'revoked' THEN 1 ELSE 0 END AS revoked_keys,
+                   CASE WHEN k.status = 'expired' THEN 1 ELSE 0 END AS expired_keys
             FROM nexora_projects p
             LEFT JOIN reader_installations i
                    ON i.project_id = p.id AND i.status = 'active'
             LEFT JOIN reader_keys k
                    ON k.project_id = p.id
             WHERE p.id = %s
-            GROUP BY p.id, i.id, i.device_id, i.activated_at, i.last_seen_at
             """,
             (project_id,),
         )
@@ -218,12 +455,27 @@ class ProjectService:
 
         sql = f"""
             SELECT p.id, p.project_name, p.status, p.database_url_ref,
-                   p.created_at, p.updated_at, p.deleted_at,
-                   COUNT(DISTINCT k.id) AS total_keys,
-                   COUNT(DISTINCT CASE WHEN k.status = 'generated' THEN k.id END) AS available_keys,
-                   COUNT(DISTINCT CASE WHEN k.status = 'used' THEN k.id END) AS used_keys,
-                   COUNT(DISTINCT CASE WHEN k.status = 'revoked' THEN k.id END) AS revoked_keys,
-                   COUNT(DISTINCT CASE WHEN k.status = 'expired' THEN k.id END) AS expired_keys,
+                   p.created_at, p.updated_at, p.deleted_at, p.auto_delete_at,
+                   CASE WHEN p.auto_delete_at IS NULL THEN NULL
+                        ELSE GREATEST(
+                            0,
+                            CEIL(EXTRACT(EPOCH FROM (p.auto_delete_at - now())) / 86400)
+                        )::int
+                   END AS days_remaining,
+                   CASE WHEN p.auto_delete_at IS NULL THEN false
+                        WHEN p.auto_delete_at <= now() THEN true
+                        ELSE false
+                   END AS auto_delete_due,
+                   k.id AS reader_key_id,
+                   k.key_hint AS reader_key_hint,
+                   k.status AS reader_key_status,
+                   k.created_at AS reader_key_created_at,
+                   k.used_at AS reader_key_used_at,
+                   CASE WHEN k.id IS NULL THEN 0 ELSE 1 END AS total_keys,
+                   CASE WHEN k.status = 'generated' THEN 1 ELSE 0 END AS available_keys,
+                   CASE WHEN k.status = 'used' THEN 1 ELSE 0 END AS used_keys,
+                   CASE WHEN k.status = 'revoked' THEN 1 ELSE 0 END AS revoked_keys,
+                   CASE WHEN k.status = 'expired' THEN 1 ELSE 0 END AS expired_keys,
                    i.id AS active_installation_id,
                    i.device_id AS active_device_id,
                    i.last_seen_at AS installation_last_seen_at
@@ -231,7 +483,6 @@ class ProjectService:
             LEFT JOIN reader_keys k ON k.project_id = p.id
             LEFT JOIN reader_installations i ON i.project_id = p.id AND i.status = 'active'
             {where_clause}
-            GROUP BY p.id, i.id, i.device_id, i.last_seen_at
             ORDER BY p.created_at DESC
         """
         return self.db.fetch_all(sql, tuple(params) if params else None)
@@ -283,7 +534,59 @@ class ProjectService:
 
         return self.get_project(project_id)
 
-    def soft_delete_project(
+    def set_project_auto_delete(
+        self,
+        project_id: str,
+        *,
+        auto_delete_at: datetime | None,
+        actor_id: UUID | str | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
+        """Configure or clear a project's scheduled hard-delete date."""
+        project = self.get_project(project_id)
+        if project.get("deleted_at"):
+            raise ApiError(404, "NOT_FOUND", "Project not found.")
+
+        if auto_delete_at is not None:
+            if auto_delete_at.tzinfo is None:
+                auto_delete_at = auto_delete_at.replace(tzinfo=timezone.utc)
+            auto_delete_at = auto_delete_at.astimezone(timezone.utc)
+            if auto_delete_at <= utcnow():
+                raise ValidationError(
+                    {"auto_delete_at": "The scheduled deletion date must be in the future."}
+                )
+
+        now = utcnow()
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE nexora_projects
+                SET auto_delete_at = %s, updated_at = %s
+                WHERE id = %s AND deleted_at IS NULL
+                """,
+                (auto_delete_at, now, project_id),
+            )
+            self._write_audit(
+                cursor,
+                actor_id=actor_id,
+                action="project.auto_delete_change",
+                target_type="project",
+                target_id=project_id,
+                project_id=project_id,
+                outcome="success",
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details={
+                    "project_name": project["project_name"],
+                    "old_auto_delete_at": project.get("auto_delete_at"),
+                    "new_auto_delete_at": auto_delete_at,
+                },
+            )
+
+        return self.get_project(project_id)
+
+    def hard_delete_project(
         self,
         project_id: str,
         *,
@@ -291,55 +594,70 @@ class ProjectService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> dict[str, Any]:
-        """Soft-delete project and revoke all active reader installations and unused keys."""
-        project = self.get_project(project_id)
-        if project.get("deleted_at"):
-            return project
+        """Permanently delete one project and every project-owned record.
 
-        now = utcnow()
+        The deletion event is written before the rows are removed and with a
+        NULL ``project_id``, so ``ON DELETE SET NULL`` cannot erase it. A
+        tombstone records the normalized name so it cannot be reused.
+        """
+        project = self.db.fetch_one(
+            """
+            SELECT id, project_name, project_name_normalized, status,
+                   auto_delete_at, created_at
+            FROM nexora_projects
+            WHERE id = %s AND deleted_at IS NULL
+            """,
+            (project_id,),
+        )
+        if not project:
+            raise ApiError(404, "NOT_FOUND", "Project not found.")
+
         with self.db.cursor() as cursor:
-            # 1. Soft-delete project
             cursor.execute(
-                """
-                UPDATE nexora_projects
-                SET status = 'deleted', deleted_at = %s, updated_at = %s
-                WHERE id = %s
-                """,
-                (now, now, project_id),
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (project["project_name_normalized"],),
             )
-            # 2. Revoke active installations
             cursor.execute(
                 """
-                UPDATE reader_installations
-                SET status = 'revoked',
-                    revoked_at = %s,
-                    revoked_by = %s,
-                    revoked_reason = 'Project deleted',
-                    device_token_hash = ''
-                WHERE project_id = %s AND status = 'active'
-                """,
-                (now, str(actor_id) if actor_id else None, project_id),
-            )
-            # 3. Inactivate device tokens
-            cursor.execute(
-                """
-                UPDATE device_tokens
-                SET is_active = false
-                WHERE project_id = %s
+                SELECT id, project_name, project_name_normalized, status,
+                       auto_delete_at, created_at
+                FROM nexora_projects
+                WHERE id = %s AND deleted_at IS NULL
+                FOR UPDATE
                 """,
                 (project_id,),
             )
-            # 4. Revoke unused keys
+            row = cursor.fetchone()
+            if not row:
+                raise ApiError(404, "NOT_FOUND", "Project not found.")
+
+            snapshot = {
+                "project_id": str(row[0]),
+                "project_name": row[1],
+                "normalized": row[2],
+                "status": row[3],
+                "auto_delete_at": row[4],
+                "created_at": row[5],
+            }
+
             cursor.execute(
                 """
-                UPDATE reader_keys
-                SET status = 'revoked',
-                    revoked_at = %s,
-                    revoked_by = %s,
-                    revoked_reason = 'Project deleted'
-                WHERE project_id = %s AND status = 'generated'
+                INSERT INTO nexora_deleted_project_names
+                    (project_name_normalized, project_name, deleted_at,
+                     deleted_by, details)
+                VALUES (%s, %s, now(), %s, %s::jsonb)
+                ON CONFLICT (project_name_normalized) DO UPDATE
+                SET project_name = EXCLUDED.project_name,
+                    deleted_at = EXCLUDED.deleted_at,
+                    deleted_by = EXCLUDED.deleted_by,
+                    details = EXCLUDED.details
                 """,
-                (now, str(actor_id) if actor_id else None, project_id),
+                (
+                    row[2],
+                    row[1],
+                    str(actor_id) if actor_id else None,
+                    json.dumps(snapshot, default=str),
+                ),
             )
 
             self._write_audit(
@@ -347,196 +665,180 @@ class ProjectService:
                 actor_id=actor_id,
                 action="project.delete",
                 target_type="project",
-                target_id=project_id,
-                project_id=project_id,
+                target_id=str(row[0]),
+                project_id=None,
                 outcome="success",
                 ip_address=ip_address,
                 user_agent=user_agent,
-                details={"project_name": project["project_name"]},
+                details={"mode": "permanent", "snapshot": snapshot},
+                strict=True,
             )
 
-        return self.get_project(project_id)
+            cursor.execute(
+                "DELETE FROM device_tokens WHERE project_id = %s", (str(row[0]),)
+            )
+            cursor.execute(
+                "DELETE FROM reader_installations WHERE project_id = %s",
+                (str(row[0]),),
+            )
+            cursor.execute(
+                "DELETE FROM reader_keys WHERE project_id = %s", (str(row[0]),)
+            )
+            cursor.execute(
+                "DELETE FROM nexora_projects WHERE id = %s", (str(row[0]),)
+            )
+
+            for table, column in (
+                ("nexora_projects", "id"),
+                ("reader_keys", "project_id"),
+                ("reader_installations", "project_id"),
+                ("device_tokens", "project_id"),
+            ):
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {column} = %s",
+                    (str(row[0]),),
+                )
+                remaining = cursor.fetchone()
+                if remaining and int(remaining[0]) > 0:
+                    raise RuntimeError(
+                        "Permanent project deletion could not be verified; transaction rolled back."
+                    )
+
+        return {
+            "id": str(project["id"]),
+            "project_name": project["project_name"],
+            "deleted": True,
+            "mode": "permanent",
+        }
+
+    def hard_delete_all_projects(
+        self,
+        *,
+        actor_id: UUID | str | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
+        """Permanently delete every NexOra project in one transaction.
+
+        Only NexOra-owned tables are touched. Administrators, sessions, system
+        settings, security audit history, license keys, and legacy SMS Reader
+        tables are preserved.
+        """
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                ("nexora:delete-all-projects",),
+            )
+            cursor.execute(
+                """
+                SELECT id, project_name, project_name_normalized
+                FROM nexora_projects
+                ORDER BY created_at ASC
+                """
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                return {"deleted_count": 0, "mode": "permanent"}
+
+            for project_id, project_name, normalized in rows:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (normalized,),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO nexora_deleted_project_names
+                        (project_name_normalized, project_name, deleted_at,
+                         deleted_by, details)
+                    VALUES (%s, %s, now(), %s, %s::jsonb)
+                    ON CONFLICT (project_name_normalized) DO UPDATE
+                    SET project_name = EXCLUDED.project_name,
+                        deleted_at = EXCLUDED.deleted_at,
+                        deleted_by = EXCLUDED.deleted_by,
+                        details = EXCLUDED.details
+                    """,
+                    (
+                        normalized,
+                        project_name,
+                        str(actor_id) if actor_id else None,
+                        json.dumps(
+                            {
+                                "project_id": str(project_id),
+                                "project_name": project_name,
+                                "mode": "delete_all",
+                            },
+                            default=str,
+                        ),
+                    ),
+                )
+
+            self._write_audit(
+                cursor,
+                actor_id=actor_id,
+                action="project.delete_all",
+                target_type="project",
+                target_id=None,
+                project_id=None,
+                outcome="success",
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details={
+                    "mode": "permanent",
+                    "deleted_count": len(rows),
+                    "project_names": [row[1] for row in rows[:100]],
+                    "project_names_truncated": len(rows) > 100,
+                },
+                strict=True,
+            )
+
+            cursor.execute("DELETE FROM device_tokens")
+            cursor.execute("DELETE FROM reader_installations")
+            cursor.execute("DELETE FROM reader_keys")
+            cursor.execute("DELETE FROM nexora_projects")
+
+            cursor.execute("SELECT COUNT(*) FROM nexora_projects")
+            remaining = cursor.fetchone()
+            if remaining and int(remaining[0]) > 0:
+                raise RuntimeError(
+                    "Delete-all verification failed; transaction rolled back."
+                )
+
+        return {"deleted_count": len(rows), "mode": "permanent"}
+
+    def purge_due_projects(self, *, limit: int = 100) -> dict[str, Any]:
+        """Hard-delete projects whose configured auto-delete date has passed.
+
+        Intended for a server-side scheduler (``python -m backend.cli
+        purge-expired-projects``). Each project is deleted in its own
+        transaction with its own audit event.
+        """
+        limit = max(1, min(1000, int(limit)))
+        rows = self.db.fetch_all(
+            """
+            SELECT id, project_name
+            FROM nexora_projects
+            WHERE deleted_at IS NULL
+              AND auto_delete_at IS NOT NULL
+              AND auto_delete_at <= now()
+            ORDER BY auto_delete_at ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        deleted: list[str] = []
+        for row in rows:
+            try:
+                result = self.hard_delete_project(str(row["id"]))
+                deleted.append(result["project_name"])
+            except ApiError as exc:
+                if exc.status == 404:
+                    continue
+                raise
+        return {"deleted_count": len(deleted), "project_names": deleted}
 
     # ------------------------------------------------------------------------
     # Reader Key Management
     # ------------------------------------------------------------------------
-
-    def generate_key(
-        self,
-        *,
-        project_id: str,
-        is_permanent: bool = True,
-        expires_at: datetime | None = None,
-        label: str = "",
-        created_by: UUID | str | None = None,
-        ip_address: str | None = None,
-        user_agent: str | None = None,
-    ) -> dict[str, Any]:
-        """Generate a single reader key. Plaintext is returned ONCE and never stored."""
-        project = self.get_project(project_id)
-        if project["status"] != "active":
-            raise ApiError(
-                400,
-                "PROJECT_NOT_ACTIVE",
-                "Cannot generate keys for an inactive or deleted project.",
-            )
-
-        spec = KeySpec()
-        plaintext = generate_plaintext_key(spec)
-        normalized = normalize_key(plaintext)
-        if not normalized:
-            raise RuntimeError("Generated key failed normalization.")
-
-        key_hash = hash_reader_key(self.pepper, normalized)
-        hint = masked_hint(spec, plaintext)
-        key_id = uuid4()
-        now = utcnow()
-
-        with self.db.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO reader_keys
-                    (id, project_id, key_hash, key_hint, label, status,
-                     is_permanent, expires_at, created_by, created_at)
-                VALUES (%s, %s, %s, %s, %s, 'generated', %s, %s, %s, %s)
-                """,
-                (
-                    str(key_id),
-                    project_id,
-                    key_hash,
-                    hint,
-                    label.strip(),
-                    is_permanent,
-                    expires_at if not is_permanent else None,
-                    str(created_by) if created_by else None,
-                    now,
-                ),
-            )
-            self._write_audit(
-                cursor,
-                actor_id=created_by,
-                action="reader_key.generate",
-                target_type="reader_key",
-                target_id=str(key_id),
-                project_id=project_id,
-                outcome="success",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                details={
-                    "project_name": project["project_name"],
-                    "key_hint": hint,
-                    "is_permanent": is_permanent,
-                },
-            )
-
-        return {
-            "id": str(key_id),
-            "project_id": project_id,
-            "project_name": project["project_name"],
-            "plaintext_key": plaintext,  # Exposed only in this return value
-            "key_hint": hint,
-            "label": label.strip(),
-            "status": "generated",
-            "is_permanent": is_permanent,
-            "expires_at": expires_at.isoformat() if expires_at and not is_permanent else None,
-            "created_at": now.isoformat(),
-        }
-
-    def generate_bulk_keys(
-        self,
-        *,
-        project_id: str,
-        quantity: int,
-        is_permanent: bool = True,
-        expires_at: datetime | None = None,
-        label: str = "",
-        created_by: UUID | str | None = None,
-        ip_address: str | None = None,
-        user_agent: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Generate multiple reader keys in one atomic batch."""
-        max_limit = getattr(self.settings, "max_bulk_keys", 500)
-        if not 1 <= quantity <= max_limit:
-            raise ValidationError(
-                {"quantity": f"Quantity must be between 1 and {max_limit}."}
-            )
-
-        project = self.get_project(project_id)
-        if project["status"] != "active":
-            raise ApiError(
-                400,
-                "PROJECT_NOT_ACTIVE",
-                "Cannot generate keys for an inactive or deleted project.",
-            )
-
-        spec = KeySpec()
-        batch_id = uuid4()
-        now = utcnow()
-        results: list[dict[str, Any]] = []
-
-        with self.db.cursor() as cursor:
-            for _ in range(quantity):
-                plaintext = generate_plaintext_key(spec)
-                normalized = normalize_key(plaintext)
-                if not normalized:
-                    continue
-                key_hash = hash_reader_key(self.pepper, normalized)
-                hint = masked_hint(spec, plaintext)
-                key_id = uuid4()
-
-                cursor.execute(
-                    """
-                    INSERT INTO reader_keys
-                        (id, project_id, key_hash, key_hint, label, status,
-                         is_permanent, expires_at, batch_id, created_by, created_at)
-                    VALUES (%s, %s, %s, %s, %s, 'generated', %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        str(key_id),
-                        project_id,
-                        key_hash,
-                        hint,
-                        label.strip(),
-                        is_permanent,
-                        expires_at if not is_permanent else None,
-                        str(batch_id),
-                        str(created_by) if created_by else None,
-                        now,
-                    ),
-                )
-                results.append(
-                    {
-                        "id": str(key_id),
-                        "project_id": project_id,
-                        "project_name": project["project_name"],
-                        "plaintext_key": plaintext,
-                        "key_hint": hint,
-                        "label": label.strip(),
-                        "status": "generated",
-                        "is_permanent": is_permanent,
-                        "expires_at": expires_at.isoformat() if expires_at and not is_permanent else None,
-                        "created_at": now.isoformat(),
-                    }
-                )
-
-            self._write_audit(
-                cursor,
-                actor_id=created_by,
-                action="reader_key.bulk_generate",
-                target_type="project",
-                target_id=project_id,
-                project_id=project_id,
-                outcome="success",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                details={
-                    "project_name": project["project_name"],
-                    "quantity": len(results),
-                    "batch_id": str(batch_id),
-                },
-            )
-
-        return results
 
     def revoke_key(
         self,
@@ -880,8 +1182,9 @@ class ProjectService:
         self,
         *,
         project_name: str,
-        database_url: str,
         reader_key_plaintext: str,
+        supabase_url: str | None = None,
+        database_url: str | None = None,
         device_id: str = "",
         ip_address: str | None = None,
         user_agent: str | None = None,
@@ -889,11 +1192,18 @@ class ProjectService:
         """Validate and redeem a Reader Key atomically.
 
         Contract:
-        The Reader App submits the public Supabase Project URL (e.g. https://<project-ref>.supabase.co),
-        NEVER a direct PostgreSQL connection string, database password, or service role key.
-        The server validates the submitted URL against its configured Supabase Project URL.
+        The Reader App submits the public Supabase Project URL (e.g.
+        https://<project-ref>.supabase.co), NEVER a direct PostgreSQL
+        connection string, database password, or service role key. The field is
+        named ``supabase_url``. ``database_url`` remains accepted as a
+        deprecated alias so already-deployed Reader builds keep working; the
+        server validates whichever value is supplied against its configured
+        Supabase Project URL.
         """
-        # 1. Verify Database URL contract
+        url_field = "supabase_url" if supabase_url is not None else "database_url"
+        submitted_url = (supabase_url or database_url or "").strip().rstrip("/")
+
+        # 1. Verify Supabase URL contract
         configured_url = (getattr(self.settings, "supabase_url", "") or "").strip().rstrip("/")
         if not configured_url:
             # Fail closed if the expected Supabase Project URL is not configured on the server
@@ -903,9 +1213,10 @@ class ProjectService:
                 "Supabase Project URL is not configured on the server. Reader activation is unavailable.",
             )
 
-        submitted_url = (database_url or "").strip().rstrip("/")
         if not submitted_url:
-            raise ValidationError({"database_url": "database_url is required."})
+            raise ValidationError(
+                {url_field: f"{url_field} is required (the Supabase Project URL)."}
+            )
 
         # Reject attempts to submit a direct PostgreSQL connection string
         if submitted_url.lower().startswith(("postgres://", "postgresql://")):
@@ -922,7 +1233,7 @@ class ProjectService:
                 raise ApiError(
                     400,
                     "DATABASE_URL_MISMATCH",
-                    "Provided database_url contains invalid placeholder content.",
+                    f"Provided {url_field} contains invalid placeholder content.",
                 )
 
         # Validate against the exact server-configured Supabase Project URL (case-insensitive and trailing slash normalized)
@@ -930,7 +1241,7 @@ class ProjectService:
             raise ApiError(
                 400,
                 "DATABASE_URL_MISMATCH",
-                "Provided database_url does not match the configured server-side Supabase URL.",
+                f"Provided {url_field} does not match the configured server-side Supabase URL.",
             )
 
         # 2 & 3. Verify Project Name
@@ -1229,11 +1540,19 @@ class ProjectService:
         proj_row = self.db.fetch_one(
             """
             SELECT COUNT(*) AS total_projects,
-                   COUNT(CASE WHEN status = 'active' THEN 1 END) AS active_projects
+                   COUNT(CASE WHEN status = 'active' THEN 1 END) AS active_projects,
+                   COUNT(CASE WHEN auto_delete_at IS NOT NULL THEN 1 END) AS scheduled_projects,
+                   COUNT(CASE WHEN auto_delete_at IS NOT NULL
+                               AND auto_delete_at <= now() THEN 1 END) AS due_projects
             FROM nexora_projects
             WHERE deleted_at IS NULL
             """
-        ) or {"total_projects": 0, "active_projects": 0}
+        ) or {
+            "total_projects": 0,
+            "active_projects": 0,
+            "scheduled_projects": 0,
+            "due_projects": 0,
+        }
 
         key_row = self.db.fetch_one(
             """
@@ -1271,6 +1590,8 @@ class ProjectService:
         return {
             "total_projects": proj_row["total_projects"],
             "active_projects": proj_row["active_projects"],
+            "scheduled_projects": proj_row["scheduled_projects"],
+            "due_projects": proj_row["due_projects"],
             "total_keys": key_row["total_keys"],
             "unused_keys": key_row["unused_keys"],
             "used_keys": key_row["used_keys"],
@@ -1462,6 +1783,7 @@ class ProjectService:
             "api_rate_limits": settings_map.get("nexora.api_rate_limits", "60/min"),
             "maintenance_mode": settings_map.get("nexora.maintenance_mode", "false").lower() == "true",
             "display_timezone": settings_map.get("nexora.display_timezone", "UTC"),
+            "auto_delete_days": int(settings_map.get("nexora.auto_delete_days", "0") or 0),
             "version": getattr(self.settings, "version", "1.0.0"),
         }
 
@@ -1482,6 +1804,7 @@ class ProjectService:
             "api_rate_limits": ("nexora.api_rate_limits", str),
             "maintenance_mode": ("nexora.maintenance_mode", bool),
             "display_timezone": ("nexora.display_timezone", str),
+            "auto_delete_days": ("nexora.auto_delete_days", int),
         }
 
         validated_updates: dict[str, str] = {}
@@ -1501,6 +1824,10 @@ class ProjectService:
                         raise ValidationError({user_key: "Must be between 1 and 2000."})
                     if user_key == "heartbeat_interval_seconds" and not 10 <= int_val <= 86400:
                         raise ValidationError({user_key: "Must be between 10 and 86400 seconds."})
+                    if user_key == "auto_delete_days" and not 0 <= int_val <= 3650:
+                        raise ValidationError(
+                            {user_key: "Must be between 0 and 3650 days (0 disables automatic deletion)."}
+                        )
                     validated_updates[db_key] = str(int_val)
                 elif expected_type is bool:
                     validated_updates[db_key] = "true" if val else "false"

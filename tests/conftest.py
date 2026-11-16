@@ -124,6 +124,9 @@ def reset_database(app):
     app.extensions["db"].execute(
         """
         TRUNCATE TABLE sms_reader_events, sms_reader_keys,
+                       device_tokens, reader_installations, reader_keys,
+                       nexora_deleted_project_names, nexora_projects,
+                       system_settings,
                        admin_audit_logs, generation_logs, key_activations,
                        license_keys, admin_sessions, admin_users
         RESTART IDENTITY CASCADE

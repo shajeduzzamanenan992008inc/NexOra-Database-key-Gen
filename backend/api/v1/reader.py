@@ -43,21 +43,36 @@ def activate_reader():
 
     Submits:
     - project_name
-    - database_url
+    - supabase_url (preferred) or database_url (deprecated alias)
     - reader_key
     - device_id (optional hardware/app instance identifier)
     """
     payload = Payload(require_json(request))
     project_name = payload.string("project_name", required=True, min_length=1, max_length=200)
-    database_url = payload.string("database_url", required=True, min_length=1, max_length=500)
+    # Preferred field. ``database_url`` is accepted as a deprecated alias for
+    # already-deployed Reader builds; it always means the public Supabase
+    # Project URL, never a PostgreSQL connection string.
+    supabase_url = payload.string(
+        "supabase_url", required=False, max_length=500, default=""
+    )
+    database_url = payload.string(
+        "database_url", required=False, max_length=500, default=""
+    )
     reader_key = payload.string("reader_key", required=True, min_length=1, max_length=100)
     device_id = payload.string("device_id", required=False, max_length=200, default="")
+    if not (supabase_url or database_url):
+        payload.error(
+            "supabase_url",
+            "This field is required: submit the Supabase Project URL. "
+            "Legacy clients may send database_url instead.",
+        )
     payload.finish()
 
     ip, agent = request_meta()
     result = project_service().activate_reader(
         project_name=project_name or "",
-        database_url=database_url or "",
+        supabase_url=supabase_url or None,
+        database_url=database_url or None,
         reader_key_plaintext=reader_key or "",
         device_id=device_id or "",
         ip_address=ip,

@@ -26,6 +26,7 @@ from .security.passwords import hash_password, password_problems
 from .services.admin_bootstrap import ensure_initial_admin
 from .services.auth_service import AuthService
 from .services.license_service import LicenseService
+from .services.project_service import ProjectService
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -169,6 +170,31 @@ def cmd_migrate(_args: argparse.Namespace) -> int:
         db.close()
 
 
+def cmd_purge_projects(args: argparse.Namespace) -> int:
+    """Permanently delete projects whose configured auto-delete date is due.
+
+    Run this from the platform scheduler (cron, systemd timer, Windows Task
+    Scheduler, or a scheduled job) after the administrator has configured a
+    retention period. It never deletes a project without an explicit
+    auto_delete_at date.
+    """
+    settings = _settings()
+    db = Database(settings.database)
+    try:
+        result = ProjectService(db, settings).purge_due_projects(limit=args.limit)
+        if result["deleted_count"]:
+            print(
+                f"Permanently deleted {result['deleted_count']} due project(s):"
+            )
+            for name in result["project_names"]:
+                print(f"  - {name}")
+        else:
+            print("No projects are due for automatic deletion.")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_expire(_args: argparse.Namespace) -> int:
     settings = _settings()
     db = Database(settings.database)
@@ -276,6 +302,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     expire = sub.add_parser("expire", help="Mark overdue keys as expired.")
     expire.set_defaults(func=cmd_expire)
+
+    purge_projects = sub.add_parser(
+        "purge-expired-projects",
+        help="Permanently delete projects whose auto-delete date is due.",
+    )
+    purge_projects.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Maximum projects to process in one run (default 100).",
+    )
+    purge_projects.set_defaults(func=cmd_purge_projects)
 
     listing = sub.add_parser("list-admins", help="List administrator accounts.")
     listing.set_defaults(func=cmd_list_admins)

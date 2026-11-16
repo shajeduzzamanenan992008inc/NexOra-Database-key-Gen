@@ -118,6 +118,87 @@ Plaintext keys appear **only** in the creation response. Everywhere else a key i
 
 ## Keys
 
+## NexOra v1 Project & Reader Key API (`/api/v1`)
+
+> This section documents the current Admin project/key management API. The `/api/keys/*` sections
+> below document the legacy licensing API and remain unchanged for backward compatibility.
+
+All `/api/v1` endpoints use the same session + CSRF rules described above. Roles are enforced per
+route (`owner`, `admin`, or `viewer`); destructive operations require `owner`.
+
+### Project creation is Generate Key
+
+There is no standalone create-project endpoint and no bulk Reader Key endpoint. `POST
+/api/v1/projects/generate-key` creates the project and exactly one key in one transaction.
+
+```http
+POST /api/v1/projects/generate-key
+X-CSRF-Token: …
+Content-Type: application/json
+
+{ "project_name": "MyDatabase", "label": "Optional label" }
+```
+
+```json
+201 Created
+{
+  "created": true,
+  "project": { "id": "…", "project_name": "MyDatabase", "status": "active",
+               "created_at": "2026-11-16T10:00:00Z", "auto_delete_at": null },
+  "reader_key": { "id": "…", "project_id": "…", "project_name": "MyDatabase",
+                  "plaintext_key": "NXR-…", "key_hint": "NXR-****-****-****-8VL3",
+                  "status": "generated", "is_permanent": true, "expires_at": null }
+}
+```
+
+The plaintext key is returned **only** in this 201 response. A duplicate normalized name (including
+case/spacing variants and names retired by a permanent deletion) returns `409` with
+`PROJECT_ALREADY_EXISTS` or `PROJECT_NAME_RETIRED` and safe metadata — never plaintext.
+
+### Project endpoints
+
+| Method | Path | Roles | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/projects/generate-key` | owner, admin | Create project + one key |
+| `GET` | `/api/v1/projects` | owner, admin, viewer | List projects with key/installation/auto-delete data |
+| `GET` | `/api/v1/projects/{id}` | owner, admin, viewer | Project detail |
+| `PATCH` | `/api/v1/projects/{id}/status` | owner, admin | `{"status":"active"}` or `{"status":"inactive"}` |
+| `PATCH` | `/api/v1/projects/{id}/auto-delete` | owner, admin | `{"auto_delete_at":"2026-12-16T23:59:59Z"}` or `null` |
+| `DELETE` | `/api/v1/projects/{id}` | owner | `{"confirm_project_name":"Exact Name"}` — hard delete |
+| `DELETE` | `/api/v1/projects` | owner | `{"confirmation":"DELETE ALL PROJECTS","password":"…"}` |
+| `POST` | `/api/v1/keys/{id}/revoke` | owner, admin | Permanently revoke a key |
+
+Project responses include `reader_key_status`, `reader_key_hint`, `auto_delete_at`, `days_remaining`,
+`auto_delete_due`, `active_installation`, and the legacy lifecycle timestamps. `days_remaining` is
+`null` when no date is scheduled; the dashboard shows *No Auto Delete Scheduled*.
+
+Deactivation blocks new activations, device credential checks, and heartbeats (`403
+PROJECT_INACTIVE`) but never changes `GENERATED`/`USED`/`REVOKED`/`EXPIRED`.
+
+Single delete writes a `project.delete` audit event with `project_id = NULL` and a safe snapshot
+before removing device tokens, installations, reader keys, and the project. A tombstone in
+`nexora_deleted_project_names` prevents silent name reuse. Delete-all writes `project.delete_all`
+with the deleted count and preserves admin accounts, sessions, settings, audit history, and legacy
+SMS tables; any error rolls back the whole transaction.
+
+### Reader endpoints
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/reader/activate` | – | One-time activation |
+| `POST` | `/api/v1/reader/heartbeat` | Bearer device credential | Heartbeat |
+| `GET` | `/api/v1/reader/status` | Bearer device credential | Credential/status check |
+
+The activation body is `project_name`, `supabase_url`, `reader_key`, and `device_id`.
+`supabase_url` is the public project URL (`https://<ref>.supabase.co`), never a PostgreSQL DSN or
+service-role password. The deprecated `database_url` field is accepted as an alias for older Reader
+builds, but is validated the same way. Activation fails closed with `503
+SERVER_CONFIGURATION_ERROR` when the server has no `SUPABASE_URL`. A key transitions `GENERATED →
+USED` exactly once; later attempts return `409 ACTIVE_INSTALLATION_EXISTS` or `410
+KEY_ALREADY_USED`, and `EXPIRED`/`REVOKED` keys cannot activate.
+
+---
+
 ### `POST /api/keys/generate` — owner, admin → `201`
 
 | Field | Type | Default | Notes |

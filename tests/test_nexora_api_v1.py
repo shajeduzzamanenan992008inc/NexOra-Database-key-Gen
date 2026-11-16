@@ -112,10 +112,10 @@ class TestReaderCredentialAuthentication:
 
 
 class TestPrivilegedAdminEndpointsProtected:
-    def test_create_project_requires_auth(self, test_app):
+    def test_generate_key_requires_auth(self, test_app):
         client = test_app.test_client()
         resp = client.post(
-            "/api/v1/projects",
+            "/api/v1/projects/generate-key",
             json={"project_name": "NexOra Production"},
         )
         assert resp.status_code in (401, 302)
@@ -128,6 +128,14 @@ class TestPrivilegedAdminEndpointsProtected:
     def test_delete_project_requires_auth(self, test_app):
         client = test_app.test_client()
         resp = client.delete("/api/v1/projects/some-id")
+        assert resp.status_code in (401, 302)
+
+    def test_delete_all_projects_requires_auth(self, test_app):
+        client = test_app.test_client()
+        resp = client.delete(
+            "/api/v1/projects",
+            json={"confirmation": "DELETE ALL PROJECTS", "password": "x"},
+        )
         assert resp.status_code in (401, 302)
 
     def test_revoke_installation_requires_auth(self, test_app):

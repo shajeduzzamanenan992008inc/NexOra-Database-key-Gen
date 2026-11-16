@@ -1250,6 +1250,60 @@ select {
   background: var(--danger);
   box-shadow: 0 0 10px var(--danger);
 }
+.link-strong { color: var(--cyan); font-weight: 600; }
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.auto-delete-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.auto-delete-controls input[type="date"] {
+  max-width: 220px;
+}
+
+.key-plaintext {
+  font-size: 1.15rem;
+  color: var(--cyan);
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.key-meta { font-size: 0.8rem; margin-top: 4px; }
+
+.detail-list {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.5fr) 1fr;
+  gap: 8px 16px;
+  margin: 8px 0 0;
+}
+
+.detail-list dt { color: var(--muted); font-size: 0.78rem; }
+.detail-list dd { margin: 0; font-weight: 600; word-break: break-word; }
+
+.key-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(120, 180, 255, 0.03);
+  flex-wrap: wrap;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

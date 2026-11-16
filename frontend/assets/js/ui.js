@@ -162,6 +162,10 @@ function buildConfirmDialog({
   requireReason,
   reasonLabel,
   reasonPlaceholder,
+  requireText,
+  textLabel,
+  requirePassword,
+  passwordLabel,
 }) {
   const dialog = el("dialog", { class: "modal confirm-modal" });
   const form = el("form", { class: "modal-card", method: "dialog" });
@@ -194,6 +198,46 @@ function buildConfirmDialog({
       ])
     );
   }
+
+  let textInput = null;
+  if (requireText) {
+    textInput = el("input", {
+      class: "confirm-text-input",
+      type: "text",
+      maxlength: "200",
+      autocomplete: "off",
+      "aria-label": textLabel || `Type ${requireText} to confirm`,
+    });
+    body.append(
+      el("label", { class: "field" }, [
+        el("span", {
+          class: "field-label",
+          text: textLabel || `Type ${requireText} to confirm`,
+        }),
+        textInput,
+      ])
+    );
+  }
+
+  let passwordInput = null;
+  if (requirePassword) {
+    passwordInput = el("input", {
+      class: "confirm-password-input",
+      type: "password",
+      maxlength: "128",
+      autocomplete: "current-password",
+      "aria-label": passwordLabel || "Administrator password",
+    });
+    body.append(
+      el("label", { class: "field" }, [
+        el("span", {
+          class: "field-label",
+          text: passwordLabel || "Administrator password",
+        }),
+        passwordInput,
+      ])
+    );
+  }
   const error = el("p", { class: "form-message", role: "alert" });
   const actions = el("div", { class: "modal-actions" }, [
     el("button", {
@@ -215,10 +259,12 @@ function buildConfirmDialog({
   let resolver = null;
 
   function finish(confirmed, reason) {
+    const text = textInput ? textInput.value.trim() : "";
+    const password = passwordInput ? passwordInput.value : "";
     closeDialog(dialog);
     dialog.remove();
     if (resolver) {
-      resolver({ confirmed, reason });
+      resolver({ confirmed, reason, text, password });
       resolver = null;
     }
   }
@@ -226,9 +272,21 @@ function buildConfirmDialog({
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const reason = textarea ? textarea.value.trim() : "";
+    const text = textInput ? textInput.value.trim() : "";
+    const password = passwordInput ? passwordInput.value : "";
     if (requireReason && reason.length < 3) {
       error.textContent = "Enter at least 3 characters so the audit entry is useful.";
       textarea.focus();
+      return;
+    }
+    if (requireText && text !== requireText) {
+      error.textContent = `Type ${requireText} exactly to confirm.`;
+      textInput.focus();
+      return;
+    }
+    if (requirePassword && !password) {
+      error.textContent = "Enter your administrator password to continue.";
+      passwordInput.focus();
       return;
     }
     finish(true, reason);
@@ -260,6 +318,10 @@ export function confirmAction(options) {
     requireReason: Boolean(options.requireReason),
     reasonLabel: options.reasonLabel,
     reasonPlaceholder: options.reasonPlaceholder,
+    requireText: options.requireText || "",
+    textLabel: options.textLabel,
+    requirePassword: Boolean(options.requirePassword),
+    passwordLabel: options.passwordLabel,
   });
 }
 

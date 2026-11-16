@@ -203,22 +203,15 @@
           <header class="panel-head">
             <div>
               <h2>Managed Projects</h2>
-              <p>Case-insensitive unique projects. Soft deletion preserves audit history and revokes authorizations.</p>
+              <p>One project, one Reader Key. Generating a key creates the project automatically; permanent deletion removes every project-owned record.</p>
             </div>
-            <button id="open-create-project-btn" class="btn btn-primary" type="button">+ Create Project</button>
+            <button id="delete-all-projects-btn" class="btn btn-danger" type="button">Delete All Projects</button>
           </header>
           <div class="toolbar">
             <label class="search">
               <span class="sr-only">Search projects</span>
               <span class="search-icon" aria-hidden="true">⌕</span>
-              <input id="project-search-input" type="search" placeholder="Search by project name or reference…" maxlength="200" autocomplete="off">
-            </label>
-            <label class="select">
-              <span class="sr-only">Filter projects</span>
-              <select id="project-filter-deleted">
-                <option value="false">Active Projects only</option>
-                <option value="true">Include Soft-Deleted</option>
-              </select>
+              <input id="project-search-input" type="search" placeholder="Search by project name…" maxlength="200" autocomplete="off">
             </label>
             <button id="projects-refresh-btn" class="btn btn-ghost" type="button">Refresh</button>
           </div>
@@ -227,12 +220,12 @@
               <thead>
                 <tr>
                   <th>Project Name</th>
-                  <th>Database Ref</th>
                   <th>Status</th>
-                  <th>Available Keys</th>
-                  <th>Used Keys</th>
-                  <th>Active Device</th>
+                  <th>Reader Key</th>
                   <th>Created</th>
+                  <th>Auto Delete Date</th>
+                  <th>Remaining</th>
+                  <th>Installation</th>
                   <th class="align-right">Actions</th>
                 </tr>
               </thead>
@@ -258,33 +251,14 @@
           </header>
           <form id="key-generator-form" class="form-grid" novalidate>
             <label class="field span-2">
-              <span class="field-label">Target Project *</span>
-              <select id="gen-project-select" required>
-                <option value="">Select target project…</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span class="field-label">Quantity (1 - 500) *</span>
-              <input id="gen-quantity-input" type="number" min="1" max="500" value="1" required>
-            </label>
-
-            <label class="field">
-              <span class="field-label">Key Expiration Type *</span>
-              <select id="gen-expiry-type-select">
-                <option value="permanent">Permanent (Does not expire by time)</option>
-                <option value="custom">Custom Expiry Date</option>
-              </select>
-            </label>
-
-            <label class="field hidden" id="gen-custom-date-group">
-              <span class="field-label">Expiration Date</span>
-              <input id="gen-custom-expiry-input" type="date">
+              <span class="field-label">Project Name *</span>
+              <input id="gen-project-name-input" type="text" required maxlength="200" placeholder="e.g. Production Cluster Alpha" autocomplete="off">
+              <small class="muted">If this name is new, the project and its single Reader Key are created together. If it already exists, no new key is generated.</small>
             </label>
 
             <label class="field span-2">
-              <span class="field-label">Label / Audit Note</span>
-              <input id="gen-label-input" type="text" maxlength="100" placeholder="e.g. Field Operation Deployment Batch" autocomplete="off">
+              <span class="field-label">Label / Audit Note (optional)</span>
+              <input id="gen-label-input" type="text" maxlength="100" placeholder="e.g. Primary reader deployment" autocomplete="off">
             </label>
 
             <div class="span-2 format-preview">
@@ -294,14 +268,14 @@
             </div>
 
             <div class="span-2 alert alert-warn">
-              <strong>Strict Security Notice:</strong> Plaintext reader keys will be revealed exactly ONCE upon generation. They are never logged or stored. Store them securely immediately after generation.
+              <strong>Strict Security Notice:</strong> The plaintext Reader Key is revealed exactly ONCE. Only its HMAC-SHA256 digest is stored. This project can never receive a second key.
             </div>
 
             <p id="generator-error" class="span-2 form-message" role="alert"></p>
 
             <div class="span-2 modal-actions clean-actions-bar margin-top-md">
               <button id="generate-keys-btn" class="btn btn-primary" type="submit">
-                <span class="btn-label">Generate Reader Key(s)</span>
+                <span class="btn-label">Generate Reader Key</span>
                 <span class="spinner" hidden aria-hidden="true"></span>
               </button>
             </div>
@@ -631,9 +605,10 @@
                 <option value="auth.logout">Admin Logout</option>
                 <option value="project.create">Project Creation</option>
                 <option value="project.status_change">Project Status Change</option>
-                <option value="project.delete">Project Soft-Delete</option>
+                <option value="project.auto_delete_change">Auto Delete Change</option>
+                <option value="project.delete">Project Permanent Delete</option>
+                <option value="project.delete_all">Delete All Projects</option>
                 <option value="reader_key.generate">Key Generation</option>
-                <option value="reader_key.bulk_generate">Bulk Key Generation</option>
                 <option value="reader_key.revoke">Key Revocation</option>
                 <option value="reader.activate">Reader Activation</option>
                 <option value="reader_installation.revoke">Installation Revocation</option>
@@ -711,6 +686,12 @@
             </label>
 
             <label class="field">
+              <span class="field-label">Auto Delete Policy (Days)</span>
+              <input id="setting-auto-delete-days" type="number" min="0" max="3650" value="0" required>
+              <small class="muted">0 disables automatic deletion. Scheduled projects are hard-deleted only by the server-side purge command after their date is due.</small>
+            </label>
+
+            <label class="field">
               <span class="field-label">API Rate Limits</span>
               <input id="setting-rate-limits" type="text" maxlength="50" value="60/min" required>
             </label>
@@ -752,39 +733,6 @@
     </main>
   </div>
 
-  <!-- MODAL: CREATE PROJECT -->
-  <dialog id="project-modal" class="modal" aria-labelledby="project-modal-title">
-    <form id="create-project-form" class="modal-card" novalidate>
-      <header class="modal-head">
-        <div>
-          <p class="eyebrow">DATABASE TARGET</p>
-          <h2 id="project-modal-title">Create New Project</h2>
-        </div>
-        <button class="icon-close" type="button" data-close="project-modal" aria-label="Close">×</button>
-      </header>
-      <div class="modal-body">
-        <label class="field">
-          <span class="field-label">Project Name *</span>
-          <input id="proj-name-input" type="text" required maxlength="200" placeholder="e.g. Production Cluster Alpha" autocomplete="off">
-          <small class="muted">Case-insensitive uniqueness is strictly enforced.</small>
-        </label>
-        <label class="field">
-          <span class="field-label">Database Reference / Note</span>
-          <input id="proj-ref-input" type="text" maxlength="500" placeholder="e.g. supabase-proj-ref-001" autocomplete="off">
-          <small class="muted">Reference only. Never enter passwords or raw connection strings.</small>
-        </label>
-        <p id="project-modal-error" class="form-message" role="alert"></p>
-      </div>
-      <footer class="modal-actions">
-        <button class="btn btn-ghost" type="button" data-close="project-modal">Cancel</button>
-        <button id="create-project-submit" class="btn btn-primary" type="submit">
-          <span class="btn-label">Create Project</span>
-          <span class="spinner" hidden aria-hidden="true"></span>
-        </button>
-      </footer>
-    </form>
-  </dialog>
-
   <!-- MODAL: PROJECT DETAIL -->
   <dialog id="project-detail-modal" class="modal" aria-labelledby="project-detail-title">
     <div class="modal-card modal-wide">
@@ -804,38 +752,19 @@
     </div>
   </dialog>
 
-  <!-- MODAL: GENERATE (LEGACY COMPAT) -->
-  <dialog id="generate-modal" class="modal" aria-labelledby="generate-modal-title">
-    <div class="modal-card">
-      <header class="modal-head">
-        <div>
-          <p class="eyebrow">QUICK ACTION</p>
-          <h2 id="generate-modal-title">Issue Keys</h2>
-        </div>
-        <button class="icon-close" type="button" data-close="generate-modal" aria-label="Close">×</button>
-      </header>
-      <div class="modal-body">
-        <p>Use the Key Generator view to issue reader keys with project scoping and CSPRNG entropy.</p>
-      </div>
-      <footer class="modal-actions">
-        <button class="btn btn-primary" type="button" data-go="generator" data-close="generate-modal">Open Key Generator</button>
-      </footer>
-    </div>
-  </dialog>
-
   <!-- MODAL: ONE-TIME KEY REVEAL -->
   <dialog id="result-modal" class="modal" aria-labelledby="result-title">
     <div class="modal-card modal-wide">
       <header class="modal-head">
         <div>
           <p class="eyebrow">ONE-TIME SECURE REVEAL</p>
-          <h2 id="result-title">Generated Reader Keys</h2>
+          <h2 id="result-title">Reader Key Generated</h2>
         </div>
         <button class="icon-close" type="button" data-close="result-modal" aria-label="Close">×</button>
       </header>
       <div class="modal-body">
-        <div class="alert alert-warn">
-          <strong>CRITICAL:</strong> Store these plaintext keys right now. They are cryptographically hashed and cannot be retrieved again after closing this dialog.
+        <div id="result-warning" class="alert alert-warn">
+          <strong>CRITICAL:</strong> Store this plaintext key right now. It is cryptographically hashed and cannot be retrieved again after closing this dialog.
         </div>
         <p id="result-summary" class="muted"></p>
         <div id="generated-list" class="key-list"></div>
@@ -901,6 +830,41 @@
       </div>
       <footer class="modal-actions">
         <button class="btn btn-ghost" type="button" data-close="log-detail-modal">Close</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- MODAL: DELETE ALL PROJECTS -->
+  <dialog id="delete-all-modal" class="modal" aria-labelledby="delete-all-title">
+    <div class="modal-card">
+      <header class="modal-head">
+        <div>
+          <p class="eyebrow">DANGER ZONE</p>
+          <h2 id="delete-all-title">Delete All Projects</h2>
+        </div>
+        <button class="icon-close" type="button" data-close="delete-all-modal" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <div class="alert alert-warn">
+          <strong>PERMANENT:</strong> This removes every NexOra project and its Reader Keys, installations, and device tokens in one transaction. Admin accounts, system settings, audit history, and legacy SMS data are preserved.
+        </div>
+        <p id="delete-all-count" class="muted"></p>
+        <label class="field">
+          <span class="field-label">Type DELETE ALL PROJECTS to confirm *</span>
+          <input id="delete-all-confirm-input" type="text" maxlength="64" autocomplete="off">
+        </label>
+        <label class="field">
+          <span class="field-label">Administrator password *</span>
+          <input id="delete-all-password-input" type="password" maxlength="128" autocomplete="current-password">
+        </label>
+        <p id="delete-all-error" class="form-message" role="alert"></p>
+      </div>
+      <footer class="modal-actions">
+        <button class="btn btn-ghost" type="button" data-close="delete-all-modal">Cancel</button>
+        <button id="delete-all-submit" class="btn btn-danger" type="button">
+          <span class="btn-label">Permanently Delete All Projects</span>
+          <span class="spinner" hidden aria-hidden="true"></span>
+        </button>
       </footer>
     </div>
   </dialog>

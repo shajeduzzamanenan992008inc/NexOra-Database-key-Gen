@@ -23,8 +23,11 @@ def test_login_and_dashboard_pages_are_served(app, owner):
     body = dashboard.get_data(as_text=True)
     assert 'id="view-overview"' in body
     assert 'id="keys-body"' in body
-    assert 'id="generate-modal"' in body
+    assert 'id="gen-project-name-input"' in body
+    assert 'id="delete-all-modal"' in body
     assert 'id="detail-modal"' in body
+    assert 'id="project-modal"' not in body
+    assert 'id="generate-modal"' not in body
 
 
 def test_all_local_assets_resolve(app, owner):

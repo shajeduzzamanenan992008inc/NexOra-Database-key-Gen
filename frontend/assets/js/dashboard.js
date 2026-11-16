@@ -25,12 +25,12 @@ const VIEW_META = {
   },
   projects: {
     title: "Projects",
-    subtitle: "Manage isolated database target projects with case-insensitive collision defense.",
+    subtitle: "One Reader Key per project. Activate, schedule deletion, or permanently remove projects.",
     eyebrow: "OMEGA NEX-ORA / Project Ops",
   },
   generator: {
     title: "Key Generator",
-    subtitle: "Issue cryptographically hardened reader activation keys for projects.",
+    subtitle: "Enter a project name. A new project automatically receives exactly one one-time Reader Key.",
     eyebrow: "OMEGA NEX-ORA / Cryptographic Generator",
   },
   keys: {
@@ -153,16 +153,11 @@ export function showView(viewName, { updateHash = true, reload = true } = {}) {
   setText("#page-subtitle", meta.subtitle);
   setText("#topbar-eyebrow", meta.eyebrow);
 
-  // Update topbar quick action button
+  // The only creation workflow is the Key Generator.
   const topAction = $("#topbar-quick-action");
   if (topAction) {
-    if (viewName === "projects") {
-      topAction.textContent = "+ Create Project";
-      topAction.onclick = () => openDialog($("#project-modal"));
-    } else {
-      topAction.textContent = "⚡ Generate Key";
-      topAction.onclick = () => showView("generator");
-    }
+    topAction.textContent = "⚡ Generate Key";
+    topAction.onclick = () => showView("generator");
   }
 
   if (updateHash) {
@@ -265,13 +260,23 @@ function renderOverviewAudit(items) {
 
 async function loadProjects() {
   const search = $("#project-search-input") ? $("#project-search-input").value.trim() : "";
-  const includeDeleted = $("#project-filter-deleted")
-    ? $("#project-filter-deleted").value === "true"
-    : false;
-
-  const data = await api.projects({ search, include_deleted: includeDeleted });
+  const data = await api.projects({ search });
   state.projects = data.projects || [];
   renderProjectsTable(state.projects);
+}
+
+function autoDeleteDateLabel(project) {
+  return project.auto_delete_at
+    ? formatDate(project.auto_delete_at, { time: false })
+    : "No Auto Delete Scheduled";
+}
+
+function remainingDaysLabel(project) {
+  if (!project.auto_delete_at) return "—";
+  if (project.auto_delete_due) return "Due now";
+  const days = Number(project.days_remaining);
+  if (!Number.isFinite(days)) return "—";
+  return `${days} day${days === 1 ? "" : "s"}`;
 }
 
 function renderProjectsTable(projects) {
@@ -280,7 +285,13 @@ function renderProjectsTable(projects) {
   clearNode(tbody);
 
   if (!projects.length) {
-    tbody.append(emptyRow(8, "No projects found", "Create a new project to start issuing reader keys."));
+    tbody.append(
+      emptyRow(
+        8,
+        "No projects found",
+        "Open Key Generator and enter a project name to create the first project."
+      )
+    );
     setText("#projects-summary", "0 projects");
     return;
   }
@@ -288,14 +299,13 @@ function renderProjectsTable(projects) {
   setText("#projects-summary", `Showing ${projects.length} project(s)`);
 
   projects.forEach((proj) => {
-    const isDeleted = Boolean(proj.deleted_at);
     const isActive = proj.status === "active";
 
     const tr = el("tr", {}, [
       el("td", {}, [
         el("a", {
           href: "#",
-          style: "color: var(--cyan); font-weight: 600;",
+          class: "link-strong",
           text: proj.project_name,
           onclick: (e) => {
             e.preventDefault();
@@ -303,46 +313,34 @@ function renderProjectsTable(projects) {
           },
         }),
       ]),
-      el("td", {}, [el("code", { text: proj.database_url_ref || "—" })]),
       el("td", {}, [statusBadge(proj.status)]),
       el("td", {}, [
-        el("span", { class: "badge badge-success", text: String(proj.available_keys || 0) }),
+        proj.reader_key_status
+          ? statusBadge(proj.reader_key_status)
+          : el("span", { class: "badge badge-muted", text: "No Key" }),
       ]),
+      el("td", { text: formatDate(proj.created_at, { time: false }) }),
+      el("td", { text: autoDeleteDateLabel(proj) }),
+      el("td", { text: remainingDaysLabel(proj) }),
       el("td", {}, [
-        el("span", { class: "badge badge-info", text: String(proj.used_keys || 0) }),
-      ]),
-      el("td", {}, [
-        proj.active_device_id
-          ? el("span", { class: "badge badge-success", text: proj.active_device_id.slice(0, 16) })
+        proj.active_installation_id
+          ? el("span", { class: "badge badge-success", text: "Active" })
           : el("span", { class: "muted", text: "None" }),
       ]),
-      el("td", { text: formatDate(proj.created_at) }),
       el("td", { class: "align-right" }, [
-        el("div", { class: "row-actions", style: "display: flex; gap: 6px; justify-content: flex-end;" }, [
-          !isDeleted
-            ? el("button", {
-                class: "btn btn-ghost btn-sm",
-                type: "button",
-                text: isActive ? "Deactivate" : "Activate",
-                onclick: () => toggleProjectStatus(proj),
-              })
-            : null,
-          !isDeleted && isActive
-            ? el("button", {
-                class: "btn btn-ghost btn-sm",
-                type: "button",
-                text: "⚡ Key",
-                onclick: () => openGeneratorForProject(proj.id),
-              })
-            : null,
-          !isDeleted
-            ? el("button", {
-                class: "btn btn-danger btn-sm",
-                type: "button",
-                text: "Delete",
-                onclick: () => deleteProjectPrompt(proj),
-              })
-            : null,
+        el("div", { class: "row-actions" }, [
+          el("button", {
+            class: "btn btn-ghost btn-sm",
+            type: "button",
+            text: isActive ? "Deactivate" : "Activate",
+            onclick: () => toggleProjectStatus(proj),
+          }),
+          el("button", {
+            class: "btn btn-danger btn-sm",
+            type: "button",
+            text: "Delete",
+            onclick: () => deleteProjectPrompt(proj),
+          }),
         ]),
       ]),
     ]);
@@ -357,21 +355,60 @@ async function viewProjectDetails(projectId) {
     const body = $("#project-detail-body");
     clearNode(body);
 
+    const dateInput = el("input", {
+      type: "date",
+      id: "project-auto-delete-input",
+      "aria-label": "Auto delete date",
+    });
+    if (proj.auto_delete_at) {
+      dateInput.value = new Date(proj.auto_delete_at).toISOString().slice(0, 10);
+    }
+
     body.append(
-      el("div", { class: "detail-grid", style: "display: grid; grid-template-columns: 1fr 1fr; gap: 16px;" }, [
+      el("div", { class: "detail-grid" }, [
         el("div", {}, [el("span", { class: "muted", text: "Project Name:" }), el("h3", { text: proj.project_name })]),
         el("div", {}, [el("span", { class: "muted", text: "Status:" }), el("div", {}, [statusBadge(proj.status)])]),
-        el("div", {}, [el("span", { class: "muted", text: "Database Ref:" }), el("p", {}, [el("code", { text: proj.database_url_ref || "—" })])]),
+        el("div", {}, [
+          el("span", { class: "muted", text: "Reader Key Status:" }),
+          el("div", {}, [
+            proj.reader_key_status
+              ? statusBadge(proj.reader_key_status)
+              : el("span", { class: "badge badge-muted", text: "No Key" }),
+          ]),
+        ]),
+        el("div", {}, [el("span", { class: "muted", text: "Key Hint:" }), el("p", {}, [el("code", { text: proj.reader_key_hint || "—" })])]),
         el("div", {}, [el("span", { class: "muted", text: "Project ID:" }), el("p", {}, [el("code", { text: proj.id })])]),
         el("div", {}, [el("span", { class: "muted", text: "Created At:" }), el("p", { text: formatDate(proj.created_at) })]),
+        el("div", {}, [el("span", { class: "muted", text: "Auto Delete Date:" }), el("p", { text: autoDeleteDateLabel(proj) })]),
+        el("div", {}, [el("span", { class: "muted", text: "Remaining Days:" }), el("p", { text: remainingDaysLabel(proj) })]),
+        el("div", {}, [
+          el("span", { class: "muted", text: "Active Installation:" }),
+          el("p", { text: proj.active_installation_id ? "Active" : "None" }),
+        ]),
         el("div", {}, [
           el("span", { class: "muted", text: "Active Device:" }),
           el("p", { text: proj.active_device_id || "None connected" }),
         ]),
-        el("div", { style: "grid-column: span 2;" }, [
-          el("span", { class: "muted", text: "Key Inventory:" }),
-          el("p", {
-            text: `Available: ${proj.available_keys || 0} · Used: ${proj.used_keys || 0} · Revoked: ${proj.revoked_keys || 0} · Expired: ${proj.expired_keys || 0} · Total: ${proj.total_keys || 0}`,
+        el("div", { class: "detail-grid-item-full" }, [
+          el("span", { class: "muted", text: "Schedule Permanent Deletion:" }),
+          el("div", { class: "auto-delete-controls" }, [
+            dateInput,
+            el("button", {
+              class: "btn btn-primary btn-sm",
+              type: "button",
+              text: "Save schedule",
+              onclick: () => saveProjectAutoDelete(proj, dateInput.value),
+            }),
+            el("button", {
+              class: "btn btn-ghost btn-sm",
+              type: "button",
+              text: "Clear schedule",
+              onclick: () => saveProjectAutoDelete(proj, ""),
+            }),
+          ]),
+          el("small", {
+            class: "muted",
+            text: "Automatic deletion runs only when the server-side purge command runs and the date is due. Leave empty to disable.",
           }),
         ]),
       ])
@@ -379,6 +416,33 @@ async function viewProjectDetails(projectId) {
     openDialog($("#project-detail-modal"));
   } catch (err) {
     fail(err, "Failed to load project details.");
+  }
+}
+
+async function saveProjectAutoDelete(project, dateText) {
+  let iso = null;
+  if (dateText) {
+    const local = new Date(`${dateText}T23:59:59`);
+    if (Number.isNaN(local.getTime())) {
+      toast("Choose a valid date.", { type: "error" });
+      return;
+    }
+    iso = local.toISOString();
+  }
+
+  try {
+    await api.setProjectAutoDelete(project.id, iso);
+    toast(
+      iso
+        ? `Auto-delete scheduled for '${project.project_name}'.`
+        : `Auto-delete cleared for '${project.project_name}'.`,
+      { type: "success" }
+    );
+    closeDialog($("#project-detail-modal"));
+    await loadProjects();
+    await viewProjectDetails(project.id);
+  } catch (err) {
+    fail(err, "Failed to update the auto-delete schedule.");
   }
 }
 
@@ -408,134 +472,109 @@ async function toggleProjectStatus(project) {
 
 async function deleteProjectPrompt(project) {
   const confirmed = await confirmAction({
-    title: "Delete Project?",
-    message: `Are you sure you want to soft-delete '${project.project_name}'? This will IMMEDIATELY revoke all active Reader installations, invalidate device credentials, and revoke unused keys. Audit logs will be preserved.`,
-    confirmLabel: "Delete Project & Revoke All",
+    title: `Permanently delete '${project.project_name}'?`,
+    message:
+      "This permanently removes the project, its Reader Key, reader installations, device tokens, and other project-owned records. This cannot be undone. Audit history is preserved.",
+    confirmLabel: "Permanently Delete Project",
     tone: "danger",
-    requireReason: false,
+    requireText: project.project_name,
+    textLabel: `Type the exact project name (${project.project_name}) to confirm`,
   });
   if (!confirmed.confirmed) return;
 
   try {
-    await api.deleteProject(project.id);
-    toast(`Project '${project.project_name}' has been soft-deleted and all credentials revoked.`, {
-      type: "success",
-    });
+    await api.deleteProject(project.id, confirmed.text);
+    toast(`Project '${project.project_name}' permanently deleted.`, { type: "success" });
     await loadProjects();
     await loadOverview();
   } catch (err) {
-    fail(err, "Failed to delete project.");
+    fail(err, "Failed to permanently delete the project.");
   }
 }
 
-function openGeneratorForProject(projectId) {
+function openGeneratorForProject() {
   showView("generator");
-  setTimeout(() => {
-    const sel = $("#gen-project-select");
-    if (sel) sel.value = projectId;
-  }, 100);
 }
 
 /* ----------------------------------------------------------- View: Generator */
 
 async function loadGenerator() {
-  const data = await api.projects({ include_deleted: false });
-  const activeProjects = (data.projects || []).filter((p) => p.status === "active");
-  const sel = $("#gen-project-select");
-  if (!sel) return;
-
-  const currentVal = sel.value;
-  clearNode(sel);
-  sel.append(el("option", { value: "", text: "Select target project…" }));
-  activeProjects.forEach((p) => {
-    sel.append(el("option", { value: p.id, text: p.project_name }));
-  });
-  if (currentVal && activeProjects.some((p) => p.id === currentVal)) {
-    sel.value = currentVal;
-  }
+  const input = $("#gen-project-name-input");
+  if (input) input.focus();
 }
 
 async function handleGenerateKeys(event) {
   event.preventDefault();
-  const projectId = $("#gen-project-select").value;
-  const quantity = parseInt($("#gen-quantity-input").value, 10) || 1;
-  const expiryType = $("#gen-expiry-type-select").value;
-  const customDate = $("#gen-custom-expiry-input").value;
-  const label = $("#gen-label-input").value.trim();
+  const nameInput = $("#gen-project-name-input");
+  const labelInput = $("#gen-label-input");
   const errEl = $("#generator-error");
+  const submitBtn = $("#generate-keys-btn");
+  const projectName = nameInput ? nameInput.value.trim() : "";
+  const label = labelInput ? labelInput.value.trim() : "";
   errEl.textContent = "";
 
-  if (!projectId) {
-    errEl.textContent = "Please select a target project.";
+  if (!projectName) {
+    errEl.textContent = "Enter a project name.";
+    if (nameInput) nameInput.focus();
     return;
   }
 
-  const isPermanent = expiryType === "permanent";
-  let expiresAt = null;
-  if (!isPermanent) {
-    if (!customDate) {
-      errEl.textContent = "Please pick a valid expiry date.";
-      return;
-    }
-    expiresAt = new Date(`${customDate}T23:59:59Z`).toISOString();
-  }
-
-  const submitBtn = $("#generate-keys-btn");
   setButtonBusy(submitBtn, true, "Generating securely…");
 
   try {
-    let result;
-    if (quantity === 1) {
-      result = await api.generateReaderKey(projectId, {
-        is_permanent: isPermanent,
-        expires_at: expiresAt,
-        label,
-      });
-      state.generatedKeys = [result];
-    } else {
-      const bulkRes = await api.generateBulkReaderKeys(projectId, {
-        quantity,
-        is_permanent: isPermanent,
-        expires_at: expiresAt,
-        label,
-      });
-      state.generatedKeys = bulkRes.keys || [];
-    }
-
-    renderGeneratedKeysModal(state.generatedKeys);
-    toast(`Successfully generated ${state.generatedKeys.length} reader key(s).`, {
+    const result = await api.generateProjectKey({
+      project_name: projectName,
+      label,
+    });
+    state.generatedKeys = [result.reader_key];
+    renderGeneratedKeysModal(result.reader_key);
+    toast(`Project '${result.project.project_name}' created with one Reader Key.`, {
       type: "success",
     });
+    if (nameInput) nameInput.value = "";
+    if (labelInput) labelInput.value = "";
     await loadOverview();
   } catch (err) {
-    fail(err, "Failed to generate reader keys.");
-    errEl.textContent = err.message || "Failed to generate keys.";
+    if (err instanceof ApiProblem && err.status === 409) {
+      state.generatedKeys = [];
+      renderExistingProjectModal(err.details || {}, projectName);
+      return;
+    }
+    fail(err, "Failed to generate the reader key.");
+    errEl.textContent = err && err.message ? err.message : "Failed to generate the reader key.";
   } finally {
     setButtonBusy(submitBtn, false);
   }
 }
 
-function renderGeneratedKeysModal(keys) {
+function setResultButtonsVisible(visible) {
+  ["#copy-all", "#download-keys-csv"].forEach((selector) => {
+    const button = $(selector);
+    if (button) button.hidden = !visible;
+  });
+}
+
+function renderGeneratedKeysModal(key) {
   const container = $("#generated-list");
   if (!container) return;
   clearNode(container);
 
-  setText("#result-summary", `Generated ${keys.length} key(s) for target project.`);
+  setText("#result-title", "Reader Key Generated");
+  setText(
+    "#result-summary",
+    `One-time key for '${key.project_name}'. Plaintext is shown only now.`
+  );
+  const warning = $("#result-warning");
+  if (warning) warning.hidden = false;
+  setResultButtonsVisible(true);
 
-  keys.forEach((k) => {
-    const row = el("div", {
-      class: "key-item glass",
-      style: "display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm);",
-    }, [
+  container.append(
+    el("div", { class: "key-item" }, [
       el("div", {}, [
-        el("code", {
-          style: "font-size: 1.15rem; color: var(--cyan); letter-spacing: 0.05em; font-weight: 700;",
-          text: k.plaintext_key,
-        }),
+        el("code", { class: "key-plaintext", text: key.plaintext_key }),
         el("div", {
-          class: "muted",
-          style: "font-size: 0.8rem; margin-top: 4px;",
-          text: `${k.key_hint} · ${k.is_permanent ? "Permanent" : `Expires ${formatDate(k.expires_at)}`}`,
+          class: "muted key-meta",
+          text: `${key.key_hint} · Permanent · Created ${formatDate(key.created_at)}`,
         }),
       ]),
       el("button", {
@@ -543,14 +582,54 @@ function renderGeneratedKeysModal(keys) {
         type: "button",
         text: "Copy",
         onclick: async () => {
-          await copyText(k.plaintext_key);
+          await copyText(key.plaintext_key);
           toast("Plaintext key copied to clipboard.", { type: "info" });
         },
       }),
-    ]);
-    container.append(row);
-  });
+    ])
+  );
+  openDialog($("#result-modal"));
+}
 
+function renderExistingProjectModal(details, requestedName) {
+  const container = $("#generated-list");
+  if (!container) return;
+  clearNode(container);
+
+  const project = details.project || {};
+  const key = details.reader_key || null;
+
+  setText("#result-title", "Project Already Exists");
+  setText(
+    "#result-summary",
+    `'${project.project_name || requestedName}' already exists. No new project or key was created.`
+  );
+  const warning = $("#result-warning");
+  if (warning) {
+    warning.hidden = false;
+    warning.textContent =
+      "For security, an existing Reader Key is never displayed again. Use Key Management for its masked status.";
+  }
+  setResultButtonsVisible(false);
+
+  const rows = [
+    ["Project Name", project.project_name || requestedName],
+    ["Project Status", project.status || "—"],
+    ["Reader Key Status", key ? key.status : "No key exists"],
+    ["Key Hint", key ? key.key_hint : "—"],
+    ["Key Created", key ? formatDate(key.created_at) : "—"],
+    ["Key Used At", key ? formatDate(key.used_at) : "—"],
+  ];
+  container.append(
+    el(
+      "dl",
+      { class: "detail-list" },
+      rows.flatMap(([term, value]) => [
+        el("dt", { text: term }),
+        el("dd", { text: value }),
+      ])
+    )
+  );
   openDialog($("#result-modal"));
 }
 
@@ -1016,6 +1095,9 @@ async function loadSettings() {
 
   const maint = $("#setting-maintenance-mode");
   if (maint) maint.checked = Boolean(data.maintenance_mode);
+
+  const autoDelete = $("#setting-auto-delete-days");
+  if (autoDelete) autoDelete.value = data.auto_delete_days ?? 0;
 }
 
 async function handleSaveSettings(event) {
@@ -1031,6 +1113,7 @@ async function handleSaveSettings(event) {
     api_rate_limits: $("#setting-rate-limits").value.trim(),
     display_timezone: $("#setting-timezone").value,
     maintenance_mode: $("#setting-maintenance-mode").checked,
+    auto_delete_days: parseInt($("#setting-auto-delete-days").value, 10) || 0,
   };
 
   try {
@@ -1045,6 +1128,62 @@ async function handleSaveSettings(event) {
 }
 
 /* ------------------------------------------------- Event Listeners & Boot */
+
+async function openDeleteAllDialog() {
+  const errEl = $("#delete-all-error");
+  if (errEl) errEl.textContent = "";
+  const confirmInput = $("#delete-all-confirm-input");
+  const passwordInput = $("#delete-all-password-input");
+  if (confirmInput) confirmInput.value = "";
+  if (passwordInput) passwordInput.value = "";
+
+  try {
+    const data = await api.projects({});
+    setText(
+      "#delete-all-count",
+      `${(data.projects || []).length} project(s) will be permanently deleted.`
+    );
+  } catch {
+    setText("#delete-all-count", "Project count unavailable.");
+  }
+
+  openDialog($("#delete-all-modal"));
+  if (confirmInput) setTimeout(() => confirmInput.focus(), 40);
+}
+
+async function handleDeleteAll() {
+  const confirmInput = $("#delete-all-confirm-input");
+  const passwordInput = $("#delete-all-password-input");
+  const errEl = $("#delete-all-error");
+  const submitBtn = $("#delete-all-submit");
+  const confirmation = confirmInput ? confirmInput.value.trim() : "";
+  const password = passwordInput ? passwordInput.value : "";
+  if (errEl) errEl.textContent = "";
+
+  if (confirmation !== "DELETE ALL PROJECTS") {
+    if (errEl) errEl.textContent = "Type DELETE ALL PROJECTS exactly.";
+    return;
+  }
+  if (!password) {
+    if (errEl) errEl.textContent = "Enter your administrator password.";
+    return;
+  }
+
+  setButtonBusy(submitBtn, true, "Deleting all projects…");
+  try {
+    const result = await api.deleteAllProjects(confirmation, password);
+    closeDialog($("#delete-all-modal"));
+    toast(`Permanently deleted ${result.deleted_count} project(s).`, {
+      type: "success",
+    });
+    await loadProjects();
+    await loadOverview();
+  } catch (err) {
+    if (errEl) errEl.textContent = err.message || "Delete-all failed.";
+  } finally {
+    setButtonBusy(submitBtn, false);
+  }
+}
 
 function setupEventListeners() {
   // Navigation
@@ -1091,56 +1230,16 @@ function setupEventListeners() {
     });
   });
 
-  // Projects View: Create Project Form
-  const openCreateProjBtn = $("#open-create-project-btn");
-  if (openCreateProjBtn) {
-    openCreateProjBtn.addEventListener("click", () => {
-      $("#proj-name-input").value = "";
-      $("#proj-ref-input").value = "";
-      $("#project-modal-error").textContent = "";
-      openDialog($("#project-modal"));
-    });
-  }
-
-  const createProjForm = $("#create-project-form");
-  if (createProjForm) {
-    createProjForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const name = $("#proj-name-input").value.trim();
-      const ref = $("#proj-ref-input").value.trim();
-      const errEl = $("#project-modal-error");
-      errEl.textContent = "";
-
-      if (!name) {
-        errEl.textContent = "Project name is required.";
-        return;
-      }
-
-      const submitBtn = $("#create-project-submit");
-      setButtonBusy(submitBtn, true, "Creating…");
-
-      try {
-        await api.createProject({ project_name: name, database_url_ref: ref });
-        closeDialog($("#project-modal"));
-        toast(`Project '${name}' created successfully.`, { type: "success" });
-        await loadProjects();
-        await loadOverview();
-      } catch (err) {
-        errEl.textContent = err.message || "Failed to create project.";
-      } finally {
-        setButtonBusy(submitBtn, false);
-      }
-    });
-  }
+  // Projects View: destructive bulk action
+  const deleteAllBtn = $("#delete-all-projects-btn");
+  if (deleteAllBtn) deleteAllBtn.addEventListener("click", openDeleteAllDialog);
+  const deleteAllSubmit = $("#delete-all-submit");
+  if (deleteAllSubmit) deleteAllSubmit.addEventListener("click", handleDeleteAll);
 
   // Project search & filter
   const projSearch = $("#project-search-input");
   if (projSearch) {
     projSearch.addEventListener("input", () => loadProjects());
-  }
-  const projFilter = $("#project-filter-deleted");
-  if (projFilter) {
-    projFilter.addEventListener("change", () => loadProjects());
   }
   const projRefBtn = $("#projects-refresh-btn");
   if (projRefBtn) {
@@ -1151,16 +1250,6 @@ function setupEventListeners() {
   const keyGenForm = $("#key-generator-form");
   if (keyGenForm) {
     keyGenForm.addEventListener("submit", handleGenerateKeys);
-  }
-
-  const expiryTypeSel = $("#gen-expiry-type-select");
-  if (expiryTypeSel) {
-    expiryTypeSel.addEventListener("change", () => {
-      const dateGroup = $("#gen-custom-date-group");
-      if (dateGroup) {
-        dateGroup.style.display = expiryTypeSel.value === "custom" ? "flex" : "none";
-      }
-    });
   }
 
   // Result Modal Copy & Download
