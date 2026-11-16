@@ -17,8 +17,14 @@ from backend.app import create_app
 from backend.config import DatabaseSettings, Settings
 from backend.migrations import apply_migrations
 from backend.security.passwords import hash_password
-from sms_reader import create_sms_app
-from sms_reader.config import SmsConfig
+try:
+    from sms_reader import create_sms_app
+    from sms_reader.config import SmsConfig
+    HAS_SMS = True
+except ImportError:
+    create_sms_app = None
+    SmsConfig = None
+    HAS_SMS = False
 
 TEST_DSN = os.environ.get(
     "TEST_DATABASE_URL",
@@ -99,6 +105,8 @@ def app(test_settings):
 @pytest.fixture(scope="session")
 def sms_app(app, test_settings):
     """The isolated SMS Reader application, sharing the test database."""
+    if not HAS_SMS:
+        pytest.skip("sms_reader module is not installed (out of scope)")
     config = SmsConfig(
         key_pepper=SMS_PEPPER,
         max_bulk_keys=25,

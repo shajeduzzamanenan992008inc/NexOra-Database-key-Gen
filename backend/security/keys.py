@@ -192,3 +192,65 @@ def masked_hint(spec: KeySpec, plaintext_key: str) -> str:
     if spec.suffix:
         parts.append(spec.suffix)
     return spec.separator.join(parts)
+
+
+# ----------------------------------------------------------------------------
+# NexOra Phase 1: Project & Reader Key Primitives
+# ----------------------------------------------------------------------------
+
+_NEXORA_DOMAIN_PREFIX = "nexora:v1"
+
+
+def normalize_project_name(name: str) -> str:
+    """Normalize a project name for case-insensitive collision checks.
+
+    Strips leading and trailing whitespace, collapses multiple internal spaces,
+    and converts to lowercase.
+    Example: '  NexOra   Main  ' -> 'nexora main'
+    """
+    if not isinstance(name, str):
+        raise ValueError("Project name must be a string.")
+    cleaned = re.sub(r"\s+", " ", name.strip()).lower()
+    if not cleaned:
+        raise ValueError("Project name cannot be empty.")
+    if len(cleaned) > 200:
+        raise ValueError("Project name cannot exceed 200 characters.")
+    return cleaned
+
+
+def hash_reader_key(pepper: str, normalized_key: str) -> str:
+    """Compute HMAC-SHA256 digest for a NexOra reader activation key.
+
+    Uses domain separation 'nexora:v1:reader-key:' to prevent cross-purpose replay.
+    """
+    if not pepper:
+        raise ValueError("A key pepper is required.")
+    digest = hmac.new(
+        pepper.encode("utf-8"),
+        f"{_NEXORA_DOMAIN_PREFIX}:reader-key:{normalized_key}".encode("utf-8"),
+        hashlib.sha256,
+    )
+    return digest.hexdigest()
+
+
+def generate_device_credential() -> str:
+    """Generate a high-entropy device credential for authenticated Reader App connections.
+
+    Returns a 48-character URL-safe string containing 288 bits of CSPRNG entropy.
+    Plaintext is sent to the Reader App ONCE at activation time; only its
+    HMAC hash is persisted in the database.
+    """
+    return secrets.token_urlsafe(36)
+
+
+def hash_device_credential(pepper: str, credential: str) -> str:
+    """Compute HMAC-SHA256 digest for an issued Reader device credential."""
+    if not pepper:
+        raise ValueError("A key pepper is required.")
+    digest = hmac.new(
+        pepper.encode("utf-8"),
+        f"{_NEXORA_DOMAIN_PREFIX}:device-token:{credential.strip()}".encode("utf-8"),
+        hashlib.sha256,
+    )
+    return digest.hexdigest()
+

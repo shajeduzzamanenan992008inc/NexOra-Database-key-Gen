@@ -10,6 +10,7 @@ from ..errors import ApiError
 from ..serialization import isoformat
 from ..services.auth_service import AuthService
 from ..services.license_service import LicenseService
+from ..services.project_service import ProjectService
 from ..validation import Payload, client_ip, user_agent
 
 
@@ -19,6 +20,14 @@ def settings() -> Any:
 
 def license_service() -> LicenseService:
     return current_app.extensions["license_service"]
+
+
+def project_service() -> ProjectService:
+    if "project_service" not in current_app.extensions:
+        current_app.extensions["project_service"] = ProjectService(
+            current_app.extensions["db"], current_app.extensions["settings"]
+        )
+    return current_app.extensions["project_service"]
 
 
 def auth_service() -> AuthService:

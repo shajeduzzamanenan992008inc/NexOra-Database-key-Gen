@@ -180,21 +180,21 @@ class Database:
     # -- query helpers --------------------------------------------------------
 
     def fetch_all(
-        self, sql: str, params: Sequence[Any] = ()
+        self, sql: str, params: Sequence[Any] | None = ()
     ) -> list[dict[str, Any]]:
         with self.cursor() as cursor:
-            cursor.execute(sql, tuple(params))
+            cursor.execute(sql, tuple(() if params is None else params))
             return _rows(cursor)
 
     def fetch_one(
-        self, sql: str, params: Sequence[Any] = ()
+        self, sql: str, params: Sequence[Any] | None = ()
     ) -> dict[str, Any] | None:
-        rows = self.fetch_all(sql, params)
+        rows = self.fetch_all(sql, () if params is None else params)
         return rows[0] if rows else None
 
-    def fetch_value(self, sql: str, params: Sequence[Any] = ()) -> Any:
+    def fetch_value(self, sql: str, params: Sequence[Any] | None = ()) -> Any:
         with self.cursor() as cursor:
-            cursor.execute(sql, tuple(params))
+            cursor.execute(sql, tuple(() if params is None else params))
             row = cursor.fetchone()
             return row[0] if row else None
 

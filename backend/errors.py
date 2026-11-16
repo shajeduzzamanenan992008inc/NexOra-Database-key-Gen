@@ -21,12 +21,16 @@ class ApiError(Exception):
 
     def __init__(
         self,
-        status: int,
-        code: str,
-        message: str,
+        status: int = 400,
+        code: str = "bad_request",
+        message: str = "",
         details: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
+        *,
+        status_code: int | None = None,
     ) -> None:
+        if status_code is not None:
+            status = status_code
         super().__init__(message)
         self.status = status
         self.code = code

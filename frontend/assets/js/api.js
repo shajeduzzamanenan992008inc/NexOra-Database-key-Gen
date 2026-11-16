@@ -4,6 +4,10 @@ export function setCsrfToken(token) {
   csrfToken = typeof token === "string" ? token : "";
 }
 
+export function getCsrfToken() {
+  return csrfToken;
+}
+
 export class ApiProblem extends Error {
   constructor(message, status, code = "request_failed", details = {}) {
     super(message);
@@ -79,29 +83,80 @@ function query(params) {
 }
 
 export const api = {
-  session: () => request("/api/auth/session"),
+  // Authentication
+  session: () => request("/api/v1/auth/session"),
   login: (email, password) =>
-    request("/api/auth/login", { method: "POST", body: { email, password } }),
-  logout: () => request("/api/auth/logout", { method: "POST" }),
+    request("/api/v1/auth/login", { method: "POST", body: { email, password } }),
+  logout: () => request("/api/v1/auth/logout", { method: "POST" }),
 
-  stats: () => request("/api/dashboard/stats"),
+  // Dashboard Overview & Health
+  stats: () => request("/api/v1/dashboard/stats"),
+  health: () => request("/api/v1/health"),
 
-  keys: (params) => request(`/api/keys?${query(params)}`),
-  key: (id) => request(`/api/keys/${encodeURIComponent(id)}`),
+  // Project Management
+  projects: (params) => request(`/api/v1/projects?${query(params)}`),
+  project: (id) => request(`/api/v1/projects/${encodeURIComponent(id)}`),
+  createProject: (body) => request("/api/v1/projects", { method: "POST", body }),
+  setProjectStatus: (id, status) =>
+    request(`/api/v1/projects/${encodeURIComponent(id)}/status`, {
+      method: "PATCH",
+      body: { status },
+    }),
+  deleteProject: (id) =>
+    request(`/api/v1/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // Reader Key Management & Generation
+  generateReaderKey: (projectId, body) =>
+    request(`/api/v1/projects/${encodeURIComponent(projectId)}/keys`, {
+      method: "POST",
+      body,
+    }),
+  generateBulkReaderKeys: (projectId, body) =>
+    request(`/api/v1/projects/${encodeURIComponent(projectId)}/keys/bulk`, {
+      method: "POST",
+      body,
+    }),
+  readerKeys: (params) => request(`/api/v1/keys?${query(params)}`),
+  readerKey: (id) => request(`/api/v1/keys/${encodeURIComponent(id)}`),
+  revokeReaderKey: (keyId, reason) =>
+    request(`/api/v1/keys/${encodeURIComponent(keyId)}/revoke`, {
+      method: "POST",
+      body: { reason },
+    }),
+  exportReaderKeysUrl: (params) => `/api/v1/keys/export?${query(params)}`,
+
+  // Installation Management
+  installations: (params) => request(`/api/v1/installations?${query(params)}`),
+  installation: (id) =>
+    request(`/api/v1/installations/${encodeURIComponent(id)}`),
+  revokeInstallation: (id, reason) =>
+    request(`/api/v1/installations/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+      body: { reason },
+    }),
+
+  // Security Center
+  securityStatus: () => request("/api/v1/security/status"),
+
+  // Audit Logs
+  auditLogs: (params) => request(`/api/v1/audit-logs?${query(params)}`),
+
+  // System Settings
+  settings: () => request("/api/v1/settings"),
+  updateSettings: (body) =>
+    request("/api/v1/settings", { method: "PATCH", body }),
+
+  // Legacy API mappings for backward compatibility
+  keys: (params) => request(`/api/v1/keys?${query(params)}`),
+  key: (id) => request(`/api/v1/keys/${encodeURIComponent(id)}`),
   generate: (body) => request("/api/keys/generate", { method: "POST", body }),
   bulkGenerate: (body) =>
     request("/api/keys/bulk-generate", { method: "POST", body }),
-  updateKey: (id, body) =>
-    request(`/api/keys/${encodeURIComponent(id)}`, { method: "PATCH", body }),
-  deleteKey: (id) =>
-    request(`/api/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
   revoke: (keyId, reason) =>
-    request("/api/keys/revoke", {
+    request(`/api/v1/keys/${encodeURIComponent(keyId)}/revoke`, {
       method: "POST",
-      body: { key_id: keyId, reason },
+      body: { reason },
     }),
-  deactivate: (body) =>
-    request("/api/keys/deactivate", { method: "POST", body }),
-  logs: (params) => request(`/api/logs?${query(params)}`),
-  exportUrl: (params) => `/api/keys/export?${query(params)}`,
+  logs: (params) => request(`/api/v1/audit-logs?${query(params)}`),
+  exportUrl: (params) => `/api/v1/keys/export?${query(params)}`,
 };

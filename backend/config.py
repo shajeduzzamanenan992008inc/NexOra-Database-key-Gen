@@ -23,6 +23,7 @@ _PLACEHOLDER_MARKERS = (
     "replace-me",
     "replace_me",
     "replace_with",
+    "replace_",
     "your-",
     "<",
     "placeholder",
@@ -246,12 +247,54 @@ def _validate_admin_role(value: str | None) -> str:
     return role
 
 
+def _validate_supabase_url(value: str | None) -> str:
+    """Validate SUPABASE_URL — optional, but must be a real Supabase project URL if set."""
+    if not value:
+        return ""
+    value = value.strip().rstrip("/")
+    for marker in _PLACEHOLDER_MARKERS:
+        if marker in value.lower():
+            raise ConfigError("SUPABASE_URL still contains a placeholder value.")
+    if not value.startswith("https://"):
+        raise ConfigError("SUPABASE_URL must start with https://")
+    if ".supabase.co" not in value:
+        raise ConfigError(
+            "SUPABASE_URL must be a valid Supabase project URL (*.supabase.co)"
+        )
+    return value
+
+
+def _validate_supabase_service_role_key(key: str | None, url: str) -> str:
+    """Validate SUPABASE_SERVICE_ROLE_KEY when configured."""
+    if not key:
+        if url:
+            raise ConfigError(
+                "SUPABASE_SERVICE_ROLE_KEY is required when SUPABASE_URL is configured."
+            )
+        return ""
+    if not url:
+        raise ConfigError(
+            "SUPABASE_URL is required when SUPABASE_SERVICE_ROLE_KEY is configured."
+        )
+    value = key.strip()
+    lowered = value.lower()
+    for marker in _PLACEHOLDER_MARKERS:
+        if marker in lowered:
+            raise ConfigError(
+                "SUPABASE_SERVICE_ROLE_KEY still contains a placeholder value."
+            )
+    if len(value) < 20:
+        raise ConfigError("SUPABASE_SERVICE_ROLE_KEY appears too short to be a valid JWT.")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     """Validated application settings.
 
-    ``secret_key``, ``key_pepper`` and ``admin_password_hash`` are excluded from
-    ``repr`` so a stray log statement cannot leak a credential.
+    ``secret_key``, ``key_pepper``, ``admin_password_hash`` and
+    ``supabase_service_role_key`` are excluded from ``repr`` so a stray log
+    statement cannot leak a credential.
     """
 
     database: DatabaseSettings
@@ -273,6 +316,15 @@ class Settings:
     max_bulk_keys: int = 500
     brand_name: str = "NexOra-Database-key-Gen"
     version: str = "1.0.0"
+    # ---- NexOra Phase 1: API versioning ----
+    api_version: str = "v1"
+    # ---- NexOra Phase 1: Supabase integration ----
+    # Optional — validated only when set. Never written to logs.
+    supabase_url: str = ""
+    supabase_service_role_key: str = field(default="", repr=False)
+    # ---- NexOra Phase 1: Reader installation limit ----
+    # Only one active reader installation is permitted per project.
+    max_reader_installations_per_project: int = 1
 
     @property
     def is_production(self) -> bool:
@@ -289,6 +341,11 @@ class Settings:
             connect_timeout=_int_env(
                 "DB_CONNECT_TIMEOUT", 10, minimum=1, maximum=60
             ),
+        )
+
+        supabase_url = _validate_supabase_url(_string_env("SUPABASE_URL"))
+        supabase_key = _validate_supabase_service_role_key(
+            _string_env("SUPABASE_SERVICE_ROLE_KEY"), supabase_url
         )
 
         return cls(
@@ -313,4 +370,7 @@ class Settings:
             rate_limit_enabled=_bool_env("RATE_LIMIT_ENABLED", True),
             trust_proxy=_bool_env("TRUST_PROXY", False),
             max_bulk_keys=_int_env("MAX_BULK_KEYS", 500, minimum=1, maximum=2000),
+            # NexOra Phase 1: Supabase credentials (validated together)
+            supabase_url=supabase_url,
+            supabase_service_role_key=supabase_key,
         )
