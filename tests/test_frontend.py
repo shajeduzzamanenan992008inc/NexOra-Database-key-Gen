@@ -70,6 +70,17 @@ def test_javascript_uses_safe_dom_apis(app):
     assert "textContent" in uijs
 
 
+def test_dashboard_generate_key_uses_canonical_endpoint_and_fields(app):
+    client = app.test_client()
+    api_js = client.get("/assets/js/api.js").get_data(as_text=True)
+    dashboard_js = client.get("/assets/js/dashboard.js").get_data(as_text=True)
+
+    assert '"/api/v1/projects/generate-key"' in api_js
+    assert "api.generateProjectKey" in dashboard_js
+    assert "project_name: projectName" in dashboard_js
+    assert "label," in dashboard_js
+
+
 OLD_BRAND = re.compile(r"RH E-?SPORTS|rhesports|rh-esports|rh_keygen|rh_session|RHX", re.IGNORECASE)
 
 

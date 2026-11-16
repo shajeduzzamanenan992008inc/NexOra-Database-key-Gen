@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from .db import DatabaseUnavailable
+from .schema_readiness import SchemaReadinessIssue, schema_readiness_issue
 from .serialization import jsonable
 
 log = logging.getLogger("nexora.errors")
@@ -52,8 +53,6 @@ class ValidationError(ApiError):
 def error_payload(
     code: str, message: str, details: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    from flask import g
-
     payload: dict[str, Any] = {
         "error": {
             "code": code,
@@ -77,7 +76,11 @@ def register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(DatabaseUnavailable)
     def handle_database_unavailable(exc: DatabaseUnavailable):
-        log.error("database unavailable: %s", exc)
+        log.error(
+            "database unavailable request_id=%s: %s",
+            getattr(g, "request_id", None),
+            exc,
+        )
         response = jsonify(
             error_payload(
                 "database_unavailable",
@@ -112,6 +115,29 @@ def register_error_handlers(app: Flask) -> None:
             response.headers[key] = value
         return response
 
+    def handle_schema_readiness(issue: SchemaReadinessIssue):
+        details: dict[str, Any] = {"schema_ready": False}
+        if issue.migration:
+            details["migration"] = issue.migration
+        log.error(
+            "database migration required request_id=%s sqlstate=%s object=%s "
+            "migration=%s",
+            getattr(g, "request_id", None),
+            issue.sqlstate,
+            issue.object_name or "unknown",
+            issue.migration or "unknown",
+        )
+        response = jsonify(
+            error_payload(
+                "DATABASE_MIGRATION_REQUIRED",
+                "A required database migration is pending. Apply the approved "
+                "migration, then retry.",
+                details,
+            )
+        )
+        response.status_code = 503
+        return response
+
     @app.errorhandler(Exception)
     def handle_unexpected(exc: Exception):
         if isinstance(exc, HTTPException):
@@ -120,9 +146,11 @@ def register_error_handlers(app: Flask) -> None:
             return handle_database_unavailable(exc)
         if isinstance(exc, ApiError):
             return handle_api_error(exc)
+        issue = schema_readiness_issue(exc)
+        if issue is not None:
+            return handle_schema_readiness(issue)
         log.exception(
-            "unhandled error",
-            extra={"request_id": getattr(request, "request_id", None)},
+            "unhandled error request_id=%s", getattr(g, "request_id", None)
         )
         response = jsonify(error_payload("internal_error", GENERIC_MESSAGE))
         response.status_code = 500

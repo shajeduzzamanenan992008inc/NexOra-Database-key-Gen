@@ -4,6 +4,7 @@ Examples:
     python -m backend.cli hash-password --email admin@example.com
     python -m backend.cli bootstrap-admin
     python -m backend.cli migrate
+    python -m backend.cli migration-status
     python -m backend.cli set-password --email admin@example.com
     python -m backend.cli expire
     python -m backend.cli list-admins
@@ -21,7 +22,7 @@ from dotenv import load_dotenv
 from .config import ConfigError, Settings
 from .db import Database, DatabaseUnavailable
 from .errors import ApiError
-from .migrations import apply_migrations
+from .migrations import apply_migrations, inspect_migrations
 from .security.passwords import hash_password, password_problems
 from .services.admin_bootstrap import ensure_initial_admin
 from .services.auth_service import AuthService
@@ -170,6 +171,58 @@ def cmd_migrate(_args: argparse.Namespace) -> int:
         db.close()
 
 
+def cmd_migration_status(_args: argparse.Namespace) -> int:
+    """Read-only migration and Migration 007 schema readiness check."""
+    settings = _settings()
+    db = Database(settings.database)
+    try:
+        readiness = inspect_migrations(db, ROOT / "db" / "migrations")
+        print(
+            "Target: "
+            f"{settings.database.host}:{settings.database.port}/"
+            f"{settings.database.database} "
+            f"sslmode={settings.database.sslmode}"
+        )
+        applied = [row["filename"] for row in readiness["applied"]]
+        print("Applied: " + (", ".join(applied) if applied else "none"))
+        pending = readiness["pending"]
+        print("Pending: " + (", ".join(pending) if pending else "none"))
+        if readiness["checksum_mismatches"]:
+            print("Checksum mismatches:", file=sys.stderr)
+            for item in readiness["checksum_mismatches"]:
+                print(
+                    f"  - {item['filename']}: local={item['local'][:12]} "
+                    f"database={item['database'][:12]}",
+                    file=sys.stderr,
+                )
+        migration = readiness["migration_007"]
+        print(
+            "007:"
+            f" present={migration['present']}"
+            f" recorded={migration['applied']}"
+            f" checksum={str(migration['checksum'])[:12]}"
+        )
+        for name, present in readiness["objects"].items():
+            print(f"  {name}: {'present' if present else 'MISSING'}")
+        for issue in readiness.get("verification_errors", []):
+            print(f"Verification unavailable: {issue}", file=sys.stderr)
+        for check in readiness.get("checks", []):
+            if not check["ok"]:
+                detail = f": {check['detail']}" if check["detail"] else ""
+                print(f"Check failed: {check['name']}{detail}", file=sys.stderr)
+        print("READY" if readiness["ready"] else "NOT READY")
+        return 0 if readiness["ready"] else 1
+    except DatabaseUnavailable:
+        print(
+            "Database error: unable to connect or query the configured target; "
+            "no credentials were displayed.",
+            file=sys.stderr,
+        )
+        return 3
+    finally:
+        db.close()
+
+
 def cmd_purge_projects(args: argparse.Namespace) -> int:
     """Permanently delete projects whose configured auto-delete date is due.
 
@@ -299,6 +352,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     migrate = sub.add_parser("migrate", help="Apply database migrations.")
     migrate.set_defaults(func=cmd_migrate)
+
+    migration_status = sub.add_parser(
+        "migration-status",
+        help="Read-only migration and Migration 007 schema readiness check.",
+    )
+    migration_status.set_defaults(func=cmd_migration_status)
 
     expire = sub.add_parser("expire", help="Mark overdue keys as expired.")
     expire.set_defaults(func=cmd_expire)
