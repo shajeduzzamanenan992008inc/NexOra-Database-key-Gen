@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Sequence
 from uuid import UUID, uuid4
 
+from ..config import _PLACEHOLDER_MARKERS
 from ..db import Database, is_unique_violation
 from ..errors import ApiError, ValidationError
 from ..security.keys import (
@@ -885,13 +886,47 @@ class ProjectService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> dict[str, Any]:
-        """Validate and redeem a Reader Key atomically."""
-        # 1. Verify Database URL
-        configured_url = (getattr(self.settings, "supabase_url", "") or "").rstrip("/")
+        """Validate and redeem a Reader Key atomically.
+
+        Contract:
+        The Reader App submits the public Supabase Project URL (e.g. https://<project-ref>.supabase.co),
+        NEVER a direct PostgreSQL connection string, database password, or service role key.
+        The server validates the submitted URL against its configured Supabase Project URL.
+        """
+        # 1. Verify Database URL contract
+        configured_url = (getattr(self.settings, "supabase_url", "") or "").strip().rstrip("/")
+        if not configured_url:
+            # Fail closed if the expected Supabase Project URL is not configured on the server
+            raise ApiError(
+                503,
+                "SERVER_CONFIGURATION_ERROR",
+                "Supabase Project URL is not configured on the server. Reader activation is unavailable.",
+            )
+
         submitted_url = (database_url or "").strip().rstrip("/")
         if not submitted_url:
             raise ValidationError({"database_url": "database_url is required."})
-        if configured_url and submitted_url.lower() != configured_url.lower():
+
+        # Reject attempts to submit a direct PostgreSQL connection string
+        if submitted_url.lower().startswith(("postgres://", "postgresql://")):
+            raise ApiError(
+                400,
+                "INVALID_DATABASE_URL",
+                "Reader App must submit the Supabase Project URL (https://<project-ref>.supabase.co), not a PostgreSQL connection string.",
+            )
+
+        # Reject placeholder values
+        lowered_submitted = submitted_url.lower()
+        for marker in _PLACEHOLDER_MARKERS:
+            if marker in lowered_submitted:
+                raise ApiError(
+                    400,
+                    "DATABASE_URL_MISMATCH",
+                    "Provided database_url contains invalid placeholder content.",
+                )
+
+        # Validate against the exact server-configured Supabase Project URL (case-insensitive and trailing slash normalized)
+        if submitted_url.lower() != configured_url.lower():
             raise ApiError(
                 400,
                 "DATABASE_URL_MISMATCH",
@@ -904,6 +939,7 @@ class ProjectService:
         except ValueError as exc:
             raise ValidationError({"project_name": str(exc)}) from None
 
+        # Pre-check project existence outside the write transaction to fail fast on 404
         project = self.db.fetch_one(
             """
             SELECT id, project_name, status, deleted_at
@@ -920,7 +956,7 @@ class ProjectService:
             )
         project_id = str(project["id"])
 
-        # 7. Check if project already has an active installation
+        # Preliminary check: fail fast if active installation already exists
         existing_install = self.db.fetch_one(
             """
             SELECT id, device_id, activated_at
@@ -948,125 +984,180 @@ class ProjectService:
         installation_id = uuid4()
         token_id = uuid4()
 
-        with self.db.cursor() as cursor:
-            # Row lock key to prevent concurrent redemption
-            cursor.execute(
-                """
-                SELECT id, project_id, status, is_permanent, expires_at
-                FROM reader_keys
-                WHERE key_hash = %s
-                FOR UPDATE
-                """,
-                (key_hash,),
-            )
-            key_row = cursor.fetchone()
-            if not key_row:
-                raise ApiError(
-                    404,
-                    "KEY_NOT_FOUND",
-                    "Reader key not found.",
-                )
+        key_is_expired = False
 
-            key_id = str(key_row[0])
-            key_project_id = str(key_row[1])
-            key_status = key_row[2]
-            is_permanent = key_row[3]
-            expires_at = key_row[4]
-
-            if key_project_id != project_id:
-                raise ApiError(
-                    403,
-                    "KEY_PROJECT_MISMATCH",
-                    "Reader key does not belong to this project.",
-                )
-
-            if key_status == "used":
-                raise ApiError(
-                    410,
-                    "KEY_ALREADY_USED",
-                    "Reader key has already been redeemed and cannot be reused.",
-                )
-
-            if key_status == "revoked":
-                raise ApiError(
-                    410,
-                    "KEY_REVOKED",
-                    "Reader key has been revoked.",
-                )
-
-            if not is_permanent and expires_at and expires_at < now:
+        try:
+            with self.db.cursor() as cursor:
+                # Lock the project row to serialize concurrent activations for this project
                 cursor.execute(
-                    "UPDATE reader_keys SET status = 'expired' WHERE id = %s",
-                    (key_id,),
+                    """
+                    SELECT id, status
+                    FROM nexora_projects
+                    WHERE id = %s AND deleted_at IS NULL
+                    FOR UPDATE
+                    """,
+                    (project_id,),
                 )
+                proj_lock = cursor.fetchone()
+                if not proj_lock or proj_lock[1] != "active":
+                    raise ApiError(
+                        404,
+                        "PROJECT_NOT_FOUND",
+                        "Project does not exist or is inactive.",
+                    )
+
+                # Re-verify one-active-installation rule under the lock
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM reader_installations
+                    WHERE project_id = %s AND status = 'active'
+                    """,
+                    (project_id,),
+                )
+                if cursor.fetchone():
+                    raise ApiError(
+                        409,
+                        "ACTIVE_INSTALLATION_EXISTS",
+                        "Project already has an active installation. Only one active Reader installation is permitted per project.",
+                    )
+
+                # Row lock key to prevent concurrent redemption
+                cursor.execute(
+                    """
+                    SELECT id, project_id, status, is_permanent, expires_at
+                    FROM reader_keys
+                    WHERE key_hash = %s
+                    FOR UPDATE
+                    """,
+                    (key_hash,),
+                )
+                key_row = cursor.fetchone()
+                if not key_row:
+                    raise ApiError(
+                        404,
+                        "KEY_NOT_FOUND",
+                        "Reader key not found.",
+                    )
+
+                key_id = str(key_row[0])
+                key_project_id = str(key_row[1])
+                key_status = key_row[2]
+                is_permanent = key_row[3]
+                expires_at = key_row[4]
+
+                if key_project_id != project_id:
+                    raise ApiError(
+                        403,
+                        "KEY_PROJECT_MISMATCH",
+                        "Reader key does not belong to this project.",
+                    )
+
+                if key_status == "used":
+                    raise ApiError(
+                        410,
+                        "KEY_ALREADY_USED",
+                        "Reader key has already been redeemed and cannot be reused.",
+                    )
+
+                if key_status == "revoked":
+                    raise ApiError(
+                        410,
+                        "KEY_REVOKED",
+                        "Reader key has been revoked.",
+                    )
+
+                if key_status == "expired":
+                    raise ApiError(
+                        410,
+                        "KEY_EXPIRED",
+                        "Reader key has expired.",
+                    )
+
+                if not is_permanent and expires_at and expires_at < now:
+                    cursor.execute(
+                        "UPDATE reader_keys SET status = 'expired' WHERE id = %s",
+                        (key_id,),
+                    )
+                    key_is_expired = True
+                    # Key expiry update commits when exiting the cursor context
+                elif key_status != "generated":
+                    raise ApiError(
+                        400,
+                        "KEY_INVALID_STATE",
+                        f"Reader key is not in a redeemable state ({key_status}).",
+                    )
+                else:
+                    # Mark key permanently USED
+                    cursor.execute(
+                        """
+                        UPDATE reader_keys
+                        SET status = 'used', used_at = %s
+                        WHERE id = %s
+                        """,
+                        (now, key_id),
+                    )
+
+                    # Register installation
+                    cursor.execute(
+                        """
+                        INSERT INTO reader_installations
+                            (id, project_id, reader_key_id, device_token_hash,
+                             device_id, status, activated_at, last_seen_at, ip_address, user_agent)
+                        VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s)
+                        """,
+                        (
+                            str(installation_id),
+                            project_id,
+                            key_id,
+                            cred_hash,
+                            device_id.strip() if device_id else None,
+                            now,
+                            now,
+                            ip_address,
+                            user_agent,
+                        ),
+                    )
+
+                    # Issue device token
+                    cursor.execute(
+                        """
+                        INSERT INTO device_tokens
+                            (id, installation_id, project_id, token_hash, issued_at, last_used_at, is_active)
+                        VALUES (%s, %s, %s, %s, %s, %s, true)
+                        """,
+                        (str(token_id), str(installation_id), project_id, cred_hash, now, now),
+                    )
+
+                    self._write_audit(
+                        cursor,
+                        action="reader.activate",
+                        target_type="project",
+                        target_id=project_id,
+                        project_id=project_id,
+                        outcome="success",
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        details={
+                            "project_name": project["project_name"],
+                            "installation_id": str(installation_id),
+                            "device_id": device_id,
+                        },
+                    )
+        except Exception as exc:
+            if is_unique_violation(exc):
                 raise ApiError(
-                    410,
-                    "KEY_EXPIRED",
-                    "Reader key has expired.",
-                )
+                    409,
+                    "ACTIVE_INSTALLATION_EXISTS",
+                    "Project already has an active installation. Only one active Reader installation is permitted per project.",
+                ) from None
+            raise
 
-            if key_status != "generated":
-                raise ApiError(
-                    400,
-                    "KEY_INVALID_STATE",
-                    f"Reader key is not in a redeemable state ({key_status}).",
-                )
-
-            # Mark key permanently USED
-            cursor.execute(
-                """
-                UPDATE reader_keys
-                SET status = 'used', used_at = %s
-                WHERE id = %s
-                """,
-                (now, key_id),
-            )
-
-            # Register installation
-            cursor.execute(
-                """
-                INSERT INTO reader_installations
-                    (id, project_id, reader_key_id, device_token_hash,
-                     device_id, status, activated_at, last_seen_at, ip_address, user_agent)
-                VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s)
-                """,
-                (
-                    str(installation_id),
-                    project_id,
-                    key_id,
-                    cred_hash,
-                    device_id.strip() if device_id else None,
-                    now,
-                    now,
-                    ip_address,
-                    user_agent,
-                ),
-            )
-
-            # Issue device token
-            cursor.execute(
-                """
-                INSERT INTO device_tokens
-                    (id, installation_id, project_id, token_hash, issued_at, last_used_at, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, true)
-                """,
-                (str(token_id), str(installation_id), project_id, cred_hash, now, now),
-            )
-
-            self._write_audit(
-                cursor,
-                action="reader.activate",
-                target_type="project",
-                target_id=project_id,
-                project_id=project_id,
-                outcome="success",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                details={
-                    "project_name": project["project_name"],
-                    "installation_id": str(installation_id),
-                    "device_id": device_id,
-                },
+        if key_is_expired:
+            raise ApiError(
+                410,
+                "KEY_EXPIRED",
+                "Reader key has expired.",
             )
 
         return {
