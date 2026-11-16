@@ -1,0 +1,409 @@
+/* ==========================================================================
+   NexOra SMS Reader — surface-specific additions on top of assets/app.css
+   Deep navy + electric cyan glass, with one-time key and reader controls.
+   ========================================================================== */
+
+.sms-app {
+  --sms-glow: 0 0 38px rgba(55, 226, 255, 0.14);
+}
+
+.sms-app .sidebar {
+  background:
+    linear-gradient(180deg, rgba(7, 18, 36, 0.86), rgba(4, 9, 18, 0.72)),
+    var(--panel);
+}
+
+.sms-app .brand-sm .brand-name small {
+  color: var(--cyan);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.sms-app .nav-item[data-status="activated"][data-online="1"].is-active,
+.sms-app .nav-item[data-status="generated"].is-active,
+.sms-app .nav-item[data-status="activated"][data-online="0"].is-active,
+.sms-app .nav-item[data-status="revoked"].is-active {
+  border-color: rgba(90, 210, 255, 0.3);
+}
+
+.sms-app .stat-card {
+  position: relative;
+}
+
+.sms-form-grid {
+  align-items: start;
+}
+
+.stack-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.stack-form .btn {
+  align-self: flex-start;
+  min-width: 210px;
+}
+
+.sms-info-panel {
+  background:
+    radial-gradient(600px 260px at 110% -10%, rgba(55, 226, 255, 0.1), transparent 65%),
+    rgba(7, 14, 28, 0.62);
+}
+
+.step-list,
+.security-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.step-list li,
+.security-list li {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+}
+
+.step-list li > span {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid rgba(55, 226, 255, 0.2);
+  background: rgba(55, 226, 255, 0.055);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.step-list strong,
+.security-list strong {
+  display: block;
+  font-size: 0.84rem;
+  color: var(--text);
+}
+
+.step-list p,
+.security-list p {
+  margin-top: 3px;
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.step-list code {
+  color: var(--cyan-soft);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.list-mark {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(46, 230, 168, 0.28);
+  background: rgba(46, 230, 168, 0.08);
+  color: var(--success);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+/* ----------------------------------------------------------- activation feed */
+
+.event-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.event-feed li {
+  margin: 0;
+}
+
+.event-feed-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 11px;
+  border: 1px solid rgba(112, 168, 255, 0.08);
+  background: rgba(3, 8, 17, 0.5);
+  text-align: left;
+  color: var(--text-dim);
+  transition: 0.16s ease;
+}
+
+.event-feed-item:hover {
+  border-color: rgba(55, 226, 255, 0.22);
+  background: rgba(55, 226, 255, 0.045);
+  color: var(--text);
+}
+
+.event-feed-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 12px rgba(55, 226, 255, 0.5);
+}
+
+.event-feed-mark.is-success {
+  background: var(--success);
+  box-shadow: 0 0 12px rgba(46, 230, 168, 0.4);
+}
+
+.event-feed-mark.is-failure {
+  background: var(--danger);
+  box-shadow: 0 0 12px rgba(255, 84, 112, 0.4);
+}
+
+.event-feed-copy {
+  min-width: 0;
+}
+
+.event-feed-copy strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.event-feed-copy span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-feed time {
+  color: var(--muted);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.event-feed-empty {
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------- tables */
+
+.sms-reader-table {
+  min-width: 0;
+}
+
+.sms-keys-table {
+  min-width: 1020px;
+}
+
+.table-scroll-hint {
+  display: none;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+
+.sms-keys-head {
+  align-items: flex-start;
+}
+
+.sms-keys-head .chip {
+  margin-top: 4px;
+  color: var(--cyan);
+  border-color: rgba(55, 226, 255, 0.25);
+  background: rgba(55, 226, 255, 0.06);
+}
+
+.reader-cell strong {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+
+.reader-cell span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.device-code {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.table-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.table-actions .btn {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 0.7rem;
+}
+
+.empty-state-row td {
+  padding: 28px 12px !important;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------ reader detail */
+
+.detail-hero {
+  align-items: flex-start;
+}
+
+.detail-hero .detail-hero-copy {
+  min-width: 0;
+}
+
+.detail-hero code {
+  overflow-wrap: anywhere;
+}
+
+.detail-note {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+.detail-events {
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.detail-events .event-row {
+  align-items: flex-start;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(112, 168, 255, 0.07);
+}
+
+.detail-events .event-row:last-child {
+  border-bottom: 0;
+}
+
+.detail-events .event-copy {
+  min-width: 0;
+}
+
+.detail-events .event-copy strong {
+  display: block;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 0.76rem;
+}
+
+.detail-events .event-copy span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.detail-events time {
+  margin-left: auto;
+  flex: none;
+}
+
+/* --------------------------------------------------------------- responsive */
+
+@media (max-width: 1120px) {
+  .sms-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 980px) {
+  .sms-app .sidebar {
+    position: static;
+    height: auto;
+  }
+
+  .sms-app .side-nav {
+    scrollbar-width: thin;
+  }
+}
+
+@media (max-width: 720px) {
+  .sms-app .side-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sms-app .nav-item {
+    min-height: 62px;
+  }
+
+  .sms-keys-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .sms-keys-head .chip {
+    align-self: flex-start;
+    margin-top: 0;
+  }
+
+  .stack-form .btn {
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .event-feed-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .event-feed time {
+    grid-column: 2;
+  }
+}
+
+@media (max-width: 430px) {
+  .sms-app .side-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .sms-keys-table {
+    min-width: 860px;
+  }
+
+  .detail-hero {
+    flex-direction: column;
+  }
+}

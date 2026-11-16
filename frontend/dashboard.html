@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="application-name" content="NexOra-Database-key-Gen">
+  <meta name="description" content="NexOra Database Key Generator & License Management System. Secure Keys. Smarter Database Management.">
+  <title>Console · NexOra Database Key Generator</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="app-page">
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-c" aria-hidden="true"></div>
+  <div class="scanline" aria-hidden="true"></div>
+
+  <div class="app-shell">
+    <aside class="sidebar glass">
+      <a class="brand brand-sm" href="/dashboard">
+        <img src="/assets/logo.svg" alt="" width="42" height="42">
+        <span class="brand-name">
+          <strong>NexOra</strong>
+          <small>Database Key Generator</small>
+        </span>
+      </a>
+
+      <nav class="side-nav" aria-label="Primary navigation">
+        <button class="nav-item is-active" type="button" data-view="overview">
+          <span class="nav-icon" aria-hidden="true">◈</span>
+          <span><strong>Overview</strong><small>System pulse</small></span>
+        </button>
+        <button class="nav-item" type="button" data-view="keys">
+          <span class="nav-icon" aria-hidden="true">⌘</span>
+          <span><strong>License keys</strong><small>Issue &amp; manage</small></span>
+        </button>
+        <button class="nav-item" type="button" data-view="logs">
+          <span class="nav-icon" aria-hidden="true">≡</span>
+          <span><strong>Activity logs</strong><small>Generation &amp; audit</small></span>
+        </button>
+      </nav>
+
+      <div class="side-foot">
+        <div class="user-chip">
+          <span id="user-initials" class="avatar" aria-hidden="true">—</span>
+          <span class="user-meta">
+            <strong id="user-name">Loading…</strong>
+            <small id="user-role">—</small>
+          </span>
+        </div>
+        <button id="logout-btn" class="btn btn-ghost btn-block" type="button">Sign out</button>
+        <p class="side-note">Server-side authorization · CSRF protected</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">
+          <p class="eyebrow">NexOra / License Ops</p>
+          <h1 id="page-title">Overview</h1>
+          <p id="page-subtitle" class="page-subtitle">Live license posture across the ecosystem.</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="chip chip-live"><span class="pulse-dot"></span> SECURE SESSION</span>
+          <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh</button>
+          <button id="open-generate" class="btn btn-primary" type="button">Generate keys</button>
+        </div>
+      </header>
+
+      <div id="global-error" class="alert" role="alert" hidden></div>
+
+      <section id="view-overview" class="view is-active" aria-labelledby="page-title">
+        <div class="stat-grid">
+          <article class="stat-card glass">
+            <span class="stat-label">Total generated</span>
+            <strong class="stat-value" data-stat="total">—</strong>
+            <span class="stat-foot"><span data-stat="generated_24h">0</span> in last 24h</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass stat-success">
+            <span class="stat-label">Active</span>
+            <strong class="stat-value" data-stat="active">—</strong>
+            <span class="stat-foot">Ready to activate</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass stat-info">
+            <span class="stat-label">Used</span>
+            <strong class="stat-value" data-stat="used">—</strong>
+            <span class="stat-foot"><span data-stat="activation_rate">0</span>% activation rate</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass stat-warn">
+            <span class="stat-label">Expired</span>
+            <strong class="stat-value" data-stat="expired">—</strong>
+            <span class="stat-foot"><span data-stat="expiring_soon">0</span> expiring in 7 days</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass stat-danger">
+            <span class="stat-label">Revoked</span>
+            <strong class="stat-value" data-stat="revoked">—</strong>
+            <span class="stat-foot">Manually terminated</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass">
+            <span class="stat-label">Activations</span>
+            <strong class="stat-value" data-stat="activations_total">—</strong>
+            <span class="stat-foot"><span data-stat="activations_24h">0</span> active in last 24h</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <section class="panel glass">
+            <header class="panel-head">
+              <div><h2>Recent generation</h2><p>Batches issued from this console.</p></div>
+              <button class="btn btn-ghost btn-sm" type="button" data-go="logs">Open logs</button>
+            </header>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Batch</th><th>Qty</th><th>Format</th><th>By</th><th>When</th></tr>
+                </thead>
+                <tbody id="recent-generations"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel glass">
+            <header class="panel-head">
+              <div><h2>Audit pulse</h2><p>Latest administrative events.</p></div>
+            </header>
+            <ul id="recent-audit" class="audit-list"></ul>
+          </section>
+        </div>
+
+        <section class="panel glass posture-panel">
+          <div class="posture-copy">
+            <h2>Operational posture</h2>
+            <p>Keys are generated with an OS CSPRNG, hashed with HMAC-SHA256 before storage, and activated inside a row-locked transaction. Plaintext keys are returned once and never again.</p>
+          </div>
+          <div class="posture-metrics">
+            <div><span>Storage</span><strong>HMAC-SHA256</strong></div>
+            <div><span>Activation</span><strong>Row-locked</strong></div>
+            <div><span>Audit</span><strong>Append-only</strong></div>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-keys" class="view" aria-label="License keys">
+        <section class="panel glass">
+          <header class="panel-head">
+            <div><h2>License keys</h2><p>Masked display only · plaintext revealed once at generation.</p></div>
+            <button id="export-btn" class="btn btn-ghost" type="button">Export CSV</button>
+          </header>
+          <div class="toolbar">
+            <label class="search">
+              <span class="sr-only">Search keys</span>
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <input id="key-search" type="search" placeholder="Search label, hint or full key" maxlength="200" autocomplete="off">
+            </label>
+            <label class="select">
+              <span class="sr-only">Filter by status</span>
+              <select id="status-filter">
+                <option value="">All statuses</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="pending">Pending</option>
+                <option value="used">Used</option>
+                <option value="expired">Expired</option>
+                <option value="revoked">Revoked</option>
+              </select>
+            </label>
+            <label class="select">
+              <span class="sr-only">Rows per page</span>
+              <select id="page-size">
+                <option value="15">15 / page</option>
+                <option value="25">25 / page</option>
+                <option value="50">50 / page</option>
+              </select>
+            </label>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table keys-table">
+              <thead>
+                <tr>
+                  <th><button class="sort-btn" type="button" data-sort="label">Label</button></th>
+                  <th>Key hint</th>
+                  <th><button class="sort-btn" type="button" data-sort="status">Status</button></th>
+                  <th><button class="sort-btn" type="button" data-sort="activation_count">Activations</button></th>
+                  <th><button class="sort-btn" type="button" data-sort="expires_at">Expires</button></th>
+                  <th><button class="sort-btn" type="button" data-sort="created_at">Created</button></th>
+                  <th class="align-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="keys-body"></tbody>
+            </table>
+          </div>
+          <footer class="table-foot">
+            <span id="keys-summary" class="muted">—</span>
+            <div class="pager">
+              <button id="prev-page" class="btn btn-ghost btn-sm" type="button">← Prev</button>
+              <span id="page-info">Page 1</span>
+              <button id="next-page" class="btn btn-ghost btn-sm" type="button">Next →</button>
+            </div>
+          </footer>
+        </section>
+      </section>
+
+      <section id="view-logs" class="view" aria-label="Activity logs">
+        <section class="panel glass">
+          <header class="panel-head">
+            <div><h2>Activity logs</h2><p>Generation batches, activations and administrative audit.</p></div>
+            <div class="tabs" role="tablist" aria-label="Log type">
+              <button class="tab is-active" type="button" data-log="generation" role="tab" aria-selected="true">Generation</button>
+              <button class="tab" type="button" data-log="activations" role="tab" aria-selected="false">Activations</button>
+              <button class="tab" type="button" data-log="audit" role="tab" aria-selected="false">Audit</button>
+            </div>
+          </header>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead id="logs-head"></thead>
+              <tbody id="logs-body"></tbody>
+            </table>
+          </div>
+          <footer class="table-foot">
+            <span id="logs-summary" class="muted">—</span>
+            <div class="pager">
+              <button id="logs-prev" class="btn btn-ghost btn-sm" type="button">← Prev</button>
+              <span id="logs-page-info">Page 1</span>
+              <button id="logs-next" class="btn btn-ghost btn-sm" type="button">Next →</button>
+            </div>
+          </footer>
+        </section>
+      </section>
+
+      <footer class="app-foot">
+        NexOra-Database-key-Gen · Database Key Generator · v1.0 · Server-side authorization enforced
+      </footer>
+    </main>
+  </div>
+
+  <dialog id="generate-modal" class="modal" aria-labelledby="generate-title">
+    <form id="generate-form" class="modal-card" novalidate>
+      <header class="modal-head">
+        <div><p class="eyebrow">ISSUE NEW LICENSES</p><h2 id="generate-title">Generate keys</h2></div>
+        <button class="icon-close" type="button" data-close="generate-modal" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <div class="form-grid">
+          <label class="field">
+            <span class="field-label">Quantity</span>
+            <input id="gen-quantity" type="number" min="1" max="2000" value="1" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Max activations</span>
+            <input id="gen-max" type="number" min="1" max="10000" value="1" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Prefix</span>
+            <input id="gen-prefix" type="text" maxlength="12" value="NXR" pattern="[A-Za-z0-9]*" autocomplete="off">
+          </label>
+          <label class="field">
+            <span class="field-label">Suffix</span>
+            <input id="gen-suffix" type="text" maxlength="12" pattern="[A-Za-z0-9]*" autocomplete="off" placeholder="Optional">
+          </label>
+          <label class="field">
+            <span class="field-label">Groups</span>
+            <input id="gen-groups" type="number" min="1" max="8" value="4" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Group length</span>
+            <input id="gen-group-length" type="number" min="3" max="10" value="4" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Separator</span>
+            <select id="gen-separator">
+              <option value="-">Dash —</option>
+              <option value="_">Underscore _</option>
+              <option value="">None</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Expires at</span>
+            <input id="gen-expires" type="date">
+          </label>
+          <label class="field span-2">
+            <span class="field-label">Label</span>
+            <input id="gen-label" type="text" maxlength="80" autocomplete="off" placeholder="e.g. Production rollout">
+          </label>
+        </div>
+        <div class="format-preview">
+          <span>Format preview</span>
+          <code id="format-preview">NXR-****-****-****-****</code>
+          <small id="entropy-preview">80 bits of entropy per key</small>
+        </div>
+        <p id="generate-error" class="form-message" role="alert"></p>
+        <p class="modal-warn">Plaintext keys are shown once, immediately after generation. Store them before closing the next dialog.</p>
+      </div>
+      <footer class="modal-actions">
+        <button class="btn btn-ghost" type="button" data-close="generate-modal">Cancel</button>
+        <button id="generate-submit" class="btn btn-primary" type="submit">
+          <span class="btn-label">Generate</span>
+          <span class="spinner" hidden aria-hidden="true"></span>
+        </button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="result-modal" class="modal" aria-labelledby="result-title">
+    <div class="modal-card modal-wide">
+      <header class="modal-head">
+        <div><p class="eyebrow">ONE-TIME REVEAL</p><h2 id="result-title">Generated keys</h2></div>
+        <button class="icon-close" type="button" data-close="result-modal" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <div class="alert alert-warn">
+          Store these keys now. They cannot be retrieved again — only masked hints remain.
+        </div>
+        <p id="result-summary" class="muted"></p>
+        <div id="generated-list" class="key-list"></div>
+      </div>
+      <footer class="modal-actions">
+        <button id="copy-all" class="btn btn-ghost" type="button">Copy all</button>
+        <button id="download-keys" class="btn btn-ghost" type="button">Download .txt</button>
+        <button class="btn btn-primary" type="button" data-close="result-modal">Done</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="detail-modal" class="modal" aria-labelledby="detail-title">
+    <div class="modal-card modal-wide">
+      <header class="modal-head">
+        <div>
+          <p class="eyebrow">LICENSE RECORD</p>
+          <h2 id="detail-title">Key details</h2>
+        </div>
+        <button class="icon-close" type="button" data-close="detail-modal" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body" id="detail-body"></div>
+      <footer class="modal-actions" id="detail-actions"></footer>
+    </div>
+  </dialog>
+
+  <div id="busy-overlay" class="busy-overlay" hidden>
+    <span class="spinner spinner-lg" aria-hidden="true"></span>
+    <span>Syncing secure data…</span>
+  </div>
+
+  <script type="module" src="/assets/js/dashboard.js"></script>
+</body>
+</html>

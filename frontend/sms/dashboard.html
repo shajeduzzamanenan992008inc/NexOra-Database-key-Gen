@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="application-name" content="NexOra-Database-key-Gen">
+  <meta name="description" content="NexOra SMS Reader One-Time Key Management System. Secure Keys. Smarter Database Management.">
+  <title>SMS Reader Console · NexOra-Database-key-Gen</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/sms-assets/sms.css">
+</head>
+<body class="app-page sms-app">
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-c" aria-hidden="true"></div>
+  <div class="scanline" aria-hidden="true"></div>
+
+  <div class="app-shell">
+    <aside class="sidebar glass">
+      <a class="brand brand-sm" href="/dashboard">
+        <img src="/assets/logo.svg" alt="" width="42" height="42">
+        <span class="brand-name">
+          <strong>NexOra</strong>
+          <small>SMS Reader Keys</small>
+        </span>
+      </a>
+
+      <nav class="side-nav" aria-label="SMS reader navigation">
+        <button class="nav-item is-active" type="button" data-nav="overview">
+          <span class="nav-icon" aria-hidden="true">◈</span>
+          <span><strong>Overview</strong><small>System pulse</small></span>
+        </button>
+        <button class="nav-item" type="button" data-nav="generate">
+          <span class="nav-icon" aria-hidden="true">＋</span>
+          <span><strong>Generate key</strong><small>Single issuance</small></span>
+        </button>
+        <button class="nav-item" type="button" data-nav="bulk">
+          <span class="nav-icon" aria-hidden="true">▦</span>
+          <span><strong>Bulk generate</strong><small>Batch issuance</small></span>
+        </button>
+        <button class="nav-item" type="button" data-nav="keys" data-status="activated" data-online="1">
+          <span class="nav-icon" aria-hidden="true">◉</span>
+          <span><strong>Active readers</strong><small>Seen in 15 min</small></span>
+        </button>
+        <button class="nav-item" type="button" data-nav="keys" data-status="generated" data-online="0">
+          <span class="nav-icon" aria-hidden="true">⌘</span>
+          <span><strong>Unused keys</strong><small>Ready to redeem</small></span>
+        </button>
+        <button class="nav-item" type="button" data-nav="keys" data-status="activated" data-online="0">
+          <span class="nav-icon" aria-hidden="true">⇄</span>
+          <span><strong>Activated keys</strong><small>Bound readers</small></span>
+        </button>
+        <button class="nav-item" type="button" data-nav="keys" data-status="revoked" data-online="0">
+          <span class="nav-icon" aria-hidden="true">⊘</span>
+          <span><strong>Revoked keys</strong><small>Trust removed</small></span>
+        </button>
+      </nav>
+
+      <div class="side-foot">
+        <div class="user-chip">
+          <span id="user-initials" class="avatar" aria-hidden="true">—</span>
+          <span class="user-meta">
+            <strong id="user-name">Loading…</strong>
+            <small id="user-role">—</small>
+          </span>
+        </div>
+        <button id="logout-btn" class="btn btn-ghost btn-block" type="button">Sign out</button>
+        <p class="side-note">SMS surface · separate session audience</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">
+          <p class="eyebrow">NexOra / SMS Reader Ops</p>
+          <h1 id="page-title">Overview</h1>
+          <p id="page-subtitle" class="page-subtitle">Live one-time key posture for the SMS Reader fleet.</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="chip chip-live"><span class="pulse-dot"></span> SMS SESSION</span>
+          <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh</button>
+          <button id="open-generate" class="btn btn-primary" type="button">Generate key</button>
+        </div>
+      </header>
+
+      <div id="global-error" class="alert alert-error" role="alert" hidden></div>
+
+      <section id="view-overview" class="view is-active" aria-labelledby="page-title">
+        <div class="stat-grid">
+          <article class="stat-card glass">
+            <span class="stat-label">Total keys</span>
+            <strong class="stat-value" data-stat="total">—</strong>
+            <span class="stat-foot"><span data-stat="generated_24h">0</span> generated in 24h</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass stat-success">
+            <span class="stat-label">Unused</span>
+            <strong class="stat-value" data-stat="unused">—</strong>
+            <span class="stat-foot">Awaiting first redemption</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass stat-info">
+            <span class="stat-label">Activated</span>
+            <strong class="stat-value" data-stat="activated">—</strong>
+            <span class="stat-foot"><span data-stat="activation_rate">0</span>% activation rate</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass">
+            <span class="stat-label">Online readers</span>
+            <strong class="stat-value" data-stat="online_readers">—</strong>
+            <span class="stat-foot"><span data-stat="devices">0</span> bound devices</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass stat-danger">
+            <span class="stat-label">Revoked</span>
+            <strong class="stat-value" data-stat="revoked">—</strong>
+            <span class="stat-foot">Credentials invalidated</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+          <article class="stat-card glass stat-warn">
+            <span class="stat-label">Redemptions 24h</span>
+            <strong class="stat-value" data-stat="redemptions_24h">—</strong>
+            <span class="stat-foot"><span data-stat="authentications_24h">0</span> device authentications</span>
+            <span class="stat-glow" aria-hidden="true"></span>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <section class="panel glass">
+            <header class="panel-head">
+              <div><h2>Activation history</h2><p>Generation, redemption, authentication and revocation.</p></div>
+              <button class="btn btn-ghost btn-sm" type="button" data-go="keys">All keys</button>
+            </header>
+            <ul id="recent-events" class="event-feed" aria-live="polite"></ul>
+          </section>
+
+          <section class="panel glass">
+            <header class="panel-head">
+              <div><h2>Active readers</h2><p>Devices that checked in during the last 15 minutes.</p></div>
+              <button class="btn btn-ghost btn-sm" type="button" data-go="active-readers">Open</button>
+            </header>
+            <div class="table-wrap">
+              <table class="data-table sms-reader-table">
+                <thead>
+                  <tr><th>Reader</th><th>Device</th><th>Last seen</th></tr>
+                </thead>
+                <tbody id="reader-preview-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel glass posture-panel">
+          <div class="posture-copy">
+            <h2>One-time redemption posture</h2>
+            <p>Activation keys are generated with an OS CSPRNG and stored only as keyed HMAC-SHA256 digests. Redemption locks the key row, binds one device identifier and issues a separate high-entropy credential. The original activation key is never returned again.</p>
+          </div>
+          <div class="posture-metrics">
+            <div><span>Key storage</span><strong>HMAC-SHA256</strong></div>
+            <div><span>Redemption</span><strong>Row-locked</strong></div>
+            <div><span>Credential</span><strong>Digest only</strong></div>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-generate" class="view" aria-label="Generate SMS reader key">
+        <div class="grid-2 sms-form-grid">
+          <section class="panel glass">
+            <header class="panel-head">
+              <div><p class="eyebrow">SINGLE ISSUANCE</p><h2>Generate key</h2><p>Create one one-time activation key for a reader device.</p></div>
+            </header>
+            <form id="generate-form" class="stack-form" novalidate>
+              <label class="field" for="gen-reader">
+                <span class="field-label">Reader / device name</span>
+                <input id="gen-reader" type="text" maxlength="120" autocomplete="off"
+                       placeholder="e.g. Dhaka counter · SMS reader 01">
+                <span class="field-hint">Optional label shown in the console. The reader may supply a name on first redemption if left empty.</span>
+              </label>
+              <div class="format-preview">
+                <span>Key format</span>
+                <code>NEXORA-XXXX-XXXX-XXXX-XXXX</code>
+                <small>80 bits of CSPRNG entropy · plaintext shown once</small>
+              </div>
+              <p id="generate-error" class="form-message" role="alert"></p>
+              <button id="generate-submit" class="btn btn-primary" type="submit">
+                <span class="btn-label">Generate one-time key</span>
+                <span class="spinner" hidden aria-hidden="true"></span>
+              </button>
+            </form>
+          </section>
+
+          <section class="panel glass sms-info-panel">
+            <header class="panel-head">
+              <div><h2>What happens next</h2><p>The activation key is a bearer secret until redeemed.</p></div>
+            </header>
+            <ol class="step-list">
+              <li><span>01</span><div><strong>Copy once</strong><p>The plaintext key appears only in the creation dialog. The database stores a masked hint and an HMAC digest.</p></div></li>
+              <li><span>02</span><div><strong>Reader redeems</strong><p>The reader calls <code>POST /api/reader/redeem</code> with the key and its device id. The key row is locked during the transition.</p></div></li>
+              <li><span>03</span><div><strong>Credential issued</strong><p>The response contains a one-time device credential. Only its keyed digest is stored, and the original activation key is never returned.</p></div></li>
+              <li><span>04</span><div><strong>Admin controls trust</strong><p>Revoke a reader at any time. Its credential is cleared immediately and further authentication fails.</p></div></li>
+            </ol>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-bulk" class="view" aria-label="Bulk generate SMS reader keys">
+        <div class="grid-2 sms-form-grid">
+          <section class="panel glass">
+            <header class="panel-head">
+              <div><p class="eyebrow">BATCH ISSUANCE</p><h2>Bulk generate</h2><p>Issue a unique batch in a single database transaction.</p></div>
+            </header>
+            <form id="bulk-form" class="stack-form" novalidate>
+              <label class="field" for="bulk-quantity">
+                <span class="field-label">Quantity</span>
+                <input id="bulk-quantity" type="number" min="2" max="200" value="10" required>
+                <span id="bulk-limit-hint" class="field-hint">Between 2 and 200 keys per request.</span>
+              </label>
+              <label class="field" for="bulk-reader">
+                <span class="field-label">Reader / batch name</span>
+                <input id="bulk-reader" type="text" maxlength="120" autocomplete="off"
+                       placeholder="e.g. Production rollout · July">
+              </label>
+              <div class="format-preview">
+                <span>Batch policy</span>
+                <code>UNIQUE · ONCE · HMAC-SHA256</code>
+                <small>Duplicate hashes are prevented by a unique database index.</small>
+              </div>
+              <p id="bulk-error" class="form-message" role="alert"></p>
+              <button id="bulk-submit" class="btn btn-primary" type="submit">
+                <span class="btn-label">Generate batch</span>
+                <span class="spinner" hidden aria-hidden="true"></span>
+              </button>
+            </form>
+          </section>
+
+          <section class="panel glass sms-info-panel">
+            <header class="panel-head">
+              <div><h2>Batch safety</h2><p>Plaintext batch material exists only in the response.</p></div>
+            </header>
+            <ul class="security-list">
+              <li><span class="list-mark" aria-hidden="true">✓</span><div><strong>Single transaction</strong><p>Every key in the batch is inserted under one transaction and one audit entry.</p></div></li>
+              <li><span class="list-mark" aria-hidden="true">✓</span><div><strong>Unique by construction</strong><p>A collision retries with fresh CSPRNG output; the unique index is the final guard.</p></div></li>
+              <li><span class="list-mark" aria-hidden="true">✓</span><div><strong>Copy or download</strong><p>Copy individual keys, copy all, or download a one-time text file from the result dialog.</p></div></li>
+              <li><span class="list-mark" aria-hidden="true">✓</span><div><strong>No retrieval later</strong><p>The API and database never expose a stored plaintext key. Masked hints remain for operations.</p></div></li>
+            </ul>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-keys" class="view" aria-label="SMS reader keys">
+        <section class="panel glass">
+          <header class="panel-head sms-keys-head">
+            <div>
+              <p class="eyebrow" id="keys-eyebrow">KEY REGISTRY</p>
+              <h2 id="keys-title">Activated keys</h2>
+              <p id="keys-subtitle">Readers with a bound device credential.</p>
+            </div>
+            <span id="keys-count" class="chip">—</span>
+          </header>
+
+          <div class="toolbar">
+            <label class="search">
+              <span class="sr-only">Search reader keys</span>
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <input id="key-search" type="search" placeholder="Search reader, hint, device or full key" maxlength="200" autocomplete="off">
+            </label>
+            <label class="select">
+              <span class="sr-only">Filter by status</span>
+              <select id="status-filter">
+                <option value="">All statuses</option>
+                <option value="generated">Unused</option>
+                <option value="activated">Activated</option>
+                <option value="revoked">Revoked</option>
+              </select>
+            </label>
+            <label class="select">
+              <span class="sr-only">Rows per page</span>
+              <select id="page-size">
+                <option value="15">15 / page</option>
+                <option value="25">25 / page</option>
+                <option value="50">50 / page</option>
+              </select>
+            </label>
+            <button id="clear-search" class="btn btn-ghost btn-sm" type="button">Clear</button>
+          </div>
+
+          <p class="table-scroll-hint">Swipe horizontally to see all columns →</p>
+
+          <div class="table-wrap">
+            <table class="data-table keys-table sms-keys-table">
+              <thead>
+                <tr>
+                  <th><button class="sort-btn" type="button" data-sort="reader_name">Reader</button></th>
+                  <th>Key hint</th>
+                  <th><button class="sort-btn" type="button" data-sort="status">Status</button></th>
+                  <th>Device</th>
+                  <th>Last seen</th>
+                  <th><button class="sort-btn" type="button" data-sort="created_at">Created</button></th>
+                  <th class="align-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="keys-body"></tbody>
+            </table>
+          </div>
+          <footer class="table-foot">
+            <span id="keys-summary" class="muted">—</span>
+            <div class="pager">
+              <button id="prev-page" class="btn btn-ghost btn-sm" type="button">← Prev</button>
+              <span id="page-info">Page 1</span>
+              <button id="next-page" class="btn btn-ghost btn-sm" type="button">Next →</button>
+            </div>
+          </footer>
+        </section>
+      </section>
+
+      <footer class="app-foot">
+        NexOra-Database-key-Gen · SMS Reader One-Time Key Management · v1.0 · Server-side authorization enforced
+      </footer>
+    </main>
+  </div>
+
+  <dialog id="result-modal" class="modal modal-wide" aria-labelledby="result-title">
+    <div class="modal-card">
+      <header class="modal-head">
+        <div><p class="eyebrow">ONE-TIME REVEAL</p><h2 id="result-title">Generated keys</h2></div>
+        <button class="icon-close" type="button" data-close="result-modal" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <div class="alert alert-warn">
+          Store these activation keys now. They cannot be retrieved again — only masked hints remain in the database.
+        </div>
+        <p id="result-summary" class="muted"></p>
+        <div id="generated-list" class="key-list"></div>
+      </div>
+      <footer class="modal-actions">
+        <button id="copy-all" class="btn btn-ghost" type="button">Copy all</button>
+        <button id="download-keys" class="btn btn-ghost" type="button">Download .txt</button>
+        <button class="btn btn-primary" type="button" data-close="result-modal">Done</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="detail-modal" class="modal modal-wide" aria-labelledby="detail-title">
+    <div class="modal-card">
+      <header class="modal-head">
+        <div>
+          <p class="eyebrow">READER RECORD</p>
+          <h2 id="detail-title">Reader details</h2>
+        </div>
+        <button class="icon-close" type="button" data-close="detail-modal" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body" id="detail-body"></div>
+      <footer class="modal-actions" id="detail-actions"></footer>
+    </div>
+  </dialog>
+
+  <div id="busy-overlay" class="busy-overlay" hidden>
+    <span class="spinner spinner-lg" aria-hidden="true"></span>
+    <span>Syncing secure data…</span>
+  </div>
+
+  <script type="module" src="/sms-assets/js/dashboard.js"></script>
+</body>
+</html>

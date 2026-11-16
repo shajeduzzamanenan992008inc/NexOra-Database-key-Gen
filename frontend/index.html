@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="application-name" content="NexOra-Database-key-Gen">
+  <meta name="description" content="NexOra Database Key Generator & License Management System. Secure Keys. Smarter Database Management.">
+  <title>Sign in · NexOra Database Key Generator</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="auth-page">
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+  <div class="scanline" aria-hidden="true"></div>
+
+  <main class="auth-layout">
+    <section class="brand-panel" aria-label="NexOra-Database-key-Gen">
+      <a class="brand" href="/">
+        <img src="/assets/logo.svg" alt="" width="52" height="52">
+        <span class="brand-name">
+          <strong>NexOra</strong>
+          <small>Database Key Generator</small>
+        </span>
+      </a>
+
+      <div class="brand-copy">
+        <p class="eyebrow"><span class="pulse-dot"></span> NexOra / Database Key Generator</p>
+        <h1>Secure keys.<br><span class="grad-text">Smarter database management.</span></h1>
+        <p class="lede">
+          Generate, activate, revoke and audit every license key from one hardened
+          command center built for the NexOra ecosystem.
+        </p>
+      </div>
+
+      <ul class="feature-list">
+        <li>
+          <span class="feature-icon" aria-hidden="true">01</span>
+          <div><strong>HMAC-SHA256 at rest</strong><span>Plaintext keys never touch the database.</span></div>
+        </li>
+        <li>
+          <span class="feature-icon" aria-hidden="true">02</span>
+          <div><strong>Row-locked activation</strong><span>No over-activation, no replay, no races.</span></div>
+        </li>
+        <li>
+          <span class="feature-icon" aria-hidden="true">03</span>
+          <div><strong>Full audit trail</strong><span>Every administrative action is attributable.</span></div>
+        </li>
+      </ul>
+
+      <p class="brand-foot">NexOra-Database-key-Gen · Secure Keys. Smarter Database Management.</p>
+    </section>
+
+    <section class="auth-card glass" aria-labelledby="login-heading">
+      <header class="auth-card-head">
+        <span class="chip">AUTHORIZED PERSONNEL</span>
+        <h2 id="login-heading">Sign in</h2>
+        <p>Use your administrator credentials to open the console.</p>
+      </header>
+
+      <form id="login-form" novalidate>
+        <label class="field" for="email">
+          <span class="field-label">Email</span>
+          <input id="email" name="email" type="email" inputmode="email"
+                 autocomplete="username" required spellcheck="false"
+                 placeholder="you@company.com" maxlength="254">
+        </label>
+
+        <label class="field" for="password">
+          <span class="field-label">Password</span>
+          <span class="input-wrap">
+            <input id="password" name="password" type="password"
+                   autocomplete="current-password" required maxlength="128"
+                   placeholder="Enter your password">
+            <button id="toggle-password" class="ghost-btn" type="button"
+                    aria-label="Show password" aria-pressed="false">Show</button>
+          </span>
+        </label>
+
+        <p id="login-message" class="form-message" role="alert" aria-live="polite"></p>
+
+        <button id="login-submit" class="btn btn-primary btn-block" type="submit">
+          <span class="btn-label">Enter console</span>
+          <span class="spinner" hidden aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <p class="auth-note">
+        Sessions expire automatically. Every administrative action is recorded in the
+        audit trail.
+      </p>
+    </section>
+  </main>
+
+  <script type="module" src="/assets/js/login.js"></script>
+</body>
+</html>
