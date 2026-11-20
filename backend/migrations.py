@@ -101,17 +101,16 @@ def _checksum(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+MIGRATION_008 = "008_multi_key_expiration.sql"
 MIGRATION_007 = "007_project_key_management.sql"
-TOMBSTONE_TABLE = "nexora_deleted_project_names"
-UNIQUE_PROJECT_KEY_INDEX = "ux_reader_keys_project_single"
+PROJECT_KEY_INDEX = "ix_reader_keys_project_created"
 AUTO_DELETE_INDEX = "ix_nexora_projects_auto_delete"
-TOMBSTONE_INDEX = "ix_nexora_deleted_project_names_deleted_at"
 
-# Browser-facing Supabase roles that must never hold privileges on the
-# tombstone registry. ``PUBLIC`` is reported by ``aclexplode`` as grantee 0.
+# Browser-facing Supabase roles that must never hold privileges on reader_keys.
+# ``PUBLIC`` is reported by ``aclexplode`` as grantee 0.
 _FORBIDDEN_GRANTEES = frozenset({"public", "anon", "authenticated"})
 
-# Privileges the platform service role needs to write tombstones. Only
+# Privileges the platform service role needs to operate reader_keys. Only
 # enforced when the ``service_role`` role actually exists in the database;
 # local test clusters usually do not define it.
 _SERVICE_ROLE_PRIVILEGES = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
@@ -120,7 +119,6 @@ _REQUIRED_TABLES = (
     "admin_users",
     "nexora_projects",
     "reader_keys",
-    TOMBSTONE_TABLE,
 )
 
 _REQUIRED_COLUMNS = (
@@ -128,44 +126,24 @@ _REQUIRED_COLUMNS = (
     ("nexora_projects", "auto_delete_at"),
     ("nexora_projects", "deleted_at"),
     ("reader_keys", "project_id"),
-    (TOMBSTONE_TABLE, "project_name_normalized"),
-    (TOMBSTONE_TABLE, "project_name"),
-    (TOMBSTONE_TABLE, "deleted_at"),
-    (TOMBSTONE_TABLE, "deleted_by"),
-    (TOMBSTONE_TABLE, "details"),
+    ("reader_keys", "expiration_preset"),
+    ("reader_keys", "is_permanent"),
+    ("reader_keys", "expires_at"),
 )
 
 # label, constraint type, required normalized-definition fragments, name.
-# ``name`` is None when the constraint is verified semantically (the database
-# may choose its own name for a primary or foreign key).
 _REQUIRED_CONSTRAINTS = (
     (
-        "primary_key_project_name_normalized",
-        "p",
-        ("primary key (project_name_normalized)",),
-        None,
-    ),
-    (
-        "nexora_deleted_names_length_check",
+        "reader_keys_expiration_preset_check",
         "c",
-        ("char_length(project_name)", ">= 1", "<= 200"),
-        "nexora_deleted_names_length_check",
+        ("expiration_preset", "1_day", "never"),
+        "reader_keys_expiration_preset_check",
     ),
     (
-        "nexora_deleted_names_normalized_length_check",
+        "reader_keys_expiration_state_check",
         "c",
-        ("char_length(project_name_normalized)", ">= 1", "<= 200"),
-        "nexora_deleted_names_normalized_length_check",
-    ),
-    (
-        "deleted_by_foreign_key_admin_users",
-        "f",
-        (
-            "foreign key (deleted_by)",
-            "references admin_users(",
-            "on delete set null",
-        ),
-        None,
+        ("expiration_preset", "is_permanent", "expires_at"),
+        "reader_keys_expiration_state_check",
     ),
 )
 
@@ -210,7 +188,7 @@ def _safe_fetch(
 
 
 def collect_schema_facts(db: Database) -> tuple[dict[str, object], list[str]]:
-    """Read the catalog facts Migration 007 readiness depends on.
+    """Read the catalog facts Migration 008 readiness depends on.
 
     Every query is isolated so one failure cannot make the remaining checks
     appear healthy: unavailable metadata is returned as ``None`` and the
@@ -227,9 +205,7 @@ def collect_schema_facts(db: Database) -> tuple[dict[str, object], list[str]]:
               to_regclass('public.admin_users') IS NOT NULL AS admin_users,
               to_regclass('public.nexora_projects') IS NOT NULL
                   AS nexora_projects,
-              to_regclass('public.reader_keys') IS NOT NULL AS reader_keys,
-              to_regclass('public.nexora_deleted_project_names') IS NOT NULL
-                  AS tombstone
+              to_regclass('public.reader_keys') IS NOT NULL AS reader_keys
             """
         )
         if row is None:
@@ -238,7 +214,6 @@ def collect_schema_facts(db: Database) -> tuple[dict[str, object], list[str]]:
             "admin_users": bool(row.get("admin_users")),
             "nexora_projects": bool(row.get("nexora_projects")),
             "reader_keys": bool(row.get("reader_keys")),
-            TOMBSTONE_TABLE: bool(row.get("tombstone")),
         }
 
     def columns() -> object:
@@ -284,16 +259,14 @@ def collect_schema_facts(db: Database) -> tuple[dict[str, object], list[str]]:
               ON namespace.oid = index_class.relnamespace
             WHERE namespace.nspname = 'public'
               AND index_class.relname IN (
-                  'ux_reader_keys_project_single',
-                  'ix_nexora_projects_auto_delete',
-                  'ix_nexora_deleted_project_names_deleted_at'
+                  'ix_reader_keys_project_created',
+                  'ix_nexora_projects_auto_delete'
               )
             """
         )
         facts: dict[str, dict[str, object] | None] = {
-            UNIQUE_PROJECT_KEY_INDEX: None,
+            PROJECT_KEY_INDEX: None,
             AUTO_DELETE_INDEX: None,
-            TOMBSTONE_INDEX: None,
         }
         for row in rows:
             facts[row["name"]] = {
@@ -313,7 +286,7 @@ def collect_schema_facts(db: Database) -> tuple[dict[str, object], list[str]]:
             "SELECT conname AS name, contype AS type, "
             "pg_get_constraintdef(oid) AS definition "
             "FROM pg_constraint "
-            "WHERE conrelid = to_regclass('public.nexora_deleted_project_names') "
+            "WHERE conrelid = to_regclass('public.reader_keys') "
             "ORDER BY conname"
         )
         return [
@@ -328,7 +301,7 @@ def collect_schema_facts(db: Database) -> tuple[dict[str, object], list[str]]:
     def rls() -> object:
         value = db.fetch_value(
             "SELECT relrowsecurity FROM pg_class "
-            "WHERE oid = to_regclass('public.nexora_deleted_project_names')"
+            "WHERE oid = to_regclass('public.reader_keys')"
         )
         return None if value is None else bool(value)
 
@@ -354,7 +327,7 @@ def collect_schema_facts(db: Database) -> tuple[dict[str, object], list[str]]:
                 )
             ) AS acl
             WHERE table_class.oid =
-                to_regclass('public.nexora_deleted_project_names')
+                to_regclass('public.reader_keys')
             """
         )
         return [
@@ -472,47 +445,47 @@ def evaluate_readiness(
 
     checks.append(
         _check(
-            "migration_007_file_present",
-            MIGRATION_007 in local,
-            "" if MIGRATION_007 in local else f"{MIGRATION_007} is missing locally",
+            "migration_008_file_present",
+            MIGRATION_008 in local,
+            "" if MIGRATION_008 in local else f"{MIGRATION_008} is missing locally",
         )
     )
     checks.append(
         _check(
-            "migration_007_recorded",
-            MIGRATION_007 in known,
-            "" if MIGRATION_007 in known else f"{MIGRATION_007} is not recorded",
+            "migration_008_recorded",
+            MIGRATION_008 in known,
+            "" if MIGRATION_008 in known else f"{MIGRATION_008} is not recorded",
         )
     )
-    checksum = local.get(MIGRATION_007)
-    record = known.get(MIGRATION_007)
+    checksum = local.get(MIGRATION_008)
+    record = known.get(MIGRATION_008)
     if record is None:
         # There is nothing to compare against. This is not a mismatch, but it
         # must not be reported as a pass either.
         checks.append(
             _check(
-                "migration_007_checksum",
+                "migration_008_checksum",
                 False,
                 "not verified: no recorded checksum exists for "
-                f"{MIGRATION_007}",
+                f"{MIGRATION_008}",
                 status="not_verified",
             )
         )
     elif not checksum:
         checks.append(
             _check(
-                "migration_007_checksum",
+                "migration_008_checksum",
                 False,
                 "not verified: the local migration file is missing",
                 status="not_verified",
             )
         )
     elif checksum == record.get("checksum"):
-        checks.append(_check("migration_007_checksum", True, ""))
+        checks.append(_check("migration_008_checksum", True, ""))
     else:
         checks.append(
             _check(
-                "migration_007_checksum",
+                "migration_008_checksum",
                 False,
                 "recorded checksum mismatch",
             )
@@ -578,20 +551,19 @@ def evaluate_readiness(
     indexes = facts.get("indexes")
     if indexes is None:
         for name in (
-            "unique_index_definition",
+            "multi_key_index_definition",
             "auto_delete_index_definition",
-            "tombstone_index_definition",
         ):
             checks.append(_check(name, False, "index metadata could not be confirmed"))
     else:
         ok, detail = _verify_index(
-            indexes.get(UNIQUE_PROJECT_KEY_INDEX),
+            indexes.get(PROJECT_KEY_INDEX),
             table="reader_keys",
-            columns=("project_id",),
-            unique=True,
+            columns=("project_id", "created_at"),
+            unique=False,
             partial=False,
         )
-        checks.append(_check("unique_index_definition", ok, detail))
+        checks.append(_check("multi_key_index_definition", ok, detail))
 
         ok, detail = _verify_index(
             indexes.get(AUTO_DELETE_INDEX),
@@ -603,22 +575,13 @@ def evaluate_readiness(
         )
         checks.append(_check("auto_delete_index_definition", ok, detail))
 
-        ok, detail = _verify_index(
-            indexes.get(TOMBSTONE_INDEX),
-            table=TOMBSTONE_TABLE,
-            columns=("deleted_at",),
-            unique=False,
-            partial=False,
-        )
-        checks.append(_check("tombstone_index_definition", ok, detail))
-
     ok, detail = _verify_constraints(facts.get("constraints"))
-    checks.append(_check("tombstone_constraints", ok, detail))
+    checks.append(_check("expiration_constraints", ok, detail))
 
     rls_enabled = facts.get("rls_enabled")
     checks.append(
         _check(
-            "tombstone_rls_enabled",
+            "reader_keys_rls_enabled",
             rls_enabled is True,
             "RLS could not be confirmed"
             if rls_enabled is None
@@ -630,7 +593,7 @@ def evaluate_readiness(
     if grants is None:
         checks.append(
             _check(
-                "tombstone_privileges",
+                "reader_keys_privileges",
                 False,
                 "table privileges could not be confirmed",
             )
@@ -646,7 +609,7 @@ def evaluate_readiness(
         )
         checks.append(
             _check(
-                "tombstone_privileges",
+                "reader_keys_privileges",
                 not unintended,
                 ""
                 if not unintended
@@ -771,19 +734,18 @@ def inspect_migrations(db: Database, directory: Path) -> dict[str, object]:
         return bool(row and row.get("valid"))
 
     objects = {
-        "tombstone_table": bool(tables.get(TOMBSTONE_TABLE)),
+        "expiration_preset": bool(columns.get("reader_keys.expiration_preset")),
         "auto_delete_at": bool(columns.get("nexora_projects.auto_delete_at")),
-        "one_key_index": index_present(UNIQUE_PROJECT_KEY_INDEX),
+        "multi_key_index": index_present(PROJECT_KEY_INDEX),
         "auto_delete_index": index_present(AUTO_DELETE_INDEX),
-        "tombstone_index": index_present(TOMBSTONE_INDEX),
-        "tombstone_rls": facts.get("rls_enabled") is True,
+        "reader_keys_rls": facts.get("rls_enabled") is True,
     }
 
-    migration_007 = {
-        "present": MIGRATION_007 in local,
-        "applied": MIGRATION_007 in known,
-        "checksum": local.get(MIGRATION_007),
-        "recorded_checksum": known.get(MIGRATION_007, {}).get("checksum"),
+    migration_008 = {
+        "present": MIGRATION_008 in local,
+        "applied": MIGRATION_008 in known,
+        "checksum": local.get(MIGRATION_008),
+        "recorded_checksum": known.get(MIGRATION_008, {}).get("checksum"),
     }
     ready = bool(local) and all(bool(check["ok"]) for check in checks)
 
@@ -792,7 +754,7 @@ def inspect_migrations(db: Database, directory: Path) -> dict[str, object]:
         "pending": pending,
         "checksum_mismatches": mismatches,
         "objects": objects,
-        "migration_007": migration_007,
+        "migration_008": migration_008,
         "checks": checks,
         "verification_errors": errors,
         "ready": ready,

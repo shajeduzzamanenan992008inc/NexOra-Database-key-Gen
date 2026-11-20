@@ -1,99 +1,150 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="is-login">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#03050c">
   <meta name="robots" content="noindex, nofollow">
   <meta name="application-name" content="NexOra-Database-key-Gen">
-  <meta name="description" content="NexOra Database Key Generator & License Management System. Secure Keys. Smarter Database Management.">
-  <title>Sign in · NexOra Database Key Generator</title>
+  <meta name="description" content="NexOra OMEGA Secure Control System — NexOra Database Key Generator. Secure Keys. Smarter Database Management.">
+  <title>Sign in · NexOra OMEGA</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/app.css">
 </head>
-<body class="auth-page">
-  <div class="bg-grid" aria-hidden="true"></div>
-  <div class="orb orb-a" aria-hidden="true"></div>
-  <div class="orb orb-b" aria-hidden="true"></div>
-  <div class="scanline" aria-hidden="true"></div>
+<body class="auth-page omega-auth">
+  <a class="skip-link" href="#login-form">Skip to sign in</a>
 
-  <main class="auth-layout">
-    <section class="brand-panel" aria-label="NexOra-Database-key-Gen">
-      <a class="brand" href="/">
-        <img src="/assets/logo.svg" alt="" width="52" height="52">
-        <span class="brand-name">
-          <strong>NexOra</strong>
-          <small>Database Key Generator</small>
+  <!-- Fast boot veil: dismissed on the first script frame, never gates login. -->
+  <div id="boot-screen" class="boot-screen login-boot" aria-hidden="true">
+    <div class="omega-core" aria-hidden="true">
+      <span class="omega-core-ring omega-core-ring-a"></span>
+      <span class="omega-core-ring omega-core-ring-b"></span>
+      <img src="/assets/logo.svg" alt="" width="44" height="44">
+    </div>
+    <p class="boot-kicker">NEXORA OMEGA / SECURE GATEWAY</p>
+  </div>
+
+  <div class="ambient-scene omega-scene" aria-hidden="true">
+    <div class="bg-grid"></div>
+    <div class="aurora aurora-a"></div>
+    <div class="aurora aurora-b"></div>
+    <div class="aurora aurora-c"></div>
+    <div class="starfield"></div>
+    <div class="grid-floor"></div>
+    <div class="omega-halo"></div>
+    <div class="omega-laser"></div>
+    <div class="scanline"></div>
+    <div class="cursor-glow"></div>
+  </div>
+
+  <main class="omega-stage">
+    <section class="omega-card" aria-labelledby="login-heading">
+      <span class="omega-card-sheen" aria-hidden="true"></span>
+
+      <header class="omega-brand">
+        <span class="omega-core" aria-hidden="true">
+          <span class="omega-core-ring omega-core-ring-a"></span>
+          <span class="omega-core-ring omega-core-ring-b"></span>
+          <img src="/assets/logo.svg" alt="" width="40" height="40">
         </span>
-      </a>
-
-      <div class="brand-copy">
-        <p class="eyebrow"><span class="pulse-dot"></span> NexOra / Database Key Generator</p>
-        <h1>Secure keys.<br><span class="grad-text">Smarter database management.</span></h1>
-        <p class="lede">
-          Generate, activate, revoke and audit every license key from one hardened
-          command center built for the NexOra ecosystem.
-        </p>
-      </div>
-
-      <ul class="feature-list">
-        <li>
-          <span class="feature-icon" aria-hidden="true">01</span>
-          <div><strong>HMAC-SHA256 at rest</strong><span>Plaintext keys never touch the database.</span></div>
-        </li>
-        <li>
-          <span class="feature-icon" aria-hidden="true">02</span>
-          <div><strong>Row-locked activation</strong><span>No over-activation, no replay, no races.</span></div>
-        </li>
-        <li>
-          <span class="feature-icon" aria-hidden="true">03</span>
-          <div><strong>Full audit trail</strong><span>Every administrative action is attributable.</span></div>
-        </li>
-      </ul>
-
-      <p class="brand-foot">NexOra-Database-key-Gen · Secure Keys. Smarter Database Management.</p>
-    </section>
-
-    <section class="auth-card glass" aria-labelledby="login-heading">
-      <header class="auth-card-head">
-        <span class="chip">AUTHORIZED PERSONNEL</span>
-        <h2 id="login-heading">Sign in</h2>
-        <p>Use your administrator credentials to open the console.</p>
+        <span class="omega-brand-copy">
+          <span class="omega-wordmark">NEXORA <em>OMEGA</em></span>
+          <span class="omega-brand-sub">Secure Control System</span>
+        </span>
       </header>
 
-      <form id="login-form" novalidate>
-        <label class="field" for="email">
-          <span class="field-label">Email</span>
-          <input id="email" name="email" type="email" inputmode="email"
-                 autocomplete="username" required spellcheck="false"
-                 placeholder="you@company.com" maxlength="254">
+      <div class="omega-head">
+        <span class="omega-kicker"><span class="omega-kicker-dot" aria-hidden="true"></span> Restricted Control Plane</span>
+        <h1 id="login-heading">Welcome Back</h1>
+        <p>Access your secure NexOra control center.</p>
+      </div>
+
+      <!-- Shown only when a genuinely valid server session already exists.
+           The page never redirects on its own and never fakes a session. -->
+      <div id="session-recovery" class="omega-session" hidden aria-live="polite">
+        <span class="omega-session-mark" aria-hidden="true"></span>
+        <span class="omega-session-copy">
+          <strong>Secure session detected</strong>
+          <span id="session-email">A verified session is active on this device.</span>
+        </span>
+        <span class="omega-session-actions">
+          <button id="resume-session" class="omega-session-btn omega-session-btn-primary" type="button">Resume</button>
+          <button id="session-signout" class="omega-session-btn" type="button">Sign out</button>
+        </span>
+      </div>
+
+      <form id="login-form" novalidate autocomplete="on">
+        <label class="omega-field" for="email">
+          <span class="omega-label">Email / Username</span>
+          <span class="omega-input">
+            <span class="omega-input-icon" aria-hidden="true">@</span>
+            <input id="email" name="email" type="email" inputmode="email"
+                   autocomplete="username" autocapitalize="none" autocorrect="off"
+                   spellcheck="false" required maxlength="254"
+                   placeholder="you@nexora.io">
+          </span>
         </label>
 
-        <label class="field" for="password">
-          <span class="field-label">Password</span>
-          <span class="input-wrap">
+        <label class="omega-field" for="password">
+          <span class="omega-label">Password</span>
+          <span class="omega-input">
+            <span class="omega-input-icon" aria-hidden="true">◇</span>
             <input id="password" name="password" type="password"
                    autocomplete="current-password" required maxlength="128"
                    placeholder="Enter your password">
-            <button id="toggle-password" class="ghost-btn" type="button"
+            <button id="toggle-password" class="omega-eye" type="button"
                     aria-label="Show password" aria-pressed="false">Show</button>
           </span>
         </label>
 
-        <p id="login-message" class="form-message" role="alert" aria-live="polite"></p>
+        <div class="omega-options">
+          <label class="omega-remember" for="remember-me">
+            <input id="remember-me" type="checkbox">
+            <span class="omega-check" aria-hidden="true"></span>
+            <span>Remember my email</span>
+          </label>
+          <span class="omega-secure"><span class="omega-dot" aria-hidden="true"></span> Encrypted</span>
+        </div>
 
-        <button id="login-submit" class="btn btn-primary btn-block" type="submit">
-          <span class="btn-label">Enter console</span>
+        <p id="login-message" class="omega-message" role="alert" aria-live="polite"></p>
+
+        <button id="login-submit" class="omega-submit" type="submit">
+          <span class="omega-submit-glow" aria-hidden="true"></span>
+          <span class="btn-label">Enter Console</span>
           <span class="spinner" hidden aria-hidden="true"></span>
+          <span class="omega-submit-arrow" aria-hidden="true">→</span>
         </button>
       </form>
 
-      <p class="auth-note">
-        Sessions expire automatically. Every administrative action is recorded in the
-        audit trail.
-      </p>
+      <div class="omega-founder" aria-label="Founder identity">
+        <span class="omega-founder-mark" aria-hidden="true"></span>
+        <span class="omega-founder-copy">
+          <small>Founder, Creator &amp; Builder</small>
+          <strong>SHAJEDUZZAMAN ENAN</strong>
+        </span>
+      </div>
     </section>
+
+    <footer class="omega-footer">
+      <span class="omega-footer-brand">NEXORA OMEGA</span>
+      <span class="omega-footer-sep" aria-hidden="true"></span>
+      <span class="omega-footer-text">Secure Control System</span>
+    </footer>
   </main>
+
+  <div id="live-region" class="sr-only" role="status" aria-live="polite"></div>
+
+  <div id="leave-screen" class="leave-screen" hidden aria-hidden="true">
+    <div class="leave-grid"></div>
+    <div class="leave-visual">
+      <span class="leave-ring"></span>
+      <img src="/assets/logo.svg" alt="" width="64" height="64">
+    </div>
+    <p class="leave-kicker">NEXORA / SECURE HANDOFF</p>
+    <p class="leave-title">Access granted</p>
+    <p class="leave-status">ESTABLISHING ESCROWED CONSOLE SESSION</p>
+  </div>
 
   <script type="module" src="/assets/js/login.js"></script>
 </body>

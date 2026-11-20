@@ -9,9 +9,8 @@ import pytest
 
 from backend.migrations import (
     AUTO_DELETE_INDEX,
-    MIGRATION_007,
-    TOMBSTONE_INDEX,
-    UNIQUE_PROJECT_KEY_INDEX,
+    MIGRATION_008,
+    PROJECT_KEY_INDEX,
     apply_migrations,
     collect_schema_facts,
     evaluate_readiness,
@@ -29,29 +28,26 @@ class FakePgError(Exception):
         super().__init__({"C": code, "M": message})
 
 
-def test_missing_relation_maps_to_007():
+def test_missing_relation_maps_to_008():
     issue = schema_readiness_issue(
-        FakePgError(
-            "42P01",
-            'relation "nexora_deleted_project_names" does not exist',
-        )
+        FakePgError("42P01", 'relation "reader_keys" does not exist')
     )
     assert issue is not None
     assert issue.sqlstate == "42P01"
-    assert issue.object_name == "nexora_deleted_project_names"
-    assert issue.migration == MIGRATION_007
+    assert issue.object_name == "reader_keys"
+    assert issue.migration == "005_nexora_projects.sql"
 
 
-def test_missing_column_maps_to_007_before_its_relation():
+def test_missing_expiration_column_maps_to_008():
     issue = schema_readiness_issue(
         FakePgError(
             "42703",
-            'column "auto_delete_at" of relation "nexora_projects" does not exist',
+            'column "expiration_preset" of relation "reader_keys" does not exist',
         )
     )
     assert issue is not None
-    assert issue.object_name == "auto_delete_at"
-    assert issue.migration == MIGRATION_007
+    assert issue.object_name == "expiration_preset"
+    assert issue.migration == MIGRATION_008
 
 
 def test_unrelated_error_is_not_a_schema_issue():
@@ -64,23 +60,21 @@ def test_unrelated_error_is_not_a_schema_issue():
     assert issue is None
 
 
-def test_migration_007_declares_all_application_requirements():
-    text = (ROOT / "db" / "migrations" / MIGRATION_007).read_text(encoding="utf-8")
+def test_migration_008_declares_all_application_requirements():
+    text = (ROOT / "db" / "migrations" / MIGRATION_008).read_text(encoding="utf-8")
 
     for required in (
-        "auto_delete_at",
-        "ux_reader_keys_project_single",
-        "ix_nexora_projects_auto_delete",
-        "nexora_deleted_project_names",
-        "ix_nexora_deleted_project_names_deleted_at",
-        "ENABLE ROW LEVEL SECURITY",
-        "GRANT SELECT, INSERT, UPDATE, DELETE",
+        "DROP INDEX IF EXISTS ux_reader_keys_project_single",
+        "DROP TABLE IF EXISTS nexora_deleted_project_names",
+        "expiration_preset",
+        "reader_keys_expiration_preset_check",
+        "reader_keys_expiration_state_check",
+        "ix_reader_keys_project_created",
     ):
         assert required in text
 
     statements = split_sql(text)
-    assert len(statements) >= 8
-    assert any("CREATE TABLE IF NOT EXISTS nexora_deleted_project_names" in s for s in statements)
+    assert len(statements) >= 10
 
 
 def test_inspect_migrations_reports_migrated_test_database_ready(app):
@@ -91,8 +85,8 @@ def test_inspect_migrations_reports_migrated_test_database_ready(app):
     assert readiness["ready"] is True
     assert readiness["pending"] == []
     assert readiness["checksum_mismatches"] == []
-    assert readiness["migration_007"]["present"] is True
-    assert readiness["migration_007"]["applied"] is True
+    assert readiness["migration_008"]["present"] is True
+    assert readiness["migration_008"]["applied"] is True
     assert all(readiness["objects"].values())
     assert readiness["verification_errors"] == []
     assert all(check["ok"] for check in readiness["checks"])
@@ -123,11 +117,11 @@ def test_invalid_schema_3f000_maps_to_baseline_migration():
 
 def _checks(facts, *, local=None, known=None, verification_errors=()):
     if local is None:
-        local = {MIGRATION_007: "local-checksum"}
+        local = {MIGRATION_008: "local-checksum"}
     if known is None:
         known = {
-            MIGRATION_007: {
-                "filename": MIGRATION_007,
+            MIGRATION_008: {
+                "filename": MIGRATION_008,
                 "checksum": "local-checksum",
             }
         }
@@ -148,56 +142,54 @@ def _healthy_facts(app):
 def test_checksum_is_not_verified_without_a_recorded_migration(app):
     checks = _checks(_healthy_facts(app), known={})
 
-    check = checks["migration_007_checksum"]
+    check = checks["migration_008_checksum"]
     assert check["ok"] is False
     assert check["status"] == "not_verified"
     assert "no recorded checksum" in check["detail"]
     assert "mismatch" not in check["detail"]
 
-    # Independent checks keep their own outcomes.
-    assert checks["migration_007_recorded"]["ok"] is False
+    assert checks["migration_008_recorded"]["ok"] is False
     assert checks["no_pending_migrations"]["ok"] is False
 
 
 def test_checksum_passes_when_recorded_checksum_matches(app):
     checks = _checks(
         _healthy_facts(app),
-        local={MIGRATION_007: "same-checksum"},
+        local={MIGRATION_008: "same-checksum"},
         known={
-            MIGRATION_007: {
-                "filename": MIGRATION_007,
+            MIGRATION_008: {
+                "filename": MIGRATION_008,
                 "checksum": "same-checksum",
             }
         },
     )
 
-    check = checks["migration_007_checksum"]
+    check = checks["migration_008_checksum"]
     assert check["ok"] is True
     assert check["status"] == "pass"
     assert check["detail"] == ""
-    assert checks["migration_007_recorded"]["ok"] is True
+    assert checks["migration_008_recorded"]["ok"] is True
     assert checks["no_pending_migrations"]["ok"] is True
 
 
 def test_checksum_fails_on_recorded_mismatch(app):
     checks = _checks(
         _healthy_facts(app),
-        local={MIGRATION_007: "local-checksum"},
+        local={MIGRATION_008: "local-checksum"},
         known={
-            MIGRATION_007: {
-                "filename": MIGRATION_007,
+            MIGRATION_008: {
+                "filename": MIGRATION_008,
                 "checksum": "database-checksum",
             }
         },
     )
 
-    check = checks["migration_007_checksum"]
+    check = checks["migration_008_checksum"]
     assert check["ok"] is False
     assert check["status"] == "fail"
     assert check["detail"] == "recorded checksum mismatch"
 
-    # A mismatch does not change the record or pending outcomes.
-    assert checks["migration_007_recorded"]["ok"] is True
+    assert checks["migration_008_recorded"]["ok"] is True
     assert checks["no_pending_migrations"]["ok"] is True
 
 
@@ -226,35 +218,32 @@ def test_missing_migration_record_keeps_readiness_not_ready(app):
     )
     checks = {check["name"]: check for check in readiness["checks"]}
 
-    assert checks["migration_007_checksum"]["status"] == "not_verified"
-    assert "mismatch" not in checks["migration_007_checksum"]["detail"]
-    assert checks["migration_007_recorded"]["ok"] is False
+    assert checks["migration_008_checksum"]["status"] == "not_verified"
+    assert "mismatch" not in checks["migration_008_checksum"]["detail"]
+    assert checks["migration_008_recorded"]["ok"] is False
     assert checks["no_pending_migrations"]["ok"] is False
     assert readiness["checksum_mismatches"] == []
     assert readiness["ready"] is False
 
 
-def test_unique_index_must_target_reader_keys_project_id(app):
+def test_multi_key_index_must_target_reader_keys_project_created(app):
     facts = copy.deepcopy(_healthy_facts(app))
-    facts["indexes"][UNIQUE_PROJECT_KEY_INDEX]["columns"] = [
-        "project_id",
-        "key_hash",
-    ]
+    facts["indexes"][PROJECT_KEY_INDEX]["columns"] = ["project_id"]
 
     checks = _checks(facts)
 
-    assert checks["unique_index_definition"]["ok"] is False
-    assert "project_id" in checks["unique_index_definition"]["detail"]
+    assert checks["multi_key_index_definition"]["ok"] is False
+    assert "project_id" in checks["multi_key_index_definition"]["detail"]
 
 
-def test_non_unique_project_index_is_rejected(app):
+def test_project_key_index_must_not_be_unique(app):
     facts = copy.deepcopy(_healthy_facts(app))
-    facts["indexes"][UNIQUE_PROJECT_KEY_INDEX]["unique"] = False
+    facts["indexes"][PROJECT_KEY_INDEX]["unique"] = True
 
     checks = _checks(facts)
 
-    assert checks["unique_index_definition"]["ok"] is False
-    assert "uniqueness" in checks["unique_index_definition"]["detail"]
+    assert checks["multi_key_index_definition"]["ok"] is False
+    assert "uniqueness" in checks["multi_key_index_definition"]["detail"]
 
 
 def test_auto_delete_index_must_keep_its_partial_predicate(app):
@@ -266,27 +255,18 @@ def test_auto_delete_index_must_keep_its_partial_predicate(app):
     assert checks["auto_delete_index_definition"]["ok"] is False
 
 
-def test_tombstone_index_must_stay_on_the_tombstone_table(app):
-    facts = copy.deepcopy(_healthy_facts(app))
-    facts["indexes"][TOMBSTONE_INDEX]["table"] = "nexora_projects"
-
-    checks = _checks(facts)
-
-    assert checks["tombstone_index_definition"]["ok"] is False
-
-
-def test_missing_tombstone_constraint_fails_readiness(app):
+def test_missing_expiration_constraints_fail_readiness(app):
     facts = copy.deepcopy(_healthy_facts(app))
     facts["constraints"] = [
-        row
-        for row in facts["constraints"]
-        if row["type"] != "f"
+        row for row in facts["constraints"] if row["type"] != "c"
     ]
 
     checks = _checks(facts)
 
-    assert checks["tombstone_constraints"]["ok"] is False
-    assert "deleted_by_foreign_key_admin_users" in checks["tombstone_constraints"]["detail"]
+    assert checks["expiration_constraints"]["ok"] is False
+    assert "reader_keys_expiration_state_check" in checks[
+        "expiration_constraints"
+    ]["detail"]
 
 
 def test_missing_service_role_grants_fail_when_role_exists(app):
@@ -310,8 +290,8 @@ def test_unintended_public_grant_fails_readiness(app):
 
     checks = _checks(facts)
 
-    assert checks["tombstone_privileges"]["ok"] is False
-    assert "public:SELECT" in checks["tombstone_privileges"]["detail"]
+    assert checks["reader_keys_privileges"]["ok"] is False
+    assert "public:SELECT" in checks["reader_keys_privileges"]["detail"]
 
 
 def test_unintended_anon_grant_fails_readiness(app):
@@ -320,17 +300,17 @@ def test_unintended_anon_grant_fails_readiness(app):
 
     checks = _checks(facts)
 
-    assert checks["tombstone_privileges"]["ok"] is False
+    assert checks["reader_keys_privileges"]["ok"] is False
 
 
-def test_disabled_tombstone_rls_fails_readiness(app):
+def test_disabled_reader_key_rls_fails_readiness(app):
     facts = copy.deepcopy(_healthy_facts(app))
     facts["rls_enabled"] = False
 
     checks = _checks(facts)
 
-    assert checks["tombstone_rls_enabled"]["ok"] is False
-    assert "disabled" in checks["tombstone_rls_enabled"]["detail"]
+    assert checks["reader_keys_rls_enabled"]["ok"] is False
+    assert "disabled" in checks["reader_keys_rls_enabled"]["detail"]
 
 
 def test_enabled_rls_but_unconfirmed_security_metadata_fails_closed(app):
@@ -340,7 +320,7 @@ def test_enabled_rls_but_unconfirmed_security_metadata_fails_closed(app):
 
     checks = _checks(facts)
 
-    assert checks["tombstone_privileges"]["ok"] is False
+    assert checks["reader_keys_privileges"]["ok"] is False
     assert checks["service_role_grants"]["ok"] is False
 
 

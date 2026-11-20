@@ -18,7 +18,14 @@ export class ApiProblem extends Error {
   }
 }
 
-async function request(path, { method = "GET", body, headers = {} } = {}) {
+/* Every authenticated call is bounded. A hung database or proxy must never
+   leave the UI waiting forever behind a loading state. */
+const DEFAULT_TIMEOUT_MS = 15000;
+
+async function request(
+  path,
+  { method = "GET", body, headers = {}, timeoutMs = DEFAULT_TIMEOUT_MS } = {}
+) {
   const options = {
     method,
     credentials: "same-origin",
@@ -38,15 +45,31 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
     options.headers["X-CSRF-Token"] = csrfToken;
   }
 
+  const controller = new AbortController();
+  options.signal = controller.signal;
+  const timer = window.setTimeout(
+    () => controller.abort(),
+    Math.max(1000, Number(timeoutMs) || DEFAULT_TIMEOUT_MS)
+  );
+
   let response;
   try {
     response = await fetch(path, options);
   } catch (error) {
+    if (controller.signal.aborted) {
+      throw new ApiProblem(
+        "The server took too long to respond. Check your connection and try again.",
+        408,
+        "timeout"
+      );
+    }
     throw new ApiProblem(
       "Network unavailable. Check your connection and try again.",
       0,
       "network_error"
     );
+  } finally {
+    window.clearTimeout(timer);
   }
 
   const contentType = response.headers.get("content-type") || "";
@@ -82,12 +105,48 @@ function query(params) {
   return search.toString();
 }
 
+/* CSRF tokens are rotated whenever the session is read, so a second tab can
+   hold a stale token. Sign-out must still terminate the real session instead
+   of failing with 403 and bouncing the user back into the console. */
+async function logoutWithCsrfRecovery() {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await request("/api/v1/auth/logout", { method: "POST" });
+    } catch (error) {
+      lastError = error;
+      const csrfProblem =
+        error instanceof ApiProblem &&
+        (error.code === "csrf_failed" ||
+          (error.status === 403 && error.code !== "forbidden"));
+      if (!csrfProblem) throw error;
+
+      // Another tab (or the dashboard bootstrap) may rotate the token again
+      // while this retry is in flight. Refresh, pause briefly, and retry.
+      const session = await request("/api/v1/auth/session", {
+        timeoutMs: 8000,
+      });
+      if (session && session.csrf_token) setCsrfToken(session.csrf_token);
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+    }
+  }
+
+  throw lastError || new ApiProblem("Sign-out failed.", 403, "csrf_failed");
+}
+
 export const api = {
   // Authentication
-  session: () => request("/api/v1/auth/session"),
+  session: (options = {}) =>
+    request("/api/v1/auth/session", { timeoutMs: 8000, ...options }),
   login: (email, password) =>
-    request("/api/v1/auth/login", { method: "POST", body: { email, password } }),
+    request("/api/v1/auth/login", {
+      method: "POST",
+      body: { email, password },
+      timeoutMs: 25000,
+    }),
   logout: () => request("/api/v1/auth/logout", { method: "POST" }),
+  logoutSafe: logoutWithCsrfRecovery,
 
   // Dashboard Overview & Health
   stats: () => request("/api/v1/dashboard/stats"),
@@ -96,8 +155,18 @@ export const api = {
   // Project Management
   projects: (params) => request(`/api/v1/projects?${query(params)}`),
   project: (id) => request(`/api/v1/projects/${encodeURIComponent(id)}`),
+  createProject: (projectName) =>
+    request("/api/v1/projects", {
+      method: "POST",
+      body: { project_name: projectName },
+    }),
   generateProjectKey: (body) =>
     request("/api/v1/projects/generate-key", { method: "POST", body }),
+  generateKeyForProject: (projectId, body) =>
+    request(`/api/v1/projects/${encodeURIComponent(projectId)}/keys`, {
+      method: "POST",
+      body,
+    }),
   setProjectStatus: (id, status) =>
     request(`/api/v1/projects/${encodeURIComponent(id)}/status`, {
       method: "PATCH",
@@ -149,6 +218,137 @@ export const api = {
   settings: () => request("/api/v1/settings"),
   updateSettings: (body) =>
     request("/api/v1/settings", { method: "PATCH", body }),
+
+  // Universal Platform
+  universalOverview: () => request("/api/v1/universal/overview"),
+  universalProjects: (params) =>
+    request(`/api/v1/universal/projects?${query(params)}`),
+  universalProjectStats: (id) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(id)}/statistics`),
+  universalProjectTimeline: (id) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(id)}/timeline`),
+  updateUniversalProject: (id, body) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body,
+    }),
+  archiveUniversalProject: (id) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+    }),
+  cloneUniversalProject: (id, projectName) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(id)}/clone`, {
+      method: "POST",
+      body: { project_name: projectName },
+    }),
+  universalProjectExport: (id) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(id)}/export`),
+  universalKeys: (params) => request(`/api/v1/universal/keys?${query(params)}`),
+  universalKey: (id) => request(`/api/v1/universal/keys/${encodeURIComponent(id)}`),
+  generateUniversalKeys: (body) =>
+    request("/api/v1/universal/keys", { method: "POST", body }),
+  updateUniversalKey: (id, body) =>
+    request(`/api/v1/universal/keys/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body,
+    }),
+  activateUniversalKey: (id) =>
+    request(`/api/v1/universal/keys/${encodeURIComponent(id)}/activate`, {
+      method: "POST",
+    }),
+  deactivateUniversalKey: (id, reason = "") =>
+    request(`/api/v1/universal/keys/${encodeURIComponent(id)}/deactivate`, {
+      method: "POST",
+      body: { reason },
+    }),
+  revokeUniversalKey: (id, reason) =>
+    request(`/api/v1/universal/keys/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+      body: { reason },
+    }),
+  regenerateUniversalKey: (id) =>
+    request(`/api/v1/universal/keys/${encodeURIComponent(id)}/regenerate`, {
+      method: "POST",
+    }),
+  keyTypes: (params) => request(`/api/v1/universal/key-types?${query(params)}`),
+  createKeyType: (body) =>
+    request("/api/v1/universal/key-types", { method: "POST", body }),
+  updateKeyType: (id, body) =>
+    request(`/api/v1/universal/key-types/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body,
+    }),
+  universalDevices: (params) =>
+    request(`/api/v1/universal/devices?${query(params)}`),
+  revokeUniversalDevice: (id, reason = "") =>
+    request(`/api/v1/universal/devices/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+      body: { reason },
+    }),
+  resetUniversalDevice: (id) =>
+    request(`/api/v1/universal/devices/${encodeURIComponent(id)}/reset`, {
+      method: "POST",
+    }),
+  apiUsage: (params) => request(`/api/v1/universal/api-usage?${query(params)}`),
+  webhooks: (params) => request(`/api/v1/universal/webhooks?${query(params)}`),
+  createWebhook: (body) =>
+    request("/api/v1/universal/webhooks", { method: "POST", body }),
+  updateWebhook: (id, body) =>
+    request(`/api/v1/universal/webhooks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body,
+    }),
+  deleteWebhook: (id) =>
+    request(`/api/v1/universal/webhooks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  rotateWebhook: (id) =>
+    request(`/api/v1/universal/webhooks/${encodeURIComponent(id)}/rotate-secret`, {
+      method: "POST",
+    }),
+  testWebhook: (id) =>
+    request(`/api/v1/universal/webhooks/${encodeURIComponent(id)}/test`, {
+      method: "POST",
+    }),
+  webhookDeliveries: (id) =>
+    request(`/api/v1/universal/webhooks/${encodeURIComponent(id)}/deliveries`),
+  notifications: (params) =>
+    request(`/api/v1/universal/notifications?${query(params)}`),
+  markNotification: (id) =>
+    request(`/api/v1/universal/notifications/${encodeURIComponent(id)}/read`, {
+      method: "POST",
+    }),
+  markAllNotifications: () =>
+    request("/api/v1/universal/notifications/read-all", { method: "POST" }),
+  notificationPreferences: () =>
+    request("/api/v1/universal/notifications/preferences"),
+  updateNotificationPreferences: (preferences) =>
+    request("/api/v1/universal/notifications/preferences", {
+      method: "PATCH",
+      body: { preferences },
+    }),
+  universalSearch: (q) => request(`/api/v1/universal/search?${query({ q })}`),
+  automationRun: () =>
+    request("/api/v1/universal/automation/run", { method: "POST" }),
+  automationRuns: () => request("/api/v1/universal/automation/runs"),
+  universalRoles: () => request("/api/v1/universal/roles"),
+  universalAdmins: () => request("/api/v1/universal/admins"),
+  setAdminRole: (id, body) =>
+    request(`/api/v1/universal/admins/${encodeURIComponent(id)}/role`, {
+      method: "PATCH",
+      body,
+    }),
+  revokeAdminSessions: (id) =>
+    request(`/api/v1/universal/admins/${encodeURIComponent(id)}/sessions/revoke`, {
+      method: "POST",
+    }),
+  universalImportPreview: (body) =>
+    request("/api/v1/universal/keys/import/preview", { method: "POST", body }),
+  universalImport: (body) =>
+    request("/api/v1/universal/keys/import", { method: "POST", body }),
+  universalKeysExportUrl: (params) =>
+    `/api/v1/universal/keys/export?${query(params)}`,
+  universalOpenapi: () => request("/api/v1/universal/openapi.json"),
 
   // Legacy API mappings for backward compatibility
   keys: (params) => request(`/api/v1/keys?${query(params)}`),

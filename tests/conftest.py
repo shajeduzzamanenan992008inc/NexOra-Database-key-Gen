@@ -125,13 +125,20 @@ def reset_database(app):
         """
         TRUNCATE TABLE sms_reader_events, sms_reader_keys,
                        device_tokens, reader_installations, reader_keys,
-                       nexora_deleted_project_names, nexora_projects,
+                       nexora_webhook_deliveries, nexora_webhooks,
+                       nexora_devices, nexora_api_usage, nexora_key_events,
+                       nexora_notifications, nexora_notification_preferences,
+                       nexora_automation_runs,
                        system_settings,
                        admin_audit_logs, generation_logs, key_activations,
-                       license_keys, admin_sessions, admin_users
+                       license_keys, admin_sessions
         RESTART IDENTITY CASCADE
         """
     )
+    # Projects own custom key types. Delete rather than TRUNCATE so the
+    # seeded global key types (project_id IS NULL) survive every test.
+    app.extensions["db"].execute("DELETE FROM nexora_projects")
+    app.extensions["db"].execute("DELETE FROM admin_users")
     yield
 
 

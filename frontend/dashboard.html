@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#03050c">
   <meta name="robots" content="noindex, nofollow">
   <meta name="application-name" content="NexOra-Database-key-Gen">
   <meta name="description" content="OMEGA NEX-ORA — NexOra Database Key Generator & License Management System. Secure Keys. Smarter Database Management.">
@@ -12,13 +13,43 @@
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body class="app-page">
-  <div class="bg-grid" aria-hidden="true"></div>
-  <div class="orb orb-a" aria-hidden="true"></div>
-  <div class="orb orb-c" aria-hidden="true"></div>
-  <div class="scanline" aria-hidden="true"></div>
+  <a class="skip-link" href="#main-content">Skip to console content</a>
+
+  <div id="boot-screen" class="boot-screen" aria-hidden="true">
+    <div class="boot-visual">
+      <span class="boot-ring boot-ring-a"></span>
+      <span class="boot-ring boot-ring-b"></span>
+      <img src="/assets/logo.svg" alt="" width="74" height="74">
+    </div>
+    <p class="boot-kicker">OMEGA NEX-ORA / COMMAND CENTER</p>
+    <p class="boot-title">Initializing secure console</p>
+    <div class="boot-progress"><span></span></div>
+    <p class="boot-status">AUTHENTICATING OPERATOR / SYNCING TELEMETRY</p>
+  </div>
+
+  <div class="ambient-scene" aria-hidden="true">
+    <div class="bg-grid"></div>
+    <div class="aurora aurora-a"></div>
+    <div class="aurora aurora-b"></div>
+    <div class="aurora aurora-c"></div>
+    <div class="starfield"></div>
+    <div class="grid-floor"></div>
+    <div class="scanline"></div>
+    <div class="cursor-glow"></div>
+  </div>
+  <div id="scroll-progress" class="scroll-progress" aria-hidden="true"></div>
+
+  <!-- ============================================================ GLOBAL FOUNDER IDENTITY -->
+  <div id="founder-identity" class="founder-identity" aria-label="Founder identity">
+    <span class="founder-mark" aria-hidden="true"></span>
+    <span class="founder-tier">Founder, Creator &amp; Builder</span>
+    <span class="founder-name">Shajeduzzaman Enan</span>
+  </div>
 
   <div class="app-shell">
-    <aside class="sidebar glass" aria-label="Sidebar navigation">
+    <aside id="sidebar" class="sidebar glass" aria-label="Sidebar navigation">
+      <button id="sidebar-close" class="icon-close sidebar-close" type="button" aria-label="Close navigation">×</button>
+
       <a class="brand brand-sm" href="/dashboard" aria-label="OMEGA NEX-ORA Home">
         <img src="/assets/logo.svg" alt="" width="42" height="42">
         <span class="brand-name">
@@ -60,6 +91,10 @@
           <span class="nav-icon" aria-hidden="true">⚙</span>
           <span><strong>Settings</strong><small>System configuration</small></span>
         </button>
+        <a class="nav-item nav-link" href="/platform">
+          <span class="nav-icon" aria-hidden="true">✦</span>
+          <span><strong>Universal Platform</strong><small>Projects, key types &amp; RBAC</small></span>
+        </a>
       </nav>
 
       <div class="side-foot">
@@ -70,7 +105,10 @@
             <small id="user-role">Super Admin</small>
           </span>
         </div>
-        <button id="logout-btn" class="btn btn-ghost btn-block" type="button">Sign out</button>
+        <button id="logout-btn" class="btn btn-ghost btn-block" type="button" disabled>
+          <span class="btn-label">Sign out</span>
+          <span class="spinner" hidden aria-hidden="true"></span>
+        </button>
         <p class="side-note">Server-side authorization · CSRF protected</p>
       </div>
     </aside>
@@ -78,72 +116,139 @@
     <main class="main" id="main-content">
       <header class="topbar">
         <div class="topbar-title">
-          <p class="eyebrow" id="topbar-eyebrow">OMEGA NEX-ORA / Command Center</p>
-          <h1 id="page-title">Overview</h1>
-          <p id="page-subtitle" class="page-subtitle">Real-time system pulse, database connectivity, and key metrics.</p>
+          <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button"
+                  aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+          <div class="topbar-copy">
+            <p class="eyebrow" id="topbar-eyebrow">OMEGA NEX-ORA / Command Center</p>
+            <h1 id="page-title">Overview</h1>
+            <p id="page-subtitle" class="page-subtitle">Real-time system pulse, database connectivity, and key metrics.</p>
+          </div>
         </div>
         <div class="topbar-actions">
-          <span class="chip chip-live" id="db-health-chip"><span class="pulse-dot"></span> <span id="db-health-text">DB: CONNECTED</span></span>
-          <span class="chip chip-live"><span class="pulse-dot"></span> SECURE SESSION</span>
-          <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh</button>
-          <button id="topbar-quick-action" class="btn btn-primary" type="button">Generate key</button>
+          <span class="chip chip-live chip-db" id="db-health-chip" tabindex="0" data-tip="Live database probe from the authenticated dashboard API. Updates every 60 seconds while this tab is visible."><span class="pulse-dot"></span> <span id="db-health-text">DB: CONNECTED</span></span>
+          <span class="chip chip-live chip-session" tabindex="0" data-tip="Server-side session with HttpOnly cookie, strict SameSite and CSRF header protection."><span class="pulse-dot"></span> SECURE SESSION</span>
+          <button id="refresh-btn" class="btn btn-ghost" type="button">
+            <span class="btn-label">Refresh</span>
+            <span class="spinner" hidden aria-hidden="true"></span>
+          </button>
+          <button id="topbar-quick-action" class="btn btn-primary btn-glow" type="button">Generate key</button>
         </div>
       </header>
 
-      <div id="global-error" class="alert" role="alert" hidden></div>
+      <div id="global-error" class="alert alert-error" role="alert" hidden></div>
 
       <!-- VIEW 1: OVERVIEW -->
       <section id="view-overview" class="view is-active" aria-labelledby="page-title">
         <div class="stat-grid">
           <article class="stat-card glass">
+            <span class="stat-index" aria-hidden="true">01</span>
             <span class="stat-label">Total Projects</span>
             <strong class="stat-value" data-stat="total_projects">—</strong>
             <span class="stat-foot"><span data-stat="active_projects">—</span> active</span>
             <span class="stat-glow" aria-hidden="true"></span>
+            <span class="stat-scan" aria-hidden="true"></span>
           </article>
           <article class="stat-card glass stat-info">
+            <span class="stat-index" aria-hidden="true">02</span>
             <span class="stat-label">Active Projects</span>
             <strong class="stat-value" data-stat="active_projects">—</strong>
             <span class="stat-foot">Ready for reader activation</span>
             <span class="stat-glow" aria-hidden="true"></span>
+            <span class="stat-scan" aria-hidden="true"></span>
           </article>
           <article class="stat-card glass">
+            <span class="stat-index" aria-hidden="true">03</span>
             <span class="stat-label">Total Keys</span>
             <strong class="stat-value" data-stat="total_keys">—</strong>
             <span class="stat-foot">HMAC-SHA256 at rest</span>
             <span class="stat-glow" aria-hidden="true"></span>
+            <span class="stat-scan" aria-hidden="true"></span>
           </article>
           <article class="stat-card glass stat-success">
+            <span class="stat-index" aria-hidden="true">04</span>
             <span class="stat-label">Unused Keys</span>
             <strong class="stat-value" data-stat="unused_keys">—</strong>
             <span class="stat-foot">Available for activation</span>
             <span class="stat-glow" aria-hidden="true"></span>
+            <span class="stat-scan" aria-hidden="true"></span>
           </article>
           <article class="stat-card glass stat-info">
+            <span class="stat-index" aria-hidden="true">05</span>
             <span class="stat-label">Used Keys</span>
             <strong class="stat-value" data-stat="used_keys">—</strong>
             <span class="stat-foot">Permanently consumed</span>
             <span class="stat-glow" aria-hidden="true"></span>
+            <span class="stat-scan" aria-hidden="true"></span>
           </article>
           <article class="stat-card glass stat-warn">
+            <span class="stat-index" aria-hidden="true">06</span>
             <span class="stat-label">Expired Keys</span>
             <strong class="stat-value" data-stat="expired_keys">—</strong>
             <span class="stat-foot">Past expiry date</span>
             <span class="stat-glow" aria-hidden="true"></span>
+            <span class="stat-scan" aria-hidden="true"></span>
           </article>
           <article class="stat-card glass stat-danger">
+            <span class="stat-index" aria-hidden="true">07</span>
             <span class="stat-label">Revoked Keys</span>
             <strong class="stat-value" data-stat="revoked_keys">—</strong>
             <span class="stat-foot">Manually terminated</span>
             <span class="stat-glow" aria-hidden="true"></span>
+            <span class="stat-scan" aria-hidden="true"></span>
           </article>
           <article class="stat-card glass stat-success">
+            <span class="stat-index" aria-hidden="true">08</span>
             <span class="stat-label">Active Installations</span>
             <strong class="stat-value" data-stat="active_installations">—</strong>
             <span class="stat-foot">1 device / project</span>
             <span class="stat-glow" aria-hidden="true"></span>
+            <span class="stat-scan" aria-hidden="true"></span>
           </article>
         </div>
+
+        <section class="panel glass lifecycle-panel" aria-labelledby="lifecycle-title">
+          <header class="panel-head">
+            <div>
+              <p class="eyebrow">LIVE TELEMETRY</p>
+              <h2 id="lifecycle-title">Key Lifecycle Distribution</h2>
+              <p>Computed directly from authenticated backend counts. No sampled or synthetic data.</p>
+            </div>
+            <span class="chip chip-live"><span class="pulse-dot"></span> LIVE</span>
+          </header>
+          <div class="lifecycle-body">
+            <div class="donut-wrap">
+              <svg class="donut" viewBox="0 0 120 120" role="img"
+                   aria-labelledby="lifecycle-donut-title lifecycle-donut-desc">
+                <title id="lifecycle-donut-title">Reader key lifecycle distribution</title>
+                <desc id="lifecycle-donut-desc">Live proportions of unused, used, expired and revoked reader keys.</desc>
+                <circle class="donut-track" cx="60" cy="60" r="46" pathLength="100"></circle>
+                <g class="donut-segments" transform="rotate(-90 60 60)">
+                  <circle id="donut-unused" class="donut-seg seg-unused" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="0 100"></circle>
+                  <circle id="donut-used" class="donut-seg seg-used" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="0 100"></circle>
+                  <circle id="donut-expired" class="donut-seg seg-expired" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="0 100"></circle>
+                  <circle id="donut-revoked" class="donut-seg seg-revoked" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="0 100"></circle>
+                </g>
+              </svg>
+              <div class="donut-core">
+                <strong id="lifecycle-total">—</strong>
+                <span>total keys</span>
+              </div>
+            </div>
+            <ul class="lifecycle-legend" id="lifecycle-legend">
+              <li data-lifecycle="unused"><span class="legend-dot" aria-hidden="true"></span><span class="legend-label">Unused</span><strong data-lifecycle-value="unused">—</strong></li>
+              <li data-lifecycle="used"><span class="legend-dot" aria-hidden="true"></span><span class="legend-label">Used</span><strong data-lifecycle-value="used">—</strong></li>
+              <li data-lifecycle="expired"><span class="legend-dot" aria-hidden="true"></span><span class="legend-label">Expired</span><strong data-lifecycle-value="expired">—</strong></li>
+              <li data-lifecycle="revoked"><span class="legend-dot" aria-hidden="true"></span><span class="legend-label">Revoked</span><strong data-lifecycle-value="revoked">—</strong></li>
+            </ul>
+            <div class="lifecycle-metric">
+              <span class="lifecycle-metric-label">Activation ratio</span>
+              <strong id="lifecycle-activation">—</strong>
+              <span class="lifecycle-metric-foot">Used ÷ redeemable keys</span>
+            </div>
+          </div>
+        </section>
 
         <div class="grid-2">
           <section class="panel glass">
@@ -154,7 +259,7 @@
               </div>
               <button class="btn btn-ghost btn-sm" type="button" data-go="logs">View all logs</button>
             </header>
-            <ul id="overview-audit-list" class="audit-list">
+            <ul id="overview-audit-list" class="audit-list" aria-live="polite">
               <li class="muted">Loading audit stream…</li>
             </ul>
           </section>
@@ -203,9 +308,9 @@
           <header class="panel-head">
             <div>
               <h2>Managed Projects</h2>
-              <p>One project, one Reader Key. Generating a key creates the project automatically; permanent deletion removes every project-owned record.</p>
+              <p>Each project can own unlimited Reader Keys. Generating a key creates a new project or adds another key to an existing one; permanent deletion removes every project-owned record.</p>
             </div>
-            <button id="delete-all-projects-btn" class="btn btn-danger" type="button">Delete All Projects</button>
+            <button id="delete-all-projects-btn" class="btn btn-danger" type="button" data-tip="Permanently removes every project, reader key and installation. Requires confirmation and your password.">Delete All Projects</button>
           </header>
           <div class="toolbar">
             <label class="search">
@@ -213,15 +318,18 @@
               <span class="search-icon" aria-hidden="true">⌕</span>
               <input id="project-search-input" type="search" placeholder="Search by project name…" maxlength="200" autocomplete="off">
             </label>
-            <button id="projects-refresh-btn" class="btn btn-ghost" type="button">Refresh</button>
+            <button id="projects-refresh-btn" class="btn btn-ghost" type="button">
+              <span class="btn-label">Refresh</span>
+              <span class="spinner" hidden aria-hidden="true"></span>
+            </button>
           </div>
           <div class="table-wrap">
-            <table class="data-table">
+            <table class="data-table responsive-table">
               <thead>
                 <tr>
                   <th>Project Name</th>
                   <th>Status</th>
-                  <th>Reader Key</th>
+                  <th>Keys</th>
                   <th>Created</th>
                   <th>Auto Delete Date</th>
                   <th>Remaining</th>
@@ -242,45 +350,106 @@
 
       <!-- VIEW 3: KEY GENERATOR -->
       <section id="view-generator" class="view" aria-label="Key Generator">
-        <section class="panel glass form-panel-contained">
-          <header class="panel-head">
-            <div>
-              <h2>Reader Key Generator</h2>
-              <p>Cryptographically secure random keys. Stored only as HMAC-SHA256 digests. Plaintext shown once.</p>
+        <div class="generator-layout">
+          <section class="panel glass generator-form-panel">
+            <header class="panel-head">
+              <div>
+                <p class="eyebrow">CRYPTOGRAPHIC ISSUANCE</p>
+                <h2>Reader Key Generator</h2>
+                <p>Cryptographically secure random keys. Stored only as HMAC-SHA256 digests. Plaintext shown once.</p>
+              </div>
+            </header>
+            <form id="key-generator-form" class="form-grid" novalidate>
+              <fieldset class="span-2 generator-mode-field">
+                <legend class="field-label">Project Workflow</legend>
+                <div class="segmented-control" role="group" aria-label="Project workflow">
+                  <button id="gen-mode-existing" class="segmented-btn is-active" type="button" aria-pressed="true">Existing Project</button>
+                  <button id="gen-mode-new" class="segmented-btn" type="button" aria-pressed="false">New Project</button>
+                </div>
+              </fieldset>
+
+              <label id="gen-existing-field" class="field span-2">
+                <span class="field-label">Select Project *</span>
+                <select id="gen-project-select">
+                  <option value="">Choose a project…</option>
+                </select>
+                <small class="muted">A project can own unlimited Reader Keys. Select one to issue another key.</small>
+              </label>
+
+              <label id="gen-new-field" class="field span-2" hidden>
+                <span class="field-label">Project Name *</span>
+                <input id="gen-project-name-input" type="text" maxlength="200" placeholder="e.g. Production Cluster Alpha" autocomplete="off">
+                <small class="muted">The project and its first Reader Key are created together. Names are unique case-insensitively while the project exists.</small>
+              </label>
+
+              <label class="field span-2">
+                <span class="field-label">Key Expiration *</span>
+                <select id="gen-expiration-select">
+                  <option value="1_day">1 Day</option>
+                  <option value="7_days">7 Days</option>
+                  <option value="30_days" selected>30 Days</option>
+                  <option value="90_days">90 Days</option>
+                  <option value="1_year">1 Year</option>
+                  <option value="custom">Custom Expiration</option>
+                  <option value="never">Never Expire</option>
+                </select>
+              </label>
+
+              <div id="gen-expiration-presets" class="span-2 preset-chips" role="group" aria-label="Quick expiration presets"></div>
+
+              <label id="gen-custom-expiration-field" class="field span-2" hidden>
+                <span class="field-label">Custom Expiration Date &amp; Time *</span>
+                <input id="gen-expiration-custom" type="datetime-local">
+                <small class="muted">Your local date and time; stored and enforced in UTC. Must be in the future.</small>
+              </label>
+
+              <div id="gen-expiration-preview" class="span-2 expiration-preview" aria-live="polite">
+                <span class="muted">Expiration:</span>
+                <strong>30 Days</strong>
+              </div>
+
+              <label class="field span-2">
+                <span class="field-label">Label / Audit Note (optional)</span>
+                <input id="gen-label-input" type="text" maxlength="100" placeholder="e.g. Primary reader deployment" autocomplete="off">
+              </label>
+
+              <div class="span-2 format-preview">
+                <span>Format preview &amp; Cryptography</span>
+                <code>NXR-****-****-****-****</code>
+                <small>80+ bits of entropy · OS CSPRNG · HMAC-SHA256 keyed digest at rest</small>
+              </div>
+
+              <div class="span-2 alert alert-warn">
+                <strong>Strict Security Notice:</strong> The plaintext Reader Key is revealed exactly ONCE. Only its HMAC-SHA256 digest is stored. A project may own unlimited keys, but each key is individually revocable and can never be un-revoked.
+              </div>
+
+              <p id="generator-error" class="span-2 form-message" role="alert" aria-live="polite"></p>
+
+              <div class="span-2 modal-actions clean-actions-bar margin-top-md">
+                <button id="generate-keys-btn" class="btn btn-primary btn-glow" type="submit">
+                  <span class="btn-label">Generate Reader Key</span>
+                  <span class="spinner" hidden aria-hidden="true"></span>
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <aside class="panel glass crypto-visual" aria-label="Cryptographic process visualization">
+            <div class="crypto-orb" aria-hidden="true">
+              <span class="crypto-ring crypto-ring-a"></span>
+              <span class="crypto-ring crypto-ring-b"></span>
+              <span class="crypto-ring crypto-ring-c"></span>
+              <span class="crypto-core">KEY</span>
             </div>
-          </header>
-          <form id="key-generator-form" class="form-grid" novalidate>
-            <label class="field span-2">
-              <span class="field-label">Project Name *</span>
-              <input id="gen-project-name-input" type="text" required maxlength="200" placeholder="e.g. Production Cluster Alpha" autocomplete="off">
-              <small class="muted">If this name is new, the project and its single Reader Key are created together. If it already exists, no new key is generated.</small>
-            </label>
-
-            <label class="field span-2">
-              <span class="field-label">Label / Audit Note (optional)</span>
-              <input id="gen-label-input" type="text" maxlength="100" placeholder="e.g. Primary reader deployment" autocomplete="off">
-            </label>
-
-            <div class="span-2 format-preview">
-              <span>Format preview &amp; Cryptography</span>
-              <code>NXR-****-****-****-****</code>
-              <small>80+ bits of entropy · OS CSPRNG · HMAC-SHA256 keyed digest at rest</small>
-            </div>
-
-            <div class="span-2 alert alert-warn">
-              <strong>Strict Security Notice:</strong> The plaintext Reader Key is revealed exactly ONCE. Only its HMAC-SHA256 digest is stored. This project can never receive a second key.
-            </div>
-
-            <p id="generator-error" class="span-2 form-message" role="alert"></p>
-
-            <div class="span-2 modal-actions clean-actions-bar margin-top-md">
-              <button id="generate-keys-btn" class="btn btn-primary" type="submit">
-                <span class="btn-label">Generate Reader Key</span>
-                <span class="spinner" hidden aria-hidden="true"></span>
-              </button>
-            </div>
-          </form>
-        </section>
+            <h3>One-time reveal pipeline</h3>
+            <ol class="crypto-steps">
+              <li><span>01</span><div><strong>CSPRNG</strong><p>Operating-system entropy produces the plaintext key.</p></div></li>
+              <li><span>02</span><div><strong>HMAC digest</strong><p>Only the peppered digest is written to storage.</p></div></li>
+              <li><span>03</span><div><strong>Secure reveal</strong><p>Plaintext is rendered once in this viewport and purged on close.</p></div></li>
+            </ol>
+            <p class="crypto-signal"><span class="pulse-dot"></span> Plaintext never persisted</p>
+          </aside>
+        </div>
       </section>
 
       <!-- VIEW 4: KEY MANAGEMENT -->
@@ -291,7 +460,7 @@
               <h2>Reader Key Management</h2>
               <p>Masked key representation only. A successfully redeemed key remains USED permanently.</p>
             </div>
-            <button id="export-keys-btn" class="btn btn-ghost" type="button">Export CSV</button>
+            <button id="export-keys-btn" class="btn btn-ghost" type="button" data-tip="Exports masked key records only. Plaintext reader keys are never included.">Export CSV</button>
           </header>
           <div class="toolbar">
             <label class="search">
@@ -334,22 +503,21 @@
             </label>
           </div>
           <div class="table-wrap">
-            <table class="data-table">
+            <table class="data-table responsive-table">
               <thead>
                 <tr>
-                  <th>Key Hint</th>
+                  <th>Key / Key ID</th>
                   <th>Project</th>
-                  <th>Label</th>
                   <th>Status</th>
-                  <th>Is Permanent</th>
-                  <th>Expires</th>
-                  <th>Used At</th>
                   <th>Created</th>
+                  <th>Expires</th>
+                  <th>First Used</th>
+                  <th>Revoked</th>
                   <th class="align-right">Actions</th>
                 </tr>
               </thead>
               <tbody id="keys-body">
-                <tr><td colspan="9" class="muted text-center">Loading reader keys…</td></tr>
+                <tr><td colspan="8" class="muted text-center">Loading reader keys…</td></tr>
               </tbody>
             </table>
           </div>
@@ -395,7 +563,7 @@
             </label>
           </div>
           <div class="table-wrap">
-            <table class="data-table">
+            <table class="data-table responsive-table">
               <thead>
                 <tr>
                   <th>Installation ID</th>
@@ -564,7 +732,7 @@
             </div>
           </header>
           <div class="table-wrap">
-            <table class="data-table">
+            <table class="data-table responsive-table">
               <thead>
                 <tr>
                   <th>Timestamp</th>
@@ -623,10 +791,13 @@
                 <option value="failure">Failure</option>
               </select>
             </label>
-            <button id="audit-refresh-btn" class="btn btn-ghost" type="button">Refresh</button>
+            <button id="audit-refresh-btn" class="btn btn-ghost" type="button">
+              <span class="btn-label">Refresh</span>
+              <span class="spinner" hidden aria-hidden="true"></span>
+            </button>
           </div>
           <div class="table-wrap">
-            <table class="data-table">
+            <table class="data-table responsive-table">
               <thead>
                 <tr>
                   <th>Timestamp</th>
@@ -657,9 +828,38 @@
 
       <!-- VIEW 8: SETTINGS -->
       <section id="view-settings" class="view" aria-label="Settings">
+        <section class="panel glass form-panel-contained motion-panel" aria-labelledby="motion-title">
+          <header class="panel-head">
+            <div>
+              <p class="eyebrow">CLIENT RUNTIME</p>
+              <h2 id="motion-title">Display &amp; Motion</h2>
+              <p>Effect profile for this browser. Stored locally only — never sent to the server and never used for keys.</p>
+            </div>
+            <span class="chip"><span class="pulse-dot"></span> DEVICE</span>
+          </header>
+          <div class="pulse-metrics-stack">
+            <label class="field checkbox-field-wrap" for="setting-lite-mode">
+              <input id="setting-lite-mode" type="checkbox">
+              <span class="field-label">
+                Reduced visual effects
+                <small class="muted">Turns off ambient animation, backdrop blur and decorative loops. Auto-enabled on low-power devices, when data saver is on, or when the operating system requests reduced motion.</small>
+              </span>
+            </label>
+            <div class="pulse-metric-row">
+              <span class="muted">Active effect profile</span>
+              <strong id="motion-profile" class="badge badge-info" tabindex="0" data-tip="FULL keeps the cinematic engine running. LITE removes continuous effects for weaker hardware.">FULL</strong>
+            </div>
+            <div class="pulse-metric-row">
+              <span class="muted">Operating system motion</span>
+              <strong id="motion-reduced" class="badge badge-muted" tabindex="0" data-tip="Detected live from the prefers-reduced-motion media query.">FULL MOTION</strong>
+            </div>
+          </div>
+        </section>
+
         <section class="panel glass form-panel-contained">
           <header class="panel-head">
             <div>
+              <p class="eyebrow">RUNTIME CONTROL</p>
               <h2>System Configuration</h2>
               <p>Runtime settings validated and stored safely on backend.</p>
             </div>
@@ -715,10 +915,10 @@
               <strong>Security Isolation:</strong> Core database credentials, server secret key, cryptographic pepper, and privileged access tokens are sealed in server environment variables and cannot be accessed from web dashboard.
             </div>
 
-            <p id="settings-message" class="span-2 form-message" role="alert"></p>
+            <p id="settings-message" class="span-2 form-message" role="alert" aria-live="polite"></p>
 
             <div class="span-2 modal-actions clean-actions-bar margin-top-md">
-              <button id="save-settings-btn" class="btn btn-primary" type="submit">
+              <button id="save-settings-btn" class="btn btn-primary btn-glow" type="submit">
                 <span class="btn-label">Save Configuration</span>
                 <span class="spinner" hidden aria-hidden="true"></span>
               </button>
@@ -732,6 +932,8 @@
       </footer>
     </main>
   </div>
+
+  <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
 
   <!-- MODAL: PROJECT DETAIL -->
   <dialog id="project-detail-modal" class="modal" aria-labelledby="project-detail-title">
@@ -753,7 +955,7 @@
   </dialog>
 
   <!-- MODAL: ONE-TIME KEY REVEAL -->
-  <dialog id="result-modal" class="modal" aria-labelledby="result-title">
+  <dialog id="result-modal" class="modal result-modal" aria-labelledby="result-title" aria-describedby="result-warning">
     <div class="modal-card modal-wide">
       <header class="modal-head">
         <div>
@@ -762,16 +964,16 @@
         </div>
         <button class="icon-close" type="button" data-close="result-modal" aria-label="Close">×</button>
       </header>
-      <div class="modal-body">
+      <div class="modal-body result-body">
         <div id="result-warning" class="alert alert-warn">
           <strong>CRITICAL:</strong> Store this plaintext key right now. It is cryptographically hashed and cannot be retrieved again after closing this dialog.
         </div>
         <p id="result-summary" class="muted"></p>
-        <div id="generated-list" class="key-list"></div>
+        <div id="generated-list" class="key-list" aria-live="polite"></div>
       </div>
       <footer class="modal-actions">
-        <button id="copy-all" class="btn btn-ghost" type="button">Copy all</button>
-        <button id="download-keys-csv" class="btn btn-ghost" type="button">Download CSV</button>
+        <button id="copy-all" class="btn btn-ghost" type="button" data-tip="Copies the one-time plaintext reader key held in this session.">Copy all</button>
+        <button id="download-keys-csv" class="btn btn-ghost" type="button" data-tip="Downloads the plaintext key as CSV. Store the file securely; the key cannot be retrieved again.">Download CSV</button>
         <button class="btn btn-primary" type="button" data-close="result-modal">Done</button>
       </footer>
     </div>
@@ -873,6 +1075,19 @@
     <span class="spinner spinner-lg" aria-hidden="true"></span>
     <span>Syncing secure data…</span>
   </div>
+
+  <div id="leave-screen" class="leave-screen" hidden aria-hidden="true">
+    <div class="leave-grid"></div>
+    <div class="leave-visual">
+      <span class="leave-ring"></span>
+      <img src="/assets/logo.svg" alt="" width="64" height="64">
+    </div>
+    <p class="leave-kicker">OMEGA NEX-ORA / SECURE HANDOFF</p>
+    <p class="leave-title">Securing session</p>
+    <p class="leave-status">CLOSING ENCRYPTED CHANNEL / CLEARING LOCAL STATE</p>
+  </div>
+
+  <div id="live-region" class="sr-only" role="status" aria-live="polite"></div>
 
   <script type="module" src="/assets/js/dashboard.js"></script>
 </body>

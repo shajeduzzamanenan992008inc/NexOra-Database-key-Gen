@@ -1,8 +1,8 @@
-"""NexOra Phase 2/4 — Project and Reader Key Management API (Admin only).
+"""NexOra Project and Reader Key Management API (Admin only).
 
-Creation and key generation are one operation: ``POST /projects/generate-key``
-creates the project and its single Reader Key atomically. There is deliberately
-no standalone create-project route and no bulk key route.
+Projects are created either standalone (``POST /projects``) or together with
+their first Reader Key (``POST /projects/generate-key``). Existing projects can
+receive unlimited additional keys through ``POST /projects/<id>/keys``.
 """
 
 from __future__ import annotations
@@ -28,22 +28,78 @@ DELETE_ALL_PHRASE = "DELETE ALL PROJECTS"
 @bp.post("/projects/generate-key")
 @require_auth("owner", "admin")
 def generate_project_key():
-    """Create one project and exactly one Reader Key.
+    """Create one project and issue its first Reader Key.
 
     A 201 response contains the plaintext key once. A duplicate project name
-    returns 409 with safe metadata and never a plaintext key.
+    returns 409 with safe metadata and never a plaintext key. Use
+    ``POST /projects/<id>/keys`` to add keys to an existing project.
     """
     payload = Payload(require_json(request))
     project_name = payload.string(
         "project_name", required=True, min_length=1, max_length=200
     )
     label = payload.string("label", required=False, max_length=100, default="")
+    expiration = payload.string(
+        "expiration", required=False, max_length=20, default="never"
+    )
+    expires_at = payload.datetime_utc(
+        "expires_at", required=False, allow_null=True
+    )
     payload.finish()
 
     ip, agent = request_meta()
     result = project_service().generate_project_key(
         project_name=project_name or "",
         label=label or "",
+        expiration=expiration or "never",
+        expires_at=expires_at,
+        created_by=g.actor["id"],
+        ip_address=ip,
+        user_agent=agent,
+    )
+    return jsonify(jsonable(result)), 201
+
+
+@bp.post("/projects")
+@require_auth("owner", "admin")
+def create_project():
+    """Create a project without issuing a key."""
+    payload = Payload(require_json(request))
+    project_name = payload.string(
+        "project_name", required=True, min_length=1, max_length=200
+    )
+    payload.finish()
+
+    ip, agent = request_meta()
+    project = project_service().create_project(
+        project_name=project_name or "",
+        created_by=g.actor["id"],
+        ip_address=ip,
+        user_agent=agent,
+    )
+    return jsonify({"project": jsonable(project)}), 201
+
+
+@bp.post("/projects/<project_id>/keys")
+@require_auth("owner", "admin")
+def generate_key_for_project(project_id: str):
+    """Issue an additional Reader Key for an existing live project."""
+    payload = Payload(require_json(request))
+    label = payload.string("label", required=False, max_length=100, default="")
+    expiration = payload.string(
+        "expiration", required=False, max_length=20, default="never"
+    )
+    expires_at = payload.datetime_utc(
+        "expires_at", required=False, allow_null=True
+    )
+    payload.finish()
+
+    ip, agent = request_meta()
+    result = project_service().generate_key_for_project(
+        project_id,
+        label=label or "",
+        expiration=expiration or "never",
+        expires_at=expires_at,
         created_by=g.actor["id"],
         ip_address=ip,
         user_agent=agent,

@@ -34,6 +34,26 @@ from ..security.keys import (
 from ..serialization import utcnow
 
 
+EXPIRATION_PRESETS: dict[str, tuple[str, timedelta]] = {
+    "1_day": ("1 Day", timedelta(days=1)),
+    "7_days": ("7 Days", timedelta(days=7)),
+    "30_days": ("30 Days", timedelta(days=30)),
+    "90_days": ("90 Days", timedelta(days=90)),
+    "1_year": ("1 Year", timedelta(days=365)),
+}
+EXPIRATION_CUSTOM = "custom"
+EXPIRATION_NEVER = "never"
+EXPIRATION_CHOICES = tuple(EXPIRATION_PRESETS) + (EXPIRATION_CUSTOM, EXPIRATION_NEVER)
+
+
+def expiration_label(preset: str | None) -> str:
+    if not preset or preset == EXPIRATION_NEVER:
+        return "Never Expires"
+    if preset == EXPIRATION_CUSTOM:
+        return "Custom Expiration"
+    return EXPIRATION_PRESETS.get(preset, ("Custom Expiration", timedelta()))[0]
+
+
 class ProjectService:
     def __init__(self, db: Database, settings: Any) -> None:
         self.db = db
@@ -131,21 +151,255 @@ class ProjectService:
             return 0
         return value if 0 <= value <= 3650 else 0
 
+    def _resolve_expiration(
+        self,
+        expiration: str | None,
+        expires_at: datetime | None,
+        now: datetime,
+    ) -> tuple[str, datetime | None, bool]:
+        """Resolve the administrator's expiration choice into stored fields.
+
+        Fixed presets are computed server-side against the database clock so a
+        client cannot backdate a key. ``never`` is explicit and always stores
+        ``expires_at = NULL`` with ``is_permanent = true``.
+        """
+        preset = (expiration or EXPIRATION_NEVER).strip().lower()
+        if preset in {"never", "never_expire", "permanent"}:
+            return EXPIRATION_NEVER, None, True
+
+        if preset == EXPIRATION_CUSTOM:
+            if expires_at is None:
+                raise ValidationError(
+                    {"expires_at": "Choose a future date and time for a custom expiration."}
+                )
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = expires_at.astimezone(timezone.utc)
+            if expires_at <= now:
+                raise ValidationError(
+                    {"expires_at": "The custom expiration must be in the future."}
+                )
+            return EXPIRATION_CUSTOM, expires_at, False
+
+        if preset not in EXPIRATION_PRESETS:
+            raise ValidationError(
+                {
+                    "expiration": "Choose 1 Day, 7 Days, 30 Days, 90 Days, "
+                    "1 Year, Custom Expiration or Never Expire."
+                }
+            )
+        return preset, now + EXPIRATION_PRESETS[preset][1], False
+
+    def _insert_reader_key(
+        self,
+        cursor: Any,
+        *,
+        project_id: str,
+        project_name: str,
+        label: str,
+        preset: str,
+        expires_at: datetime | None,
+        is_permanent: bool,
+        created_by: UUID | str | None,
+        ip_address: str | None,
+        user_agent: str | None,
+        now: datetime,
+    ) -> dict[str, Any]:
+        """Insert one key and its audit event inside the caller's transaction."""
+        spec = KeySpec()
+        plaintext = generate_plaintext_key(spec)
+        normalized_key = normalize_key(plaintext)
+        if not normalized_key:
+            raise RuntimeError("Generated key failed normalization.")
+
+        key_hash = hash_reader_key(self.pepper, normalized_key)
+        hint = masked_hint(spec, plaintext)
+        key_id = uuid4()
+
+        cursor.execute(
+            """
+            INSERT INTO reader_keys
+                (id, project_id, key_hash, key_hint, label, status,
+                 is_permanent, expiration_preset, expires_at, created_by, created_at)
+            VALUES (%s, %s, %s, %s, %s, 'generated', %s, %s, %s, %s, %s)
+            """,
+            (
+                str(key_id),
+                project_id,
+                key_hash,
+                hint,
+                label.strip(),
+                is_permanent,
+                preset,
+                expires_at,
+                str(created_by) if created_by else None,
+                now,
+            ),
+        )
+
+        self._write_audit(
+            cursor,
+            actor_id=created_by,
+            action="reader_key.generate",
+            target_type="reader_key",
+            target_id=str(key_id),
+            project_id=project_id,
+            outcome="success",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details={
+                "project_name": project_name,
+                "key_hint": hint,
+                "is_permanent": is_permanent,
+                "expiration_preset": preset,
+                "expires_at": expires_at,
+            },
+        )
+
+        return {
+            "id": str(key_id),
+            "project_id": project_id,
+            "project_name": project_name,
+            "plaintext_key": plaintext,
+            "key_hint": hint,
+            "label": label.strip(),
+            "status": "generated",
+            "is_permanent": is_permanent,
+            "expiration_preset": preset,
+            "expiration_label": expiration_label(preset),
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "created_at": now.isoformat(),
+            "first_used_at": None,
+            "used_at": None,
+            "revoked_at": None,
+            "revoked_reason": None,
+        }
+
+    def create_project(
+        self,
+        *,
+        project_name: str,
+        created_by: UUID | str | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a project without issuing a Reader Key."""
+        try:
+            normalized = normalize_project_name(project_name)
+        except ValueError as exc:
+            raise ValidationError({"project_name": str(exc)}) from None
+
+        display_name = (project_name or "").strip()
+        if not display_name or len(display_name) > 200:
+            raise ValidationError(
+                {"project_name": "Project name must be between 1 and 200 characters."}
+            )
+
+        now = utcnow()
+        project_id = uuid4()
+        auto_delete_days = self.get_auto_delete_days()
+        auto_delete_at = (
+            now + timedelta(days=auto_delete_days) if auto_delete_days > 0 else None
+        )
+
+        try:
+            with self.db.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (normalized,),
+                )
+                cursor.execute(
+                    """
+                    SELECT id, project_name, status, deleted_at
+                    FROM nexora_projects
+                    WHERE project_name_normalized = %s AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    (normalized,),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    self._raise_existing_project(cursor, existing)
+
+                cursor.execute(
+                    """
+                    INSERT INTO nexora_projects
+                        (id, project_name, project_name_normalized, database_url_ref,
+                         status, auto_delete_at, created_at, updated_at, created_by)
+                    VALUES (%s, %s, %s, '', 'active', %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        str(project_id),
+                        display_name,
+                        normalized,
+                        auto_delete_at,
+                        now,
+                        now,
+                        str(created_by) if created_by else None,
+                    ),
+                )
+
+                self._write_audit(
+                    cursor,
+                    actor_id=created_by,
+                    action="project.create",
+                    target_type="project",
+                    target_id=str(project_id),
+                    project_id=str(project_id),
+                    outcome="success",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    details={
+                        "project_name": display_name,
+                        "normalized": normalized,
+                        "source": "create_project",
+                        "auto_delete_at": auto_delete_at,
+                    },
+                )
+        except Exception as exc:
+            if is_unique_violation(exc):
+                raise ApiError(
+                    409,
+                    "PROJECT_ALREADY_EXISTS",
+                    "This project already exists.",
+                ) from None
+            raise
+
+        return {
+            "id": str(project_id),
+            "project_name": display_name,
+            "project_name_normalized": normalized,
+            "status": "active",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "deleted_at": None,
+            "auto_delete_at": auto_delete_at.isoformat() if auto_delete_at else None,
+            "days_remaining": auto_delete_days if auto_delete_at else None,
+            "auto_delete_due": False,
+            "total_keys": 0,
+            "available_keys": 0,
+            "used_keys": 0,
+            "revoked_keys": 0,
+            "expired_keys": 0,
+        }
+
     def generate_project_key(
         self,
         *,
         project_name: str,
         label: str = "",
+        expiration: str | None = None,
+        expires_at: datetime | None = None,
         created_by: UUID | str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> dict[str, Any]:
-        """Create one project and exactly one Reader Key in one transaction.
+        """Create a new project and issue its first Reader Key atomically.
 
-        This is the only creation path for NexOra projects. A duplicate name
-        (case-insensitive, including names retired by a permanent deletion or
-        held by a legacy soft-deleted row) returns a safe 409 response with
-        project/key metadata and never reveals a plaintext key.
+        This path is for the "new project" workflow. Use
+        ``generate_key_for_project`` to add another key to an existing project.
+        A duplicate live name returns a safe 409 and never a plaintext key.
         """
         try:
             normalized = normalize_project_name(project_name)
@@ -158,54 +412,27 @@ class ProjectService:
                 {"project_name": "Project name must be between 1 and 200 characters."}
             )
 
-        auto_delete_days = self.get_auto_delete_days()
         now = utcnow()
+        preset, resolved_expires_at, is_permanent = self._resolve_expiration(
+            expiration, expires_at, now
+        )
+        auto_delete_days = self.get_auto_delete_days()
         auto_delete_at = (
             now + timedelta(days=auto_delete_days) if auto_delete_days > 0 else None
         )
-
-        spec = KeySpec()
-        plaintext = generate_plaintext_key(spec)
-        normalized_key = normalize_key(plaintext)
-        if not normalized_key:
-            raise RuntimeError("Generated key failed normalization.")
-
-        key_hash = hash_reader_key(self.pepper, normalized_key)
-        hint = masked_hint(spec, plaintext)
         project_id = uuid4()
-        key_id = uuid4()
 
         try:
             with self.db.cursor() as cursor:
-                # Serialize name decisions against permanent deletion. Deleting
-                # a name takes the same lock, so a tombstone cannot appear
-                # between the existence check and the project INSERT.
                 cursor.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                     (normalized,),
                 )
-
-                cursor.execute(
-                    """
-                    SELECT project_name FROM nexora_deleted_project_names
-                    WHERE project_name_normalized = %s
-                    """,
-                    (normalized,),
-                )
-                if cursor.fetchone():
-                    raise ApiError(
-                        409,
-                        "PROJECT_NAME_RETIRED",
-                        "This project name belonged to a permanently deleted project and cannot be reused.",
-                        {"project_name": display_name, "retired": True},
-                    )
-
                 cursor.execute(
                     """
                     SELECT id, project_name, status, deleted_at
                     FROM nexora_projects
-                    WHERE project_name_normalized = %s
-                    ORDER BY (deleted_at IS NULL) DESC, created_at ASC
+                    WHERE project_name_normalized = %s AND deleted_at IS NULL
                     LIMIT 1
                     """,
                     (normalized,),
@@ -234,14 +461,12 @@ class ProjectService:
                         str(created_by) if created_by else None,
                     ),
                 )
-                created = cursor.fetchone()
-                if not created:
+                if not cursor.fetchone():
                     cursor.execute(
                         """
                         SELECT id, project_name, status, deleted_at
                         FROM nexora_projects
-                        WHERE project_name_normalized = %s
-                        ORDER BY (deleted_at IS NULL) DESC, created_at ASC
+                        WHERE project_name_normalized = %s AND deleted_at IS NULL
                         LIMIT 1
                         """,
                         (normalized,),
@@ -252,26 +477,8 @@ class ProjectService:
                     raise ApiError(
                         409,
                         "PROJECT_ALREADY_EXISTS",
-                        "This project already exists. No additional reader key was generated.",
+                        "This project already exists.",
                     )
-
-                cursor.execute(
-                    """
-                    INSERT INTO reader_keys
-                        (id, project_id, key_hash, key_hint, label, status,
-                         is_permanent, expires_at, created_by, created_at)
-                    VALUES (%s, %s, %s, %s, %s, 'generated', true, NULL, %s, %s)
-                    """,
-                    (
-                        str(key_id),
-                        str(project_id),
-                        key_hash,
-                        hint,
-                        label.strip(),
-                        str(created_by) if created_by else None,
-                        now,
-                    ),
-                )
 
                 self._write_audit(
                     cursor,
@@ -290,71 +497,130 @@ class ProjectService:
                         "auto_delete_at": auto_delete_at,
                     },
                 )
-                self._write_audit(
+
+                key = self._insert_reader_key(
                     cursor,
-                    actor_id=created_by,
-                    action="reader_key.generate",
-                    target_type="reader_key",
-                    target_id=str(key_id),
                     project_id=str(project_id),
-                    outcome="success",
+                    project_name=display_name,
+                    label=label,
+                    preset=preset,
+                    expires_at=resolved_expires_at,
+                    is_permanent=is_permanent,
+                    created_by=created_by,
                     ip_address=ip_address,
                     user_agent=user_agent,
-                    details={
-                        "project_name": display_name,
-                        "key_hint": hint,
-                        "is_permanent": True,
-                    },
+                    now=now,
                 )
         except Exception as exc:
             if is_unique_violation(exc):
                 raise ApiError(
                     409,
-                    "KEY_ALREADY_EXISTS",
-                    "This project already has a reader key. A project can only own one key.",
+                    "PROJECT_ALREADY_EXISTS",
+                    "This project already exists.",
                 ) from None
             raise
 
         return {
             "created": True,
+            "project_created": True,
             "project": {
                 "id": str(project_id),
                 "project_name": display_name,
+                "project_name_normalized": normalized,
                 "status": "active",
                 "created_at": now.isoformat(),
                 "auto_delete_at": auto_delete_at.isoformat() if auto_delete_at else None,
+                "total_keys": 1,
+                "available_keys": 1,
+                "used_keys": 0,
+                "revoked_keys": 0,
+                "expired_keys": 0,
             },
-            "reader_key": {
-                "id": str(key_id),
-                "project_id": str(project_id),
-                "project_name": display_name,
-                "plaintext_key": plaintext,
-                "key_hint": hint,
-                "label": label.strip(),
-                "status": "generated",
-                "is_permanent": True,
-                "expires_at": None,
-                "created_at": now.isoformat(),
+            "reader_key": key,
+        }
+
+    def generate_key_for_project(
+        self,
+        project_id: str,
+        *,
+        label: str = "",
+        expiration: str | None = None,
+        expires_at: datetime | None = None,
+        created_by: UUID | str | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
+        """Issue another Reader Key for an existing live project."""
+        now = utcnow()
+        preset, resolved_expires_at, is_permanent = self._resolve_expiration(
+            expiration, expires_at, now
+        )
+
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, project_name, project_name_normalized, status, deleted_at
+                FROM nexora_projects
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (project_id,),
+            )
+            row = cursor.fetchone()
+            if not row or row[4] is not None:
+                raise ApiError(404, "NOT_FOUND", "Project not found.")
+
+            key = self._insert_reader_key(
+                cursor,
+                project_id=str(row[0]),
+                project_name=row[1],
+                label=label,
+                preset=preset,
+                expires_at=resolved_expires_at,
+                is_permanent=is_permanent,
+                created_by=created_by,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                now=now,
+            )
+
+        return {
+            "created": True,
+            "project_created": False,
+            "project": {
+                "id": str(row[0]),
+                "project_name": row[1],
+                "status": row[3],
             },
+            "reader_key": key,
         }
 
     def _raise_existing_project(self, cursor: Any, project_row: Sequence[Any]) -> None:
         """Raise a safe 409 conflict for an existing project name.
 
         Only status/hint metadata is returned. A plaintext key is never
-        recoverable, and an existing project never receives a second key.
+        recoverable. The project may already own multiple keys; only the latest
+        is included in the conflict details.
         """
         project_id = str(project_row[0])
         cursor.execute(
             """
-            SELECT id, key_hint, status, created_at, used_at, revoked_at
+            SELECT id, key_hint, status, created_at, used_at, revoked_at,
+                   expiration_preset, expires_at
             FROM reader_keys
             WHERE project_id = %s
+            ORDER BY created_at DESC
             LIMIT 1
             """,
             (project_id,),
         )
         key = cursor.fetchone()
+        cursor.execute(
+            "SELECT COUNT(*) FROM reader_keys WHERE project_id = %s",
+            (project_id,),
+        )
+        count_row = cursor.fetchone()
+        key_count = int(count_row[0]) if count_row else 0
         details: dict[str, Any] = {
             "project": {
                 "id": project_id,
@@ -364,6 +630,7 @@ class ProjectService:
             },
             "reader_key": None,
             "has_reader_key": bool(key),
+            "key_count": key_count,
         }
         if key:
             details["reader_key"] = {
@@ -373,6 +640,8 @@ class ProjectService:
                 "created_at": key[3],
                 "used_at": key[4],
                 "revoked_at": key[5],
+                "expiration_preset": key[6],
+                "expires_at": key[7],
             }
         if project_row[3]:
             raise ApiError(
@@ -384,12 +653,12 @@ class ProjectService:
         raise ApiError(
             409,
             "PROJECT_ALREADY_EXISTS",
-            "This project already exists. No additional reader key was generated.",
+            "This project already exists. Choose it in the generator to issue another key.",
             details,
         )
 
     def get_project(self, project_id: str) -> dict[str, Any]:
-        """Fetch project details including active installation summary and key counts."""
+        """Fetch project details with aggregate key counts and latest key."""
         row = self.db.fetch_one(
             """
             SELECT p.id, p.project_name, p.project_name_normalized,
@@ -405,6 +674,8 @@ class ProjectService:
                         WHEN p.auto_delete_at <= now() THEN true
                         ELSE false
                    END AS auto_delete_due,
+                   stats.total_keys, stats.available_keys, stats.used_keys,
+                   stats.revoked_keys, stats.expired_keys,
                    i.id AS active_installation_id,
                    i.device_id AS active_device_id,
                    i.activated_at AS active_installation_activated_at,
@@ -415,16 +686,32 @@ class ProjectService:
                    k.created_at AS reader_key_created_at,
                    k.used_at AS reader_key_used_at,
                    k.revoked_at AS reader_key_revoked_at,
-                   CASE WHEN k.id IS NULL THEN 0 ELSE 1 END AS total_keys,
-                   CASE WHEN k.status = 'generated' THEN 1 ELSE 0 END AS available_keys,
-                   CASE WHEN k.status = 'used' THEN 1 ELSE 0 END AS used_keys,
-                   CASE WHEN k.status = 'revoked' THEN 1 ELSE 0 END AS revoked_keys,
-                   CASE WHEN k.status = 'expired' THEN 1 ELSE 0 END AS expired_keys
+                   k.expiration_preset AS reader_key_expiration_preset,
+                   k.expires_at AS reader_key_expires_at
             FROM nexora_projects p
-            LEFT JOIN reader_installations i
-                   ON i.project_id = p.id AND i.status = 'active'
-            LEFT JOIN reader_keys k
-                   ON k.project_id = p.id
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::int AS total_keys,
+                       COUNT(*) FILTER (WHERE k.status = 'generated')::int AS available_keys,
+                       COUNT(*) FILTER (WHERE k.status = 'used')::int AS used_keys,
+                       COUNT(*) FILTER (WHERE k.status = 'revoked')::int AS revoked_keys,
+                       COUNT(*) FILTER (WHERE k.status = 'expired')::int AS expired_keys
+                FROM reader_keys k
+                WHERE k.project_id = p.id
+            ) stats ON true
+            LEFT JOIN LATERAL (
+                SELECT k.id, k.key_hint, k.status, k.created_at, k.used_at,
+                       k.revoked_at, k.expiration_preset, k.expires_at
+                FROM reader_keys k
+                WHERE k.project_id = p.id
+                ORDER BY k.created_at DESC
+                LIMIT 1
+            ) k ON true
+            LEFT JOIN LATERAL (
+                SELECT i.id, i.device_id, i.activated_at, i.last_seen_at
+                FROM reader_installations i
+                WHERE i.project_id = p.id AND i.status = 'active'
+                LIMIT 1
+            ) i ON true
             WHERE p.id = %s
             """,
             (project_id,),
@@ -466,22 +753,42 @@ class ProjectService:
                         WHEN p.auto_delete_at <= now() THEN true
                         ELSE false
                    END AS auto_delete_due,
+                   stats.total_keys, stats.available_keys, stats.used_keys,
+                   stats.revoked_keys, stats.expired_keys,
                    k.id AS reader_key_id,
                    k.key_hint AS reader_key_hint,
                    k.status AS reader_key_status,
                    k.created_at AS reader_key_created_at,
                    k.used_at AS reader_key_used_at,
-                   CASE WHEN k.id IS NULL THEN 0 ELSE 1 END AS total_keys,
-                   CASE WHEN k.status = 'generated' THEN 1 ELSE 0 END AS available_keys,
-                   CASE WHEN k.status = 'used' THEN 1 ELSE 0 END AS used_keys,
-                   CASE WHEN k.status = 'revoked' THEN 1 ELSE 0 END AS revoked_keys,
-                   CASE WHEN k.status = 'expired' THEN 1 ELSE 0 END AS expired_keys,
+                   k.expiration_preset AS reader_key_expiration_preset,
+                   k.expires_at AS reader_key_expires_at,
                    i.id AS active_installation_id,
                    i.device_id AS active_device_id,
                    i.last_seen_at AS installation_last_seen_at
             FROM nexora_projects p
-            LEFT JOIN reader_keys k ON k.project_id = p.id
-            LEFT JOIN reader_installations i ON i.project_id = p.id AND i.status = 'active'
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::int AS total_keys,
+                       COUNT(*) FILTER (WHERE k.status = 'generated')::int AS available_keys,
+                       COUNT(*) FILTER (WHERE k.status = 'used')::int AS used_keys,
+                       COUNT(*) FILTER (WHERE k.status = 'revoked')::int AS revoked_keys,
+                       COUNT(*) FILTER (WHERE k.status = 'expired')::int AS expired_keys
+                FROM reader_keys k
+                WHERE k.project_id = p.id
+            ) stats ON true
+            LEFT JOIN LATERAL (
+                SELECT k.id, k.key_hint, k.status, k.created_at, k.used_at,
+                       k.expiration_preset, k.expires_at
+                FROM reader_keys k
+                WHERE k.project_id = p.id
+                ORDER BY k.created_at DESC
+                LIMIT 1
+            ) k ON true
+            LEFT JOIN LATERAL (
+                SELECT i.id, i.device_id, i.last_seen_at
+                FROM reader_installations i
+                WHERE i.project_id = p.id AND i.status = 'active'
+                LIMIT 1
+            ) i ON true
             {where_clause}
             ORDER BY p.created_at DESC
         """
@@ -597,8 +904,9 @@ class ProjectService:
         """Permanently delete one project and every project-owned record.
 
         The deletion event is written before the rows are removed and with a
-        NULL ``project_id``, so ``ON DELETE SET NULL`` cannot erase it. A
-        tombstone records the normalized name so it cannot be reused.
+        NULL ``project_id``, so ``ON DELETE SET NULL`` cannot erase it. The
+        snapshot lives in the audit trail; the project name is deliberately
+        reusable after the transaction commits.
         """
         project = self.db.fetch_one(
             """
@@ -631,6 +939,48 @@ class ProjectService:
             if not row:
                 raise ApiError(404, "NOT_FOUND", "Project not found.")
 
+            cursor.execute(
+                """
+                SELECT id, key_hint, label, status, expiration_preset,
+                       is_permanent, expires_at, created_at, used_at,
+                       revoked_at, revoked_reason
+                FROM reader_keys
+                WHERE project_id = %s
+                ORDER BY created_at ASC
+                """,
+                (str(row[0]),),
+            )
+            key_rows = cursor.fetchall()
+            key_count = len(key_rows)
+            key_snapshots = [
+                {
+                    "id": str(key[0]),
+                    "key_hint": key[1],
+                    "label": key[2],
+                    "status": key[3],
+                    "expiration_preset": key[4],
+                    "is_permanent": bool(key[5]),
+                    "expires_at": key[6],
+                    "created_at": key[7],
+                    "used_at": key[8],
+                    "revoked_at": key[9],
+                    "revoked_reason": key[10],
+                }
+                for key in key_rows[:100]
+            ]
+
+            cursor.execute(
+                """
+                SELECT
+                  (SELECT count(*) FROM reader_installations WHERE project_id = %s) AS installations,
+                  (SELECT count(*) FROM device_tokens WHERE project_id = %s) AS device_tokens
+                """,
+                (str(row[0]), str(row[0])),
+            )
+            related = cursor.fetchone()
+            installation_count = int(related[0]) if related else 0
+            device_token_count = int(related[1]) if related else 0
+
             snapshot = {
                 "project_id": str(row[0]),
                 "project_name": row[1],
@@ -638,27 +988,12 @@ class ProjectService:
                 "status": row[3],
                 "auto_delete_at": row[4],
                 "created_at": row[5],
+                "key_count": key_count,
+                "installation_count": installation_count,
+                "device_token_count": device_token_count,
+                "keys": key_snapshots,
+                "keys_truncated": key_count > len(key_snapshots),
             }
-
-            cursor.execute(
-                """
-                INSERT INTO nexora_deleted_project_names
-                    (project_name_normalized, project_name, deleted_at,
-                     deleted_by, details)
-                VALUES (%s, %s, now(), %s, %s::jsonb)
-                ON CONFLICT (project_name_normalized) DO UPDATE
-                SET project_name = EXCLUDED.project_name,
-                    deleted_at = EXCLUDED.deleted_at,
-                    deleted_by = EXCLUDED.deleted_by,
-                    details = EXCLUDED.details
-                """,
-                (
-                    row[2],
-                    row[1],
-                    str(actor_id) if actor_id else None,
-                    json.dumps(snapshot, default=str),
-                ),
-            )
 
             self._write_audit(
                 cursor,
@@ -670,7 +1005,13 @@ class ProjectService:
                 outcome="success",
                 ip_address=ip_address,
                 user_agent=user_agent,
-                details={"mode": "permanent", "snapshot": snapshot},
+                details={
+                    "mode": "permanent",
+                    "snapshot": snapshot,
+                    "key_count": key_count,
+                    "installation_count": installation_count,
+                    "device_token_count": device_token_count,
+                },
                 strict=True,
             )
 
@@ -740,38 +1081,6 @@ class ProjectService:
             if not rows:
                 return {"deleted_count": 0, "mode": "permanent"}
 
-            for project_id, project_name, normalized in rows:
-                cursor.execute(
-                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                    (normalized,),
-                )
-                cursor.execute(
-                    """
-                    INSERT INTO nexora_deleted_project_names
-                        (project_name_normalized, project_name, deleted_at,
-                         deleted_by, details)
-                    VALUES (%s, %s, now(), %s, %s::jsonb)
-                    ON CONFLICT (project_name_normalized) DO UPDATE
-                    SET project_name = EXCLUDED.project_name,
-                        deleted_at = EXCLUDED.deleted_at,
-                        deleted_by = EXCLUDED.deleted_by,
-                        details = EXCLUDED.details
-                    """,
-                    (
-                        normalized,
-                        project_name,
-                        str(actor_id) if actor_id else None,
-                        json.dumps(
-                            {
-                                "project_id": str(project_id),
-                                "project_name": project_name,
-                                "mode": "delete_all",
-                            },
-                            default=str,
-                        ),
-                    ),
-                )
-
             self._write_audit(
                 cursor,
                 actor_id=actor_id,
@@ -796,12 +1105,18 @@ class ProjectService:
             cursor.execute("DELETE FROM reader_keys")
             cursor.execute("DELETE FROM nexora_projects")
 
-            cursor.execute("SELECT COUNT(*) FROM nexora_projects")
-            remaining = cursor.fetchone()
-            if remaining and int(remaining[0]) > 0:
-                raise RuntimeError(
-                    "Delete-all verification failed; transaction rolled back."
-                )
+            for table in (
+                "nexora_projects",
+                "reader_keys",
+                "reader_installations",
+                "device_tokens",
+            ):
+                cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                remaining = cursor.fetchone()
+                if remaining and int(remaining[0]) > 0:
+                    raise RuntimeError(
+                        "Delete-all verification failed; transaction rolled back."
+                    )
 
         return {"deleted_count": len(rows), "mode": "permanent"}
 
@@ -840,6 +1155,29 @@ class ProjectService:
     # Reader Key Management
     # ------------------------------------------------------------------------
 
+    def _expire_overdue_reader_keys(self) -> None:
+        """Persist expiry for generated keys whose time has passed.
+
+        Activation performs the same transition under a row lock. This lazy
+        sweep keeps the admin list and dashboard counts truthful without a
+        background worker.
+        """
+        try:
+            self.db.execute(
+                """
+                UPDATE reader_keys
+                   SET status = 'expired'
+                 WHERE status = 'generated'
+                   AND is_permanent = false
+                   AND expires_at IS NOT NULL
+                   AND expires_at <= now()
+                """
+            )
+        except Exception:
+            # A read-only account or a transient failure must not hide the
+            # existing records; the stored status remains the last known value.
+            pass
+
     def revoke_key(
         self,
         key_id: str,
@@ -849,22 +1187,21 @@ class ProjectService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> dict[str, Any]:
-        """Revoke a reader key permanently. A used key remains permanently consumed."""
+        """Revoke any non-revoked key permanently.
+
+        Revoking a used (redeemed) key also revokes the installation bound to
+        it and deactivates every device token, so an already-connected Reader
+        cannot bypass the revocation.
+        """
         if not reason.strip():
             raise ValidationError({"reason": "A revocation reason is required."})
 
-        # Check existing key state
         key = self.get_key(key_id)
         if key["status"] == "revoked":
             raise ApiError(400, "ALREADY_REVOKED", "Key is already revoked.")
-        if key["status"] == "used":
-            raise ApiError(
-                400,
-                "KEY_ALREADY_USED",
-                "A redeemed key is already permanently consumed and cannot be revoked.",
-            )
 
         now = utcnow()
+        installation_revoked = False
         with self.db.cursor() as cursor:
             cursor.execute(
                 """
@@ -873,8 +1210,8 @@ class ProjectService:
                     revoked_at = %s,
                     revoked_by = %s,
                     revoked_reason = %s
-                WHERE id = %s AND status = 'generated'
-                RETURNING id, project_id, status
+                WHERE id = %s AND status <> 'revoked'
+                RETURNING id, project_id, status, used_at
                 """,
                 (now, str(revoked_by) if revoked_by else None, reason.strip(), key_id),
             )
@@ -886,6 +1223,53 @@ class ProjectService:
                     "Key not found or not in a revocable state.",
                 )
 
+            if row[3] is not None:
+                cursor.execute(
+                    """
+                    UPDATE reader_installations
+                       SET status = 'revoked',
+                           revoked_at = %s,
+                           revoked_by = %s,
+                           revoked_reason = %s,
+                           device_token_hash = ''
+                     WHERE reader_key_id = %s AND status = 'active'
+                     RETURNING id
+                    """,
+                    (
+                        now,
+                        str(revoked_by) if revoked_by else None,
+                        f"Reader key revoked: {reason.strip()}",
+                        key_id,
+                    ),
+                )
+                installation = cursor.fetchone()
+                if installation:
+                    installation_revoked = True
+                    cursor.execute(
+                        """
+                        UPDATE device_tokens
+                           SET is_active = false
+                         WHERE installation_id = %s
+                        """,
+                        (str(installation[0]),),
+                    )
+                    self._write_audit(
+                        cursor,
+                        actor_id=revoked_by,
+                        action="reader_installation.revoke",
+                        target_type="reader_installation",
+                        target_id=str(installation[0]),
+                        project_id=str(row[1]),
+                        outcome="success",
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        details={
+                            "reason": reason.strip(),
+                            "source": "reader_key.revoke",
+                            "reader_key_id": key_id,
+                        },
+                    )
+
             self._write_audit(
                 cursor,
                 actor_id=revoked_by,
@@ -896,10 +1280,18 @@ class ProjectService:
                 outcome="success",
                 ip_address=ip_address,
                 user_agent=user_agent,
-                details={"reason": reason.strip(), "key_hint": key["key_hint"]},
+                details={
+                    "reason": reason.strip(),
+                    "key_hint": key["key_hint"],
+                    "installation_revoked": installation_revoked,
+                },
             )
 
-        return {"id": key_id, "status": "revoked"}
+        return {
+            "id": key_id,
+            "status": "revoked",
+            "installation_revoked": installation_revoked,
+        }
 
     def list_keys(
         self,
@@ -914,6 +1306,7 @@ class ProjectService:
         order: str = "desc",
     ) -> dict[str, Any]:
         """List reader keys with pagination and filtering (NEVER returns plaintext)."""
+        self._expire_overdue_reader_keys()
         page = max(1, page)
         page_size = max(1, min(100, page_size))
         offset = (page - 1) * page_size
@@ -947,12 +1340,16 @@ class ProjectService:
             params.extend([term, term, term])
 
         if expiry_filter:
-            if expiry_filter == "permanent":
-                clauses.append("k.is_permanent = true")
+            if expiry_filter in ("permanent", "never"):
+                clauses.append("k.expiration_preset = 'never'")
             elif expiry_filter == "expired":
-                clauses.append("(k.status = 'expired' OR (k.is_permanent = false AND k.expires_at < now()))")
+                clauses.append(
+                    "(k.status = 'expired' OR (k.is_permanent = false AND k.expires_at < now()))"
+                )
             elif expiry_filter == "active":
-                clauses.append("(k.status = 'generated' AND (k.is_permanent = true OR k.expires_at >= now()))")
+                clauses.append(
+                    "(k.status = 'generated' AND (k.is_permanent = true OR k.expires_at >= now()))"
+                )
 
         where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
 
@@ -969,11 +1366,15 @@ class ProjectService:
         # Query page
         data_sql = f"""
             SELECT k.id, k.project_id, p.project_name, k.key_hint, k.label,
-                   k.status, k.is_permanent, k.expires_at, k.created_at,
-                   k.used_at, k.revoked_at, k.revoked_reason,
+                   k.status, k.is_permanent, k.expiration_preset,
+                   k.expires_at, k.created_at,
+                   k.used_at, k.used_at AS first_used_at,
+                   k.revoked_at, k.revoked_reason, k.revoked_by,
+                   revoked_by_user.email AS revoked_by_email,
                    i.id AS installation_id, i.device_id, i.status AS installation_status
             FROM reader_keys k
             JOIN nexora_projects p ON p.id = k.project_id
+            LEFT JOIN admin_users revoked_by_user ON revoked_by_user.id = k.revoked_by
             LEFT JOIN reader_installations i ON i.reader_key_id = k.id
             {where_clause}
             ORDER BY {sort_col} {sort_dir}
@@ -994,17 +1395,22 @@ class ProjectService:
 
     def get_key(self, key_id: str) -> dict[str, Any]:
         """Fetch reader key details (NEVER returns plaintext)."""
+        self._expire_overdue_reader_keys()
         row = self.db.fetch_one(
             """
             SELECT k.id, k.project_id, p.project_name, k.key_hint, k.label,
-                   k.status, k.is_permanent, k.expires_at, k.created_at,
-                   k.used_at, k.revoked_at, k.revoked_reason,
+                   k.status, k.is_permanent, k.expiration_preset,
+                   k.expires_at, k.created_at,
+                   k.used_at, k.used_at AS first_used_at,
+                   k.revoked_at, k.revoked_reason, k.revoked_by,
+                   revoked_by_user.email AS revoked_by_email,
                    i.id AS installation_id, i.device_id,
                    i.activated_at AS installation_activated_at,
                    i.status AS installation_status,
                    i.last_seen_at AS installation_last_seen
             FROM reader_keys k
             JOIN nexora_projects p ON p.id = k.project_id
+            LEFT JOIN admin_users revoked_by_user ON revoked_by_user.id = k.revoked_by
             LEFT JOIN reader_installations i ON i.reader_key_id = k.id
             WHERE k.id = %s
             """,
@@ -1253,7 +1659,7 @@ class ProjectService:
         # Pre-check project existence outside the write transaction to fail fast on 404
         project = self.db.fetch_one(
             """
-            SELECT id, project_name, status, deleted_at
+            SELECT id, project_name, status, deleted_at, expires_at, archived_at
             FROM nexora_projects
             WHERE project_name_normalized = %s AND deleted_at IS NULL
             """,
@@ -1265,23 +1671,11 @@ class ProjectService:
                 "PROJECT_NOT_FOUND",
                 "Project does not exist or is inactive.",
             )
+        if project.get("archived_at"):
+            raise ApiError(403, "PROJECT_ARCHIVED", "Project is archived.")
+        if project.get("expires_at") and project["expires_at"] <= utcnow():
+            raise ApiError(403, "PROJECT_EXPIRED", "Project has expired.")
         project_id = str(project["id"])
-
-        # Preliminary check: fail fast if active installation already exists
-        existing_install = self.db.fetch_one(
-            """
-            SELECT id, device_id, activated_at
-            FROM reader_installations
-            WHERE project_id = %s AND status = 'active'
-            """,
-            (project_id,),
-        )
-        if existing_install:
-            raise ApiError(
-                409,
-                "ACTIVE_INSTALLATION_EXISTS",
-                "Project already has an active installation. Only one active Reader installation is permitted per project.",
-            )
 
         # 4, 5, 6. Validate Reader Key inside atomic transaction
         normalized_key = normalize_key(reader_key_plaintext)
@@ -1302,7 +1696,7 @@ class ProjectService:
                 # Lock the project row to serialize concurrent activations for this project
                 cursor.execute(
                     """
-                    SELECT id, status
+                    SELECT id, status, expires_at, archived_at
                     FROM nexora_projects
                     WHERE id = %s AND deleted_at IS NULL
                     FOR UPDATE
@@ -1316,22 +1710,10 @@ class ProjectService:
                         "PROJECT_NOT_FOUND",
                         "Project does not exist or is inactive.",
                     )
-
-                # Re-verify one-active-installation rule under the lock
-                cursor.execute(
-                    """
-                    SELECT id
-                    FROM reader_installations
-                    WHERE project_id = %s AND status = 'active'
-                    """,
-                    (project_id,),
-                )
-                if cursor.fetchone():
-                    raise ApiError(
-                        409,
-                        "ACTIVE_INSTALLATION_EXISTS",
-                        "Project already has an active installation. Only one active Reader installation is permitted per project.",
-                    )
+                if proj_lock[3] is not None:
+                    raise ApiError(403, "PROJECT_ARCHIVED", "Project is archived.")
+                if proj_lock[2] is not None and proj_lock[2] <= utcnow():
+                    raise ApiError(403, "PROJECT_EXPIRED", "Project has expired.")
 
                 # Row lock key to prevent concurrent redemption
                 cursor.execute(
@@ -1399,6 +1781,25 @@ class ProjectService:
                         f"Reader key is not in a redeemable state ({key_status}).",
                     )
                 else:
+                    # A project may own many keys, but it still supports one
+                    # active Reader installation at a time. Check this only
+                    # after validating the key, so a revoked key always fails
+                    # with KEY_REVOKED even while another device is connected.
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM reader_installations
+                        WHERE project_id = %s AND status = 'active'
+                        """,
+                        (project_id,),
+                    )
+                    if cursor.fetchone():
+                        raise ApiError(
+                            409,
+                            "ACTIVE_INSTALLATION_EXISTS",
+                            "Project already has an active installation. Only one active Reader installation is permitted per project.",
+                        )
+
                     # Mark key permanently USED
                     cursor.execute(
                         """
@@ -1490,7 +1891,9 @@ class ProjectService:
             """
             SELECT t.id AS token_id, t.installation_id, t.project_id,
                    i.status AS installation_status,
-                   p.project_name, p.status AS project_status
+                   p.project_name, p.status AS project_status,
+                   p.expires_at AS project_expires_at,
+                   p.archived_at AS project_archived_at
             FROM device_tokens t
             JOIN reader_installations i ON i.id = t.installation_id
             JOIN nexora_projects p ON p.id = t.project_id
@@ -1506,6 +1909,10 @@ class ProjectService:
 
         if row["project_status"] != "active":
             raise ApiError(403, "PROJECT_INACTIVE", "Associated project is inactive or deleted.")
+        if row.get("project_archived_at"):
+            raise ApiError(403, "PROJECT_ARCHIVED", "Associated project is archived.")
+        if row.get("project_expires_at") and row["project_expires_at"] <= utcnow():
+            raise ApiError(403, "PROJECT_EXPIRED", "Associated project has expired.")
 
         return row
 
@@ -1537,6 +1944,7 @@ class ProjectService:
 
     def dashboard_stats(self) -> dict[str, Any]:
         """Fetch live system pulse and dashboard counts."""
+        self._expire_overdue_reader_keys()
         proj_row = self.db.fetch_one(
             """
             SELECT COUNT(*) AS total_projects,

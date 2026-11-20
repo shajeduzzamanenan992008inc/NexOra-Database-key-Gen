@@ -1,186 +1,381 @@
-# OMEGA NEX-ORA — Project & Reader Key Management
+<p align="center">
+  <img src="assets/branding/omega_singularity_ultra.svg" alt="OMEGA SINGULARITY ULTRA" width="100%" />
+</p>
 
-**NexOra Database Key Generator & Project Management System** — *Secure Keys. Smarter Database Management.*
+<p align="center">
+  <img src="assets/branding/omega_guardian_nexus_prime_evolution.svg" alt="OMEGA GUARDIAN NEXUS PRIME EVOLUTION" width="100%" />
+</p>
 
-Production-oriented Admin-only Project and Reader Key Management Backend.
+<p align="center">
+  <img src="assets/branding/nexora-keygen-banner.svg" alt="NexOra Database Key Generator banner" width="100%" />
+</p>
 
----
+<h1 align="center">OMEGA NEX-ORA</h1>
 
-## ⚠️ Important Project Boundary
+<p align="center">
+  <strong>Project & Reader Key Management</strong><br />
+  Secure Keys. Smarter Database Management.
+</p>
 
-- **Admin System & Backend APIs Only**: This repository contains solely the NexOra Admin system and its backend REST APIs.
-- **Android Reader App is Completely Separate**: The Android Reader App is a completely separate project and repository. No Android source code, Gradle files, or Android UI are included here.
-- **Secure Integration Surface**: NexOra provides hardened backend REST APIs (`/api/v1/reader/`) that a separate Reader App uses for initial one-time key redemption and subsequent authenticated reconnections.
+<p align="center">
+  <img src="assets/branding/nexora-keygen-logo.svg" alt="NexOra Key Generator logo" width="176" />
+  &nbsp;&nbsp;
+  <img src="assets/branding/nexora-keygen-favicon.svg" alt="NexOra favicon" width="64" />
+</p>
 
----
-
-## 1. Target Architecture
-
-```
-Admin Dashboard (HTML5 / Vanilla JS / CSS)
-                   |  (HTTPS, HttpOnly Strict Cookies, CSRF Protection)
-                   v
-Flask Backend Application
-  ├── Environment Fail-Fast Validation (SUPABASE_URL, SECRET_KEY, KEY_PEPPER, etc.)
-  ├── Single Super Admin Authentication (Argon2id, Hashed Sessions, Rate Limiting)
-  ├── Project Management (Generate Key creates one project + one key; ACTIVE/DEACTIVE)
-  ├── Reader Key Lifecycle (CSPRNG, HMAC-SHA256, One-Time Redemption, one key per project)
-  ├── High-Entropy Device Credential Minting & Verification
-  └── Versioned REST APIs (/api/v1/)
-                   |  (TLS Connection Pool - pg8000)
-                   v
-Supabase PostgreSQL Database
-  ├── Row Level Security (RLS Deny-by-Default)
-  └── Migrations (001_initial_schema through 007_project_key_management)
-```
-
-- **Trusted Backend Layer**: The Flask backend is the only layer with direct database credentials.
-- **Zero Credential Exposure**: The browser and the separate Reader App **never** receive the Supabase service-role key or direct PostgreSQL password.
+<p align="center">
+  <strong>ADMIN-ONLY CONTROL PLANE · PROJECT LIFECYCLE · READER AUTHORIZATION</strong>
+</p>
 
 ---
 
-## 2. Environment Configuration
+## Contents
 
-Copy `.env.example` to `.env` and configure the required variables. **Never commit `.env`**.
+- [Overview](#overview)
+- [Repository Boundary](#repository-boundary)
+- [Architecture](#architecture)
+- [Security Model](#security-model)
+- [Environment Configuration](#environment-configuration)
+- [Database & Migrations](#database--migrations)
+- [Project and Reader-Key Lifecycle](#project-and-reader-key-lifecycle)
+- [REST API Reference](#rest-api-reference)
+- [Reader Integration Contract](#reader-integration-contract)
+- [Scheduled Project Cleanup](#scheduled-project-cleanup)
+- [Testing & Verification](#testing--verification)
+- [Repository Layout](#repository-layout)
+- [Owner-Controlled Repository Policy](#owner-controlled-repository-policy)
+- [Setup and Operational Checklist](#setup-and-operational-checklist)
+- [Known Boundaries](#known-boundaries)
+- [Third-Party Notices](#third-party-notices)
+- [License](#license)
 
-| Variable | Required | Description |
+---
+
+## Overview
+
+**OMEGA NEX-ORA** is the administrative project and Reader Key management system documented by this repository. Its documented responsibilities include project creation, one-time Reader Key generation and redemption, installation/device credential management, administrative controls, audit history, and versioned REST APIs.
+
+The documented backend architecture uses a Flask application and Supabase PostgreSQL. The Admin dashboard is described as an HTML5, vanilla JavaScript, and CSS interface. A separate Android Reader App connects through the Reader API; it is not part of this Admin repository.
+
+The repository now also contains the **OMEGA NEX-ORA Universal Key Platform** (`/platform`): universal projects, key types, permission/scope ceilings, device bindings, API usage, signed webhooks, notifications, automation, import/export, platform roles, and audit correlation. See [`docs/UNIVERSAL_PLATFORM_GUIDE.md`](docs/UNIVERSAL_PLATFORM_GUIDE.md) and the delivery report [`docs/UNIVERSAL_PLATFORM_REPORT.md`](docs/UNIVERSAL_PLATFORM_REPORT.md).
+
+## Repository Boundary
+
+| Area | Responsibility | Repository status described by the project documentation |
 |---|---|---|
-| `DATABASE_URL` | Yes | Direct PostgreSQL connection string to Supabase pooler (`sslmode=require`). |
-| `SECRET_KEY` | Yes | Flask cryptographic secret (min 32 characters, CSPRNG). |
-| `KEY_PEPPER` | Yes | Server-side HMAC pepper for key and token digests (min 32 characters). |
-| `ADMIN_EMAIL` | Yes | Super administrator email address. |
-| `ADMIN_PASSWORD_HASH` | Yes | Argon2id hash of the admin password. |
-| `SUPABASE_URL` | Required for Reader activation | Supabase project URL (`https://<project-ref>.supabase.co`). Reader activation fails closed when it is missing. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Optional/Paired | Supabase server-side service-role JWT (never sent to client). |
+| Admin dashboard | Administrative user interface | Included in the Admin project |
+| Flask backend | Authentication, business logic, Reader APIs | Documented as the trusted backend |
+| Supabase PostgreSQL | Persistent project, key, installation, and audit data | External managed database |
+| Android Reader App | One-time key redemption and authenticated reconnection | Separate project and repository |
+
+The browser and the Reader App must not receive the Supabase service-role key or direct PostgreSQL password. Database credentials belong only in the trusted backend environment.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[Admin Dashboard\nHTML5 · Vanilla JS · CSS] -->|HTTPS · HttpOnly cookie · CSRF| B[Flask Backend]
+    B --> C[Environment validation]
+    B --> D[Super Admin authentication\nArgon2id · hashed sessions · rate limits]
+    B --> E[Project and Reader Key lifecycle]
+    B --> F[Device credential minting and verification]
+    B --> G[Versioned REST API /api/v1/]
+    G -->|TLS connection pool · pg8000| H[(Supabase PostgreSQL)]
+    I[Separate Android Reader App] -->|HTTPS · one-time activation| G
+    I -->|Bearer device credential| G
+```
+
+### Architectural principles
+
+- **Backend as the trust boundary:** the Flask backend is the only layer documented as holding direct database credentials.
+- **Fail-fast configuration:** required secrets and database settings are validated at startup.
+- **Least exposure:** browser and Reader clients receive only the credentials and responses required by their API contract.
+- **Transactional lifecycle operations:** project and Reader Key creation/deletion are documented as atomic operations.
+- **Auditable administration:** privileged operations write administrative audit events.
+
+## Security Model
+
+The supplied documentation describes the following controls. Their presence in the deployed application must be verified against the full source code and live configuration.
+
+| Control | Documented purpose |
+|---|---|
+| Argon2id password hashing | Protect the Super Admin password hash |
+| Hashed admin sessions | Avoid storing raw session credentials |
+| HttpOnly, Secure, SameSite cookies | Reduce browser-side session exposure |
+| CSRF protection | Protect cookie-authenticated state-changing requests |
+| Rate limiting | Reduce login and API abuse |
+| CSPRNG key generation | Generate high-entropy Reader Keys |
+| HMAC-SHA256 digests | Store key/token digests rather than plaintext secrets |
+| Row Level Security | Deny database access by default unless explicitly allowed |
+| Audit logs | Preserve records of privileged administrative events |
+| Fail-closed Reader activation | Reject activation when required configuration is missing |
+| Universal key-type ceilings | Reject requested permissions/scopes broader than the key type allows |
+| Server-side platform RBAC | Require a human session and explicit platform permission for management APIs |
+| Webhook SSRF checks | Reject unsupported schemes, unresolved hosts, and private/link-local addresses |
+| One-time secret reveal | Return key/webhook plaintext only in the creation or rotation response |
+
+### Secret-handling rules
+
+1. Never commit `.env`, private keys, database passwords, service-role tokens, or production credentials.
+2. Keep `SECRET_KEY` and `KEY_PEPPER` unique, randomly generated, and separate from one another.
+3. Never send `SUPABASE_SERVICE_ROLE_KEY` or a PostgreSQL connection string to browser JavaScript or the Reader App.
+4. Use HTTPS in production and set secure cookie behavior accordingly.
+5. Rotate any secret that has been exposed; removing it from the latest commit alone is not sufficient.
+6. Do not paste live credentials into issues, pull requests, screenshots, or support messages.
+
+## Environment Configuration
+
+Create a local `.env` from `.env.example`. Never commit the resulting `.env`.
+
+| Variable | Required status in supplied documentation | Purpose |
+|---|---|---|
+| `DATABASE_URL` | Required | Direct PostgreSQL connection string to the Supabase pooler; use `sslmode=require`. |
+| `SECRET_KEY` | Required | Flask cryptographic secret; minimum 32 characters, generated securely. |
+| `KEY_PEPPER` | Required | Server-side HMAC pepper for key and token digests; minimum 32 characters. |
+| `ADMIN_EMAIL` | Required | Super administrator email address. |
+| `ADMIN_PASSWORD_HASH` | Required | Argon2id hash of the administrator password. |
+| `SUPABASE_URL` | Required for Reader activation | Supabase project URL; activation fails closed if missing. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Optional/paired | Server-side Supabase service-role JWT; never sent to a client. |
 | `APP_ENV` | Optional | `production` (default), `staging`, or `development`. |
-| `COOKIE_SECURE` | Optional | `true` in production (requires HTTPS), `false` for local testing. |
+| `COOKIE_SECURE` | Optional | `true` in production (HTTPS required); `false` only for local testing. |
 
----
+**Production rule:** do not use development credentials, disable secure cookies, or weaken authentication controls in a public deployment.
 
-## 3. Database Foundations & Migrations
+## Database & Migrations
 
-The database schema is managed via PostgreSQL migrations in `db/migrations/`:
+The supplied documentation says the PostgreSQL schema is managed through `db/migrations/`.
 
-| Migration | Purpose |
+| Migration | Documented purpose |
 |---|---|
 | `001_initial_schema.sql` | `admin_users`, `admin_sessions`, `license_keys`, `key_activations`, `generation_logs`, `admin_audit_logs`. |
-| `002_indexes_and_policies.sql` | Uniqueness constraints, query performance indexes, and RLS deny-by-default policies. |
-| `003_password_hash_comment.sql` | Documentation of Argon2id password hashing standard. |
-| `004_sms_reader_keys.sql` | Legacy SMS reader schema (retained for backward compatibility). |
-| `005_nexora_projects.sql` | **Phase 1 Foundation**: `nexora_projects`, `reader_keys`, `reader_installations`, `device_tokens`, `system_settings`. |
-| `006_rename_rh_function.sql` | **Phase 2 Cleanup**: Renames legacy `rh_set_updated_at()` trigger function to `nexora_set_updated_at()` and repoints all triggers. |
-| `007_project_key_management.sql` | **Project/key management upgrade**: one-reader-key-per-project unique index, `nexora_projects.auto_delete_at`, `nexora_deleted_project_names` tombstone registry, supporting indexes and RLS. Preflight aborts on ambiguous legacy data. |
+| `002_indexes_and_policies.sql` | Uniqueness constraints, performance indexes, and deny-by-default RLS policies. |
+| `003_password_hash_comment.sql` | Documents the Argon2id password hashing standard. |
+| `004_sms_reader_keys.sql` | Retains the legacy SMS Reader schema for compatibility. |
+| `005_nexora_projects.sql` | Adds `nexora_projects`, `reader_keys`, `reader_installations`, `device_tokens`, and `system_settings`. |
+| `006_rename_rh_function.sql` | Renames `rh_set_updated_at()` to `nexora_set_updated_at()` and repoints triggers. |
+| `007_project_key_management.sql` | Adds the one-Reader-Key-per-project constraint, auto-delete metadata, deleted-name tombstones, supporting indexes, and RLS. |
+| `008_multi_key_expiration.sql` | Adds multi-key expiration support without changing the one-key-per-project Reader contract. |
+| `009_universal_key_platform.sql` | Adds universal project metadata, permission catalogue, 20 built-in key types, extended keys, devices, API usage, webhooks, notifications, automation, platform roles, audit request IDs, indexes, and RLS. |
 
-To apply migrations:
+The documented migration command is:
+
 ```bash
 python -m backend.cli migrate
 ```
 
-> **Live migration gate:** migrations 005, 006, and 007 remain subject to the Phase 3 backup/PITR approval gate. Do not run them against the production Supabase database until that gate is cleared. See `docs/PROJECT_KEY_MANAGEMENT_MIGRATION_REPORT.md`.
+> **Production migration gate:** migrations 005–009 require an approved backup/PITR checkpoint and migration window. Do not apply them to production until that approval is complete. Migration 009 was applied only to a dedicated local test database during this work.
 
-### Scheduled auto-delete
+## Project and Reader-Key Lifecycle
 
-Automatic deletion is disabled until an administrator configures a retention period (`auto_delete_days > 0`) and/or an individual project schedule. A server-side scheduler must run:
+1. An administrator opens **Key Generator** in the dashboard.
+2. The administrator enters a project name and selects **Generate Key**.
+3. The backend normalizes the project name case-insensitively and creates the project plus exactly one Reader Key in a single transaction.
+4. Only the key's HMAC digest is stored. The plaintext key is returned once for copying.
+5. A duplicate name—including a name retained in the deleted-name tombstone registry—returns `409` with safe metadata; the original plaintext key is never returned.
+6. The separate Reader App redeems the key once through `POST /api/v1/reader/activate`; the documented state transition is `GENERATED` → `USED`.
+7. Deactivating a project blocks new activations and existing device credentials without rewriting the Reader Key lifecycle state.
+8. Deleting a project permanently removes the project and its owned key, installations, device tokens, and records in one transaction. The audit event survives, and the normalized project name is tombstoned.
+9. **DELETE ALL PROJECTS** requires the exact confirmation phrase and a fresh password check. The supplied documentation says admin accounts, settings, audit history, and legacy SMS data are preserved.
+
+## REST API Reference
+
+Base path: `/api/v1/`
+
+### Health and authentication
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/health` | Service and database connection health. |
+| `POST` | `/auth/login` | Rate-limited Admin login; sets an HttpOnly session cookie. |
+| `POST` | `/auth/logout` | Destroys the current session. |
+| `GET` | `/auth/session` | Verifies the active session. |
+
+### Dashboard and project management
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/dashboard/stats` | Aggregate project, key, installation, and database-health counters. |
+| `POST` | `/projects/generate-key` | The documented sole project/key creation path; creates one project and one Reader Key atomically. |
+| `GET` | `/projects` | Lists projects with key status, deletion schedule, remaining days, and installation status. |
+| `GET` | `/projects/<id>` | Project details and installation overview. |
+| `PATCH` | `/projects/<id>/status` | Sets `active` or `inactive`. |
+| `PATCH` | `/projects/<id>/auto-delete` | Sets or clears the timezone-aware deletion timestamp. |
+| `DELETE` | `/projects/<id>` | Permanently deletes one project and owned records; requires `confirm_project_name`. |
+| `DELETE` | `/projects` | Deletes all NexOra projects transactionally; requires `confirmation: "DELETE ALL PROJECTS"` and current Admin password. |
+
+### Key, installation, security, audit, and settings
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/keys` | Lists Reader Keys with search, project/status filters, and pagination. |
+| `GET` | `/keys/<id>` | Key details without plaintext; hint only. |
+| `GET` | `/keys/export` | Exports keys as CSV. |
+| `POST` | `/keys/<id>/revoke` | Permanently revokes a Reader Key. |
+| `GET` | `/installations` | Lists Reader installations with filters and pagination. |
+| `GET` | `/installations/<id>` | Installation details and related audit events. |
+| `POST` | `/installations/<id>/revoke` | Revokes an active Reader installation. |
+| `GET` | `/security/status` | Authentication/session configuration, rate-limit information, and recent security events. |
+| `GET` | `/audit-logs` | Paginated audit log with search, date, and event-type filters. |
+| `GET` | `/settings` | Reads current system settings. |
+| `PATCH` | `/settings` | Updates allowed settings such as key prefix, expiry, bulk limit, and heartbeat interval. |
+
+### Universal platform API
+
+These routes require a human administrator session, CSRF protection, and the
+permission noted in `backend/api/v1/universal.py`. The full route list and
+operational notes are in [`docs/UNIVERSAL_PLATFORM_GUIDE.md`](docs/UNIVERSAL_PLATFORM_GUIDE.md).
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/universal/overview` | Live platform counters and recent events. |
+| `GET` | `/universal/projects` | Universal project inventory. |
+| `PATCH` | `/universal/projects/<id>` | Update project metadata, type, status, or expiration. |
+| `POST` | `/universal/projects/<id>/archive` | Archive project and block its keys. |
+| `GET` | `/universal/key-types` | Key types plus the permission catalogue. |
+| `POST` | `/universal/key-types` | Create a custom key type. |
+| `GET` | `/universal/keys` | Filtered universal key inventory. |
+| `POST` | `/universal/keys` | Generate one or more universal keys. |
+| `GET` | `/universal/keys/<id>` | Key details and lifecycle events. |
+| `POST` | `/universal/keys/<id>/revoke` | Hard-revoke a key and its active device bindings. |
+| `GET` | `/universal/devices` | Device registry. |
+| `GET` | `/universal/api-usage` | API usage telemetry. |
+| `GET/POST` | `/universal/webhooks` | List/create signed webhooks. |
+| `GET` | `/universal/notifications` | Notification center. |
+| `GET` | `/universal/search` | Global search. |
+| `POST` | `/universal/automation/run` | Run expiry/cleanup/retry automation. |
+| `GET` | `/universal/openapi.json` | OpenAPI document for the v1 surface. |
+| `POST` | `/access/authenticate` | Authenticate a universal project key (no browser session). |
+
+### External Reader API
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/reader/activate` | One-time activation using `project_name`, `reader_key`, `device_id`, and preferably `supabase_url`. |
+| `POST` | `/reader/heartbeat` | Periodic heartbeat using `Authorization: Bearer <device_credential>`. |
+| `GET` | `/reader/status` | Status check using `Authorization: Bearer <device_credential>`. |
+
+The deprecated `database_url` activation field is documented as an alias for compatibility. It must contain the Supabase Project URL—not a PostgreSQL connection string.
+
+## Reader Integration Contract
+
+The Reader App is an independent client and should use only the public Reader API contract.
+
+- Activation redeems a generated Reader Key once.
+- A successful activation returns the device credential used for subsequent authenticated requests.
+- Heartbeat and status requests use a Bearer device credential over HTTPS.
+- The Reader App must not embed server-side secrets, a Supabase service-role key, or a direct database password.
+- The Reader App's own source code, release process, and Android-specific behavior are outside this repository's documented scope.
+
+## Scheduled Project Cleanup
+
+Automatic deletion is documented as disabled until an administrator configures a retention period (`auto_delete_days > 0`) and/or a project-level schedule.
+
+The documented server-side command is:
 
 ```bash
 python -m backend.cli purge-expired-projects --limit 100
 ```
 
-This command only deletes projects whose `auto_delete_at` timestamp is due. It never runs from browser JavaScript and writes a `project.delete` audit event for each project.
+The supplied README states that the command deletes only projects whose `auto_delete_at` timestamp is due, does not run from browser JavaScript, and writes a `project.delete` audit event for each deleted project.
 
----
+## Testing & Verification
 
-## 4. Project & Reader Key Workflow
+Run the test suite from the full source repository:
 
-1. Open **Key Generator** in the dashboard.
-2. Enter a Project Name and click **Generate Key**.
-3. The backend normalizes the name (case-insensitive) and, in one transaction, creates the project plus exactly **one** Reader Key. Only the key's HMAC is stored; the plaintext key is returned once for copying.
-4. If the name already exists — including a retired name from a permanently deleted project — the API returns `409` with safe metadata and never returns the original plaintext.
-5. The Reader App redeems the key once against `POST /api/v1/reader/activate`, which permanently changes `GENERATED` → `USED`.
-6. Deactivating a project blocks new activations and existing device credentials without changing the key's lifecycle status.
-7. Deleting a project is a permanent hard delete of the project, its key, installations, device tokens, and owned records, inside one transaction. The audit event survives, and the normalized name is tombstoned so it cannot be silently reused.
-8. **DELETE ALL PROJECTS** permanently removes every NexOra project in one transaction after the exact phrase and a fresh password check; admin accounts, settings, audit history, and legacy SMS data are preserved.
-
----
-
-## 5. Versioned REST API (`/api/v1/`)
-
-### Health
-- `GET /api/v1/health` — Service and database connection health status.
-
-### Authentication (Admin)
-- `POST /api/v1/auth/login` — Admin login (rate-limited, sets HttpOnly session cookie).
-- `POST /api/v1/auth/logout` — Destroy session.
-- `GET /api/v1/auth/session` — Verify active session.
-
-### Dashboard
-- `GET /api/v1/dashboard/stats` — Aggregate counters: projects, keys by status, installations, DB health.
-
-### Admin Project & Reader Key Management (Privileged)
-- `POST /api/v1/projects/generate-key` — Create one project and exactly one Reader Key atomically. This is the only project/key creation path.
-- `GET /api/v1/projects` — List managed projects with reader-key status, auto-delete date, remaining days, and active installation status.
-- `GET /api/v1/projects/<id>` — Project details and installation overview.
-- `PATCH /api/v1/projects/<id>/status` — Set `active` or `inactive` (deactivation blocks activations, heartbeats, and credential checks; key status is preserved).
-- `PATCH /api/v1/projects/<id>/auto-delete` — Set or clear the timezone-aware scheduled deletion timestamp (`null` disables it).
-- `DELETE /api/v1/projects/<id>` — Permanently hard-delete one project and all owned records; requires `confirm_project_name`.
-- `DELETE /api/v1/projects` — Permanently delete all NexOra projects in one transaction; requires `confirmation: "DELETE ALL PROJECTS"` and the current admin password.
-
-### Key Management (Admin)
-- `GET /api/v1/keys` — List reader keys with search, project filter, status filter, pagination.
-- `GET /api/v1/keys/<id>` — Key detail (no plaintext, hint only).
-- `GET /api/v1/keys/export` — Download keys as CSV.
-- `POST /api/v1/keys/<id>/revoke` — Revoke a reader key permanently.
-
-### Installation Management (Admin)
-- `GET /api/v1/installations` — List reader installations with filters and pagination.
-- `GET /api/v1/installations/<id>` — Installation detail and related audit events.
-- `POST /api/v1/installations/<id>/revoke` — Revoke an active Reader installation.
-
-### Security Center (Admin)
-- `GET /api/v1/security/status` — Auth config, session config, rate-limit info, recent security events.
-
-### Audit Logs (Admin)
-- `GET /api/v1/audit-logs` — Paginated audit log with search, date, and event type filters.
-
-### Settings (Admin)
-- `GET /api/v1/settings` — Current system settings.
-- `PATCH /api/v1/settings` — Update allowed settings (key prefix, expiry, bulk limit, heartbeat interval, etc.).
-
-### Reader App Connection & Authorization (External Reader App)
-- `POST /api/v1/reader/activate` — One-time key redemption (submits `project_name`, `supabase_url` preferred, `reader_key`, `device_id`). The deprecated `database_url` field is still accepted as an alias for compatibility, but it must contain the Supabase Project URL, not a PostgreSQL connection string.
-- `POST /api/v1/reader/heartbeat` — Periodic heartbeat using `Authorization: Bearer <device_credential>`.
-- `GET /api/v1/reader/status` — Status verification using `Authorization: Bearer <device_credential>`.
-
----
-
-## 6. Automated Testing
-
-Run the full test suite:
 ```bash
 python -m pytest -v
 ```
 
-Latest verified run: **198 passed, 26 skipped, exit 0** (`174.52s`). The 26 skips are the optional SMS Reader suite (SMS module not installed in the test environment).
+Current local result after the universal platform work: **268 passed, 26 skipped, exit 0** (`309.31s`). The 26 skips belong to the optional SMS Reader suite. A separate Chrome verification covered login, all 20 platform views, project creation, one-time key reveal, key inventory, and mobile navigation.
 
-- Phase 1 Core Cryptography & Config Security: `test_nexora_config.py`, `test_nexora_project_normalization.py`, `test_nexora_reader_keys.py`, `test_nexora_api_v1.py`
-- Phase 2 Admin Dashboard & API Integration: `test_phase2_dashboard.py` (unauthenticated rejection, CSRF, live DB views, settings, security center)
-- Project/Key Management Regression Suite: `test_project_key_management.py` (generate-key, one-key constraint, lifecycle, activation, auto-delete, hard delete, delete-all rollback, security)
-- Frontend CSP & XSS Hardening: `test_frontend.py`
+Test areas:
 
-See `docs/PROJECT_KEY_MANAGEMENT_TEST_REPORT.md` for exact commands and output.
+- Core cryptography and configuration security.
+- Project-name normalization and Reader Key lifecycle.
+- Versioned API behavior and dashboard integration.
+- Generate-key, one-key-per-project, activation, auto-delete, hard-delete, and delete-all behavior.
+- Frontend CSP and XSS hardening.
+
+See the full repository's `docs/PROJECT_KEY_MANAGEMENT_TEST_REPORT.md` for the recorded command and test output.
+
+## Repository Layout
+
+```text
+.
+├── backend/                  # Flask application, services, and /api/v1 routes
+├── db/migrations/            # Forward-only PostgreSQL migrations, including 009
+├── frontend/                 # Login, dashboard, and /platform console
+├── assets/omega-key-assets/  # Animation assets served read-only
+├── docs/                     # Guides, audits, and delivery reports
+├── tests/                    # Automated backend and frontend tests
+├── run.py                    # Local development launcher
+└── .env.example              # Environment template
+```
+
+## Owner-Controlled Repository Policy
+
+**Repository classification:** Owner-controlled, proprietary project.  
+**Project builder / stated rights holder:** Shajeduzzaman Enan.  
+**Official change authorization:** Explicit written approval from the project owner.  
+**Default contribution status:** Not authorized unless the owner grants permission.
+
+No contributor is granted permission by this README or by the public availability of the repository to modify, publish, redistribute, sublicense, or create derivative versions of the official project. Any permitted contribution must be explicitly authorized by the rights holder in writing and processed through the repository's configured access controls. See [`LICENSE`](LICENSE) for the full proprietary terms.
+
+### Important technical distinction
+
+A README notice, `CODEOWNERS`, or a proprietary `LICENSE` file does not by itself prevent someone from editing a local copy or a fork. GitHub access permissions and branch/ruleset enforcement must be configured by the repository owner. A public repository can still be forked and changed independently; these controls protect the official repository, not every copy on the internet.
+
+See [`docs/REPOSITORY_PROTECTION.md`](docs/REPOSITORY_PROTECTION.md) for the required GitHub settings and activation checklist. Replace `@OWNER_GITHUB_USERNAME` in `.github/CODEOWNERS` before relying on code-owner review.
+
+## Setup and Operational Checklist
+
+### Before local or staging use
+
+- [ ] Install the Python dependencies used by the backend and tests.
+- [ ] Configure secrets outside source control from `.env.example`.
+- [ ] Point local tests at a disposable `TEST_DATABASE_URL`.
+- [ ] Confirm the database backup and recovery plan before applying gated migrations.
+- [ ] Apply migrations only in the correct environment and in the documented order.
+- [ ] Run the full test suite.
+
+### Before production
+
+- [ ] Use HTTPS and secure cookies.
+- [ ] Verify Argon2id, session, CSRF, rate-limit, and HMAC configuration.
+- [ ] Confirm RLS policies using a non-owner database role.
+- [ ] Confirm no service-role/database secret reaches browser or Reader client code.
+- [ ] Test key redemption, duplicate names, revocation, deactivation, deletion, and rollback paths.
+- [ ] Approve the backup/PITR migration gate before migrations 005–009.
+- [ ] Verify universal key generation, project expiry, hard revocation, RBAC, and webhook signing.
+- [ ] Configure scheduled cleanup only after retention requirements are approved.
+- [ ] Enable GitHub repository access and default-branch protections.
+
+## Known Boundaries
+
+- This repository covers the Admin system and backend API surface; the Android Reader App is separate.
+- Migration 009 was applied only to the dedicated local test database, not production.
+- External webhook delivery, cross-browser behavior, and production load were not tested.
+- See [`docs/UNIVERSAL_PLATFORM_REPORT.md`](docs/UNIVERSAL_PLATFORM_REPORT.md) for the complete tested/not-tested boundary.
+- The previous test count is reproduced from the supplied README and was not rerun for this update.
+- This documentation does not certify that the deployed system is secure or production-ready; review the actual source, environment, database policies, and deployment before production use.
+
+## Third-Party Notices
+
+The supplied Admin HTML loads the **Orbitron** and **Share Tech Mono** font families from Google Fonts. Those fonts and the Google Fonts service are third-party resources and are not covered by the project's proprietary license. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). A complete dependency inventory was not included in the supplied ZIP.
+
+## License
+
+**Copyright (c) 2026 Shajeduzzaman Enan. All rights reserved.**
+
+OMEGA NEX-ORA is distributed under the custom **OMEGA NEX-ORA Proprietary Software and Content License**, available in [`LICENSE`](LICENSE). It is **not an open-source license**. No general permission is granted to copy, modify, publish, redistribute, sublicense, integrate, host, or commercially use the original Project Materials without prior written authorization from the rights holder, except where applicable law provides a non-waivable right.
+
+The license applies only to original materials owned or controlled by the rights holder. Third-party fonts, libraries, services, and other externally owned materials remain subject to their own terms. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+The project identity supplied for this documentation names **Shajeduzzaman Enan** as the builder. The copyright notice is prepared on that basis; before public or commercial release, the named person should confirm that they personally own or are authorized to license all original materials covered by this notice. This document is a practical license draft, not jurisdiction-specific legal advice.
 
 ---
 
-## 7. Project/Key Management Deliverables
-
-- [x] Technical audit: [`docs/PROJECT_KEY_MANAGEMENT_AUDIT.md`](docs/PROJECT_KEY_MANAGEMENT_AUDIT.md)
-- [x] Implementation report: [`docs/PROJECT_KEY_MANAGEMENT_IMPLEMENTATION_REPORT.md`](docs/PROJECT_KEY_MANAGEMENT_IMPLEMENTATION_REPORT.md)
-- [x] Test report: [`docs/PROJECT_KEY_MANAGEMENT_TEST_REPORT.md`](docs/PROJECT_KEY_MANAGEMENT_TEST_REPORT.md)
-- [x] Migration report: [`docs/PROJECT_KEY_MANAGEMENT_MIGRATION_REPORT.md`](docs/PROJECT_KEY_MANAGEMENT_MIGRATION_REPORT.md)
-- [x] Forward migration prepared (not executed live): `db/migrations/007_project_key_management.sql`
-- [x] Generate-Key-only project creation with one key per project
-- [x] ACTIVE/DEACTIVE project controls, permanent hard delete, and transactional delete-all
-- [x] Auto-delete scheduling plus `purge-expired-projects` CLI command
-- [x] Full dashboard, service, API, and regression-test updates
-
-Historical Phase 2 reports remain available: [`docs/PHASE_2_IMPLEMENTATION_PLAN.md`](docs/PHASE_2_IMPLEMENTATION_PLAN.md), [`docs/PHASE_2_FINAL_REPORT.md`](docs/PHASE_2_FINAL_REPORT.md).
+<p align="center">
+  <strong>OMEGA NEX-ORA</strong><br />
+  <sub>Secure Keys · Controlled Access · Auditable Operations</sub>
+</p>

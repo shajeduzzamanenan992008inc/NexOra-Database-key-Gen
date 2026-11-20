@@ -154,32 +154,30 @@ class TestGenerateKeyWorkflow:
         assert counts["projects"] == 1
         assert counts["keys"] == 1
 
-    def test_existing_project_never_receives_second_key(self, app, owner):
-        first = generate_ok(owner, "Frozen Key Project")
+    def test_existing_project_receives_additional_keys(self, app, owner):
+        first = generate_ok(owner, "Multi Key Project")
         project_id = first["project"]["id"]
 
-        # Even a direct project-id attempt cannot create a key.
-        response = owner.post(f"/api/v1/projects/{project_id}/keys", {})
-        assert response.status_code in (404, 405)
+        response = owner.post(
+            f"/api/v1/projects/{project_id}/keys",
+            {"label": "Rotation", "expiration": "30_days"},
+        )
+        assert response.status_code == 201, response.get_json()
+        second = response.get_json()["reader_key"]
+        assert second["project_id"] == project_id
+        assert second["id"] != first["reader_key"]["id"]
+        assert second["expiration_preset"] == "30_days"
+        assert second["plaintext_key"] not in owner.get("/api/v1/keys").get_data(
+            as_text=True
+        )
 
-        # The database is the final authority.
-        with pytest.raises(Exception) as exc_info:
-            app.extensions["db"].execute(
-                """
-                INSERT INTO reader_keys
-                    (project_id, key_hash, key_hint, status, is_permanent)
-                VALUES (%s, %s, %s, 'generated', true)
-                """,
-                (
-                    project_id,
-                    hash_reader_key(
-                        app.extensions["settings"].key_pepper,
-                        "NXRABCD2345EFGH6789",
-                    ),
-                    "NXR-****-****-****-6789",
-                ),
-            )
-        assert sqlstate(exc_info.value) == "23505"
+        counts = app.extensions["db"].fetch_one(
+            """
+            SELECT (SELECT count(*) FROM nexora_projects) AS projects,
+                   (SELECT count(*) FROM reader_keys) AS keys
+            """
+        )
+        assert counts == {"projects": 1, "keys": 2}
 
     def test_concurrent_requests_create_one_project_and_one_key(self, app, owner):
         settings = app.extensions["settings"]
@@ -240,8 +238,8 @@ class TestReaderKeyLifecycle:
             key["plaintext_key"],
             device_id="reader-test-002",
         )
-        assert second.status_code == 409
-        assert second.get_json()["error"]["code"] == "ACTIVE_INSTALLATION_EXISTS"
+        assert second.status_code == 410
+        assert second.get_json()["error"]["code"] == "KEY_ALREADY_USED"
 
         stored = owner.get(f"/api/v1/keys/{key['id']}").get_json()["key"]
         assert stored["status"] == "used"
@@ -315,6 +313,7 @@ class TestReaderKeyLifecycle:
             """
             UPDATE reader_keys
                SET is_permanent = false,
+                   expiration_preset = 'custom',
                    expires_at = now() - interval '1 day'
              WHERE id = %s
             """,
@@ -547,30 +546,11 @@ class TestPermanentDelete:
         assert audit_row["project_id"] is None
         assert audit_details(audit_row)["snapshot"]["project_name"] == "Delete Alpha"
 
-        # Tombstone exists and contains no key material.
-        tombstone = app.extensions["db"].fetch_one(
-            """
-            SELECT project_name_normalized, project_name
-            FROM nexora_deleted_project_names
-            WHERE project_name_normalized = 'delete alpha'
-            """
-        )
-        assert tombstone is not None
-        columns = {
-            row["column_name"]
-            for row in app.extensions["db"].fetch_all(
-                """
-                SELECT column_name FROM information_schema.columns
-                WHERE table_name = 'nexora_deleted_project_names'
-                """
-            )
-        }
-        assert "key_hash" not in columns
-        assert "key_hint" not in columns
-
+        # No tombstone remains: the name is immediately reusable.
         reuse = generate(owner, "delete alpha")
-        assert reuse.status_code == 409
-        assert reuse.get_json()["error"]["code"] == "PROJECT_NAME_RETIRED"
+        assert reuse.status_code == 201, reuse.get_json()
+        assert reuse.get_json()["project"]["id"] != doomed["project"]["id"]
+        assert reuse.get_json()["reader_key"]["plaintext_key"].startswith("NXR-")
 
         # Legacy SMS data is unchanged.
         sms = app.extensions["db"].fetch_one(
@@ -662,7 +642,6 @@ class TestDeleteAllProjects:
               (SELECT count(*) FROM reader_keys) AS reader_keys,
               (SELECT count(*) FROM reader_installations) AS installations,
               (SELECT count(*) FROM device_tokens) AS device_tokens,
-              (SELECT count(*) FROM nexora_deleted_project_names) AS tombstones,
               (SELECT count(*) FROM admin_users) AS admins,
               (SELECT count(*) FROM system_settings) AS settings,
               (SELECT count(*) FROM sms_reader_keys) AS sms
@@ -672,7 +651,6 @@ class TestDeleteAllProjects:
         assert counts["reader_keys"] == 0
         assert counts["installations"] == 0
         assert counts["device_tokens"] == 0
-        assert counts["tombstones"] == 3
         assert counts["admins"] == admins_before
         assert counts["settings"] == settings_before
         assert counts["sms"] == 1
@@ -694,11 +672,11 @@ class TestDeleteAllProjects:
         assert details["deleted_count"] == 3
         assert set(details["project_names"]) == {"Bulk One", "Bulk Two", "Bulk Three"}
 
-        # Every old name is blocked.
+        # Every old name is reusable after the hard delete.
         for name in (second["project"]["project_name"], third["project"]["project_name"]):
             reuse = generate(owner, name)
-            assert reuse.status_code == 409
-            assert reuse.get_json()["error"]["code"] == "PROJECT_NAME_RETIRED"
+            assert reuse.status_code == 201, reuse.get_json()
+            assert reuse.get_json()["project"]["project_name"] == name
 
     def test_delete_all_requires_phrase_password_and_owner(self, app, owner, viewer):
         generate_ok(owner, "Still Here")
@@ -762,13 +740,11 @@ class TestDeleteAllProjects:
             SELECT
               (SELECT count(*) FROM nexora_projects) AS projects,
               (SELECT count(*) FROM reader_keys) AS reader_keys,
-              (SELECT count(*) FROM nexora_deleted_project_names) AS tombstones,
               (SELECT count(*) FROM admin_audit_logs WHERE action = 'project.delete_all') AS audits
             """
         )
         assert counts["projects"] == 1
         assert counts["reader_keys"] == 1
-        assert counts["tombstones"] == 0
         assert counts["audits"] == 0
 
 

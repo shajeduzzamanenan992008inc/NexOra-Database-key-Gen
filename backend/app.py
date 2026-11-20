@@ -18,8 +18,10 @@ from .security.rate_limit import SlidingWindowLimiter, enforce
 from .security.sessions import find_session
 from .services import AuthService, LicenseService, ensure_initial_admin
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
 ASSETS_DIR = FRONTEND_DIR / "assets"
+OMEGA_ASSETS_DIR = PROJECT_ROOT / "assets" / "omega-key-assets"
 
 CSP = (
     "default-src 'self'; "
@@ -179,6 +181,27 @@ def create_app(settings: Settings | None = None) -> Flask:
         ):
             return redirect(url_for("login_page"))
         return _page("dashboard.html")
+
+    @app.get("/platform")
+    def platform_page():
+        token = request.cookies.get(settings.session_cookie_name)
+        if (
+            not token
+            or find_session(
+                app.extensions["db"],
+                token,
+                audience=settings.session_audience,
+            )
+            is None
+        ):
+            return redirect(url_for("login_page"))
+        return _page("platform.html")
+
+    @app.get("/omega-assets/<path:filename>")
+    def omega_assets(filename: str):
+        if not OMEGA_ASSETS_DIR.is_dir():
+            return jsonify({"error": {"code": "not_found"}}), 404
+        return send_from_directory(OMEGA_ASSETS_DIR, filename, max_age=86400)
 
     @app.get("/assets/<path:filename>")
     def assets(filename: str):

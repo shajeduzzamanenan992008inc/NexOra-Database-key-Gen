@@ -238,17 +238,14 @@ class TestPhase2DatabaseBackedIntegration:
         assert owner.get(f"/api/v1/keys/{key_id}").status_code == 404
         assert owner.get("/api/v1/projects").get_json()["projects"] == []
 
-        # The tombstone blocks name reuse and stores no key material.
-        tombstone = app.extensions["db"].fetch_one(
-            "SELECT project_name_normalized FROM nexora_deleted_project_names"
-        )
-        assert tombstone["project_name_normalized"] == "delete me"
-
+        # A permanently deleted name is reusable for a new project.
         reused = owner.post(
             "/api/v1/projects/generate-key", {"project_name": "delete me"}
         )
-        assert reused.status_code == 409
-        assert reused.get_json()["error"]["code"] == "PROJECT_NAME_RETIRED"
+        assert reused.status_code == 201, reused.get_json()
+        new_project = reused.get_json()["project"]
+        assert new_project["id"] != project_id
+        assert new_project["project_name"] == "delete me"
 
     def test_settings_endpoint_includes_auto_delete_policy(self, app, owner):
         resp = owner.get("/api/v1/settings")
@@ -289,26 +286,36 @@ class TestPhase2DatabaseBackedIntegration:
         assert "pagination" in data
         assert isinstance(data["items"], list)
 
-    def test_bulk_and_project_id_generation_routes_are_removed(self, app, owner):
+    def test_project_creation_and_additional_key_routes_work(self, app, owner):
         created = owner.post(
-            "/api/v1/projects/generate-key", {"project_name": "No Bulk"}
+            "/api/v1/projects/generate-key", {"project_name": "Multi Key"}
         ).get_json()
         project_id = created["project"]["id"]
 
+        # Bulk generation remains intentionally unsupported.
         bulk = owner.post(
             f"/api/v1/projects/{project_id}/keys/bulk", {"quantity": 5}
         )
-        single = owner.post(f"/api/v1/projects/{project_id}/keys", {})
-        create = owner.post("/api/v1/projects", {"project_name": "Manual"})
         assert bulk.status_code in (404, 405)
-        assert single.status_code in (404, 405)
-        assert create.status_code in (404, 405)
 
-        # Exactly one key still exists.
+        second = owner.post(
+            f"/api/v1/projects/{project_id}/keys",
+            {"label": "Secondary", "expiration": "7_days"},
+        )
+        assert second.status_code == 201, second.get_json()
+        assert second.get_json()["reader_key"]["project_id"] == project_id
+        assert second.get_json()["reader_key"]["expiration_preset"] == "7_days"
+
+        standalone = owner.post(
+            "/api/v1/projects", {"project_name": "No Key Yet"}
+        )
+        assert standalone.status_code == 201, standalone.get_json()
+        assert standalone.get_json()["project"]["total_keys"] == 0
+
         keys = app.extensions["db"].fetch_one(
             "SELECT COUNT(*) AS keys FROM reader_keys"
         )
-        assert keys["keys"] == 1
+        assert keys["keys"] == 2
 
     def test_export_reader_keys_csv(self, app, owner):
         resp = owner.get("/api/v1/keys/export")

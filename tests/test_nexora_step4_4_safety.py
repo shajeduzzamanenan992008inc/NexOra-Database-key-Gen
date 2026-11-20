@@ -172,11 +172,9 @@ class TestExpiredKeyBehavior:
 
         # In cursor:
         # 1. proj_lock
-        # 2. installation re-check
-        # 3. key_row lock
+        # 2. key_row lock (expired keys are rejected before the installation check)
         mock_cursor.fetchone.side_effect = [
-            (project_id, "active"),  # project lock
-            None,                    # active installation check under lock
+            (project_id, "active", None, None),  # project lock
             (key_id, project_id, "generated", False, past_time),  # key row: expired!
         ]
 
@@ -218,8 +216,7 @@ class TestExpiredKeyBehavior:
         mock_db.cursor.return_value.__enter__.return_value = mock_cursor
 
         mock_cursor.fetchone.side_effect = [
-            (project_id, "active"),
-            None,
+            (project_id, "active", None, None),
             (key_id, project_id, "expired", False, None),  # already marked expired
         ]
 
@@ -232,6 +229,50 @@ class TestExpiredKeyBehavior:
 
         assert exc_info.value.status == 410
         assert exc_info.value.code == "KEY_EXPIRED"
+
+
+class TestProjectLifecycleEnforcement:
+    """Reader activation must reject expired and archived projects."""
+
+    def test_expired_project_rejected(self, service, mock_db):
+        mock_db.fetch_one.return_value = {
+            "id": str(uuid4()),
+            "project_name": "Test Project",
+            "status": "active",
+            "deleted_at": None,
+            "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1),
+            "archived_at": None,
+        }
+
+        with pytest.raises(ApiError) as exc_info:
+            service.activate_reader(
+                project_name="Test Project",
+                database_url="https://verified-project.supabase.co",
+                reader_key_plaintext="NXR-ABCD-EFGH-JKLM-NPQR",
+            )
+
+        assert exc_info.value.status == 403
+        assert exc_info.value.code == "PROJECT_EXPIRED"
+
+    def test_archived_project_rejected(self, service, mock_db):
+        mock_db.fetch_one.return_value = {
+            "id": str(uuid4()),
+            "project_name": "Test Project",
+            "status": "active",
+            "deleted_at": None,
+            "expires_at": None,
+            "archived_at": datetime.now(timezone.utc),
+        }
+
+        with pytest.raises(ApiError) as exc_info:
+            service.activate_reader(
+                project_name="Test Project",
+                database_url="https://verified-project.supabase.co",
+                reader_key_plaintext="NXR-ABCD-EFGH-JKLM-NPQR",
+            )
+
+        assert exc_info.value.status == 403
+        assert exc_info.value.code == "PROJECT_ARCHIVED"
 
 
 # ============================================================================
@@ -254,9 +295,9 @@ class TestConcurrentActivationHardening:
         mock_db.cursor.return_value.__enter__.return_value = mock_cursor
 
         mock_cursor.fetchone.side_effect = [
-            (project_id, "active"),  # project lock
-            None,                    # installation check
+            (project_id, "active", None, None),  # project lock
             (key_id, project_id, "generated", True, None),  # permanent valid key
+            None,                    # installation check
         ]
 
         result = service.activate_reader(
@@ -288,7 +329,8 @@ class TestConcurrentActivationHardening:
         mock_db.cursor.return_value.__enter__.return_value = mock_cursor
 
         mock_cursor.fetchone.side_effect = [
-            (project_id, "active"),  # project lock acquired
+            (project_id, "active", None, None),  # project lock acquired
+            (str(uuid4()), project_id, "generated", True, None),  # valid key
             ("existing-install-id",),  # re-check under lock finds installation created by concurrent request!
         ]
 
@@ -319,15 +361,15 @@ class TestConcurrentActivationHardening:
         mock_cursor = MagicMock()
         mock_db.cursor.return_value.__enter__.return_value = mock_cursor
         mock_cursor.fetchone.side_effect = [
-            (project_id, "active"),
-            None,
+            (project_id, "active", None, None),
             (key_id, project_id, "generated", True, None),
+            None,
         ]
         # Error raised when inserting installation
         mock_cursor.execute.side_effect = [
             None,  # lock proj
-            None,  # check install
             None,  # lock key
+            None,  # check install
             None,  # update key
             MockUniqueViolation("Unique violation"),  # insert installation fails on race
         ]
@@ -361,8 +403,7 @@ class TestKeyAndInstallationLifecycle:
         mock_cursor = MagicMock()
         mock_db.cursor.return_value.__enter__.return_value = mock_cursor
         mock_cursor.fetchone.side_effect = [
-            (project_id, "active"),
-            None,
+            (project_id, "active", None, None),
             (key_id, project_id, "used", True, None),  # used key!
         ]
 
@@ -387,8 +428,7 @@ class TestKeyAndInstallationLifecycle:
         mock_cursor = MagicMock()
         mock_db.cursor.return_value.__enter__.return_value = mock_cursor
         mock_cursor.fetchone.side_effect = [
-            (project_id, "active"),
-            None,
+            (project_id, "active", None, None),
             (key_id, project_id, "revoked", True, None),  # revoked key!
         ]
 
@@ -414,8 +454,7 @@ class TestKeyAndInstallationLifecycle:
         mock_cursor = MagicMock()
         mock_db.cursor.return_value.__enter__.return_value = mock_cursor
         mock_cursor.fetchone.side_effect = [
-            (project_id, "active"),
-            None,
+            (project_id, "active", None, None),
             (key_id, other_project_id, "generated", True, None),  # wrong project!
         ]
 

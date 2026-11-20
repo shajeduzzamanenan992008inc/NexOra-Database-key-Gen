@@ -1,0 +1,12 @@
+# OMEGA NEX-ORA — owner review policy
+# OWNER ACTION REQUIRED: replace @OWNER_GITHUB_USERNAME with the exact GitHub
+# account handle controlled by Shajeduzzaman Enan before enabling code-owner
+# review. Do not leave this placeholder in the active default branch.
+
+* @OWNER_GITHUB_USERNAME
+/.github/CODEOWNERS @OWNER_GITHUB_USERNAME
+/LICENSE @OWNER_GITHUB_USERNAME
+/README.md @OWNER_GITHUB_USERNAME
+/CONTRIBUTING.md @OWNER_GITHUB_USERNAME
+/SECURITY.md @OWNER_GITHUB_USERNAME
+/THIRD_PARTY_NOTICES.md @OWNER_GITHUB_USERNAME

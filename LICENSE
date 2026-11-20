@@ -1,0 +1,192 @@
+OMEGA NEX-ORA PROPRIETARY SOFTWARE AND CONTENT LICENSE
+Version 1.0 — Effective 17 November 2026
+
+Copyright (c) 2026 Shajeduzzaman Enan. All rights reserved.
+
+IMPORTANT NOTICE
+This is a proprietary, all-rights-reserved license. It is not an open-source,
+free-software, or public-domain license. No permission to use, copy, modify,
+redistribute, sublicense, publish, host, or commercially exploit the Project
+Materials is granted except where this License expressly says otherwise or where
+applicable law gives a right that cannot lawfully be restricted.
+
+1. PARTIES AND DEFINITIONS
+
+1.1 "Licensor" means Shajeduzzaman Enan, acting in the capacity of the project
+author and rights holder for the original Project Materials that Licensor owns
+or is legally entitled to license.
+
+1.2 "Project" means OMEGA NEX-ORA, including the OMEGA NEX-ORA project and
+Reader Key Management system and its associated project identity and branding.
+
+1.3 "Project Materials" means the original source code, scripts, HTML, CSS,
+JavaScript, backend code, documentation, diagrams, original visual designs,
+SVG artwork, logos, UI assets, configuration examples, and other materials
+made available as part of the Project and owned or controlled by Licensor.
+
+1.4 "Third-Party Materials" means any component, library, font, image, icon,
+trademark, service, or other material owned by someone other than Licensor,
+or provided under a separate license or service terms.
+
+1.5 "Written Permission" means a clear, affirmative authorization issued by
+Licensor through a verifiable official project-owner communication channel.
+Silence, public availability, an issue response, a pull-request submission,
+or the ability to download a file is not Written Permission.
+
+2. OWNERSHIP AND RESERVATION OF RIGHTS
+
+2.1 Licensor reserves all copyrights and other intellectual-property rights
+that Licensor owns in the Project Materials. Nothing in this License transfers
+ownership to a recipient.
+
+2.2 The Project is proprietary. No general public license is granted, and no
+rights arise by implication, estoppel, exhaustion, waiver, or mere publication.
+
+2.3 This License applies only to rights Licensor actually owns or is legally
+entitled to license. It does not claim ownership of Third-Party Materials,
+independently created work, or rights belonging to another person or entity.
+
+3. LIMITED PERMISSION TO INSPECT
+
+3.1 A recipient may view the Project Materials through the official repository
+or project page solely to inspect and evaluate the Project, subject to the
+hosting platform's terms and any applicable law.
+
+3.2 This limited inspection permission does not grant a right to make or retain
+working copies, create derivative works, run the Project for production or
+business purposes, redistribute files, publish modified versions, or use the
+Project Materials in another product, except to the extent a non-waivable legal
+right or the hosting platform's own terms expressly permit a specific act.
+
+3.3 Any additional evaluation, testing, integration, or internal-use permission
+must be granted separately in Written Permission and must state its scope.
+
+4. PROHIBITED ACTIVITIES WITHOUT WRITTEN PERMISSION
+
+Except where applicable law expressly prevents the restriction, a recipient
+must not, without prior Written Permission:
+
+(a) copy, reproduce, adapt, translate, modify, patch, or create derivative works
+    from any Project Materials;
+(b) publish, distribute, mirror, upload, sell, rent, lease, sublicense, transfer,
+    share, or otherwise make Project Materials available to another person;
+(c) incorporate Project Materials into another application, service, product,
+    repository, SDK, template, or commercial offering;
+(d) deploy, host, operate, or use the Project or any substantial part of it for
+    production, customer-facing, organizational, or commercial purposes;
+(e) remove, conceal, alter, or misrepresent copyright, ownership, attribution,
+    license, or proprietary notices;
+(f) use Project names, logos, visual identity, or marks to imply endorsement,
+    sponsorship, certification, partnership, or affiliation;
+(g) bypass or interfere with technical access controls, authentication,
+    authorization, security restrictions, or repository protections; or
+(h) use the Project Materials to train, fine-tune, benchmark, or create a dataset
+    for a machine-learning or generative-AI model, except where a mandatory legal
+    right applies or Licensor has separately given Written Permission.
+
+5. CONTRIBUTIONS AND PULL REQUESTS
+
+5.1 No person is authorized to begin work on, modify, or prepare a contribution
+for inclusion in the official Project merely because the repository is public.
+Prior Written Permission is required for work intended to become part of the
+Project.
+
+5.2 Submitting an issue, patch, pull request, attachment, suggestion, or other
+contribution does not grant the submitter permission to modify the official
+Project, does not guarantee review or acceptance, and does not automatically
+transfer ownership of the contribution to Licensor.
+
+5.3 A contribution may be incorporated only after Licensor has expressly
+approved it and the parties have documented any required license, assignment,
+attribution, or contributor terms in writing. The submitter must have the legal
+right to offer the contribution on those terms.
+
+5.4 Git hosting permissions, branch protection, required reviews, and release
+permissions are separate technical controls. This License does not configure
+or enforce those controls by itself.
+
+6. THIRD-PARTY MATERIALS
+
+6.1 Third-Party Materials are not licensed or relicensed by this document.
+They remain subject to their respective copyright notices, licenses, and
+service terms.
+
+6.2 In particular, externally loaded fonts, libraries, services, and other
+remote resources remain governed by the terms of their respective providers.
+A recipient is responsible for reviewing and complying with those terms.
+
+6.3 If a file contains or depends on Third-Party Materials, the restrictions
+in this License apply only to the portions and rights that Licensor owns or
+controls, and do not override the third party's rights.
+
+7. TRADEMARKS AND BRANDING
+
+No trademark, service-mark, trade-name, logo, or brand license is granted by
+this License. OMEGA NEX-ORA, NexOra, OMEGA SINGULARITY, OMEGA GUARDIAN X,
+OMEGA NEXUS PRIME, and associated logos or visual identity may not be used to
+suggest official status, endorsement, or affiliation without Written Permission.
+This clause does not claim rights beyond those actually owned by Licensor and
+does not remove rights or defenses provided by applicable law.
+
+8. DISCLAIMER OF WARRANTY
+
+To the maximum extent permitted by applicable law, the Project Materials are
+provided "AS IS" and "AS AVAILABLE", without warranties or conditions of any
+kind, whether express, implied, statutory, or otherwise, including warranties
+of merchantability, fitness for a particular purpose, title, quiet enjoyment,
+accuracy, availability, security, and non-infringement. Licensor does not
+promise that the Project will be error-free, uninterrupted, secure, or suitable
+for any particular environment.
+
+9. LIMITATION OF LIABILITY
+
+To the maximum extent permitted by applicable law, Licensor will not be liable
+for indirect, incidental, special, consequential, exemplary, or punitive loss,
+or for loss of profits, revenue, business, data, goodwill, or service use,
+arising out of or relating to the Project Materials or this License, even if
+advised that such loss was possible. Nothing in this License excludes or limits
+liability that cannot lawfully be excluded or limited.
+
+10. TERMINATION
+
+10.1 Any permission granted under this License terminates automatically if
+the recipient materially breaches its conditions, subject to any notice or
+cure rights that applicable law requires.
+
+10.2 Upon termination, the recipient must stop the activity covered by the
+terminated permission and delete copies that the recipient is not otherwise
+legally entitled to retain.
+
+10.3 Termination does not remove rights or obligations that accrued before
+termination, nor does it affect provisions intended by their nature to survive.
+
+11. LEGAL RIGHTS AND INTERPRETATION
+
+11.1 This License is not intended to restrict rights that applicable law makes
+non-waivable, including mandatory exceptions, limitations, or permitted uses.
+
+11.2 If any provision is held unenforceable, it will be limited only to the
+minimum extent necessary, and the remaining provisions will continue to apply
+to the extent permitted by law.
+
+11.3 No governing-law jurisdiction or exclusive venue is selected by this
+License. Any dispute is subject to the applicable law and competent forum,
+including mandatory consumer, employment, and intellectual-property rules.
+
+12. PERMISSION REQUESTS AND CONTACT
+
+Requests for commercial use, modification, integration, redistribution,
+publication, branding, or other permission must be sent to Licensor through a
+verified official project-owner communication channel. The request must identify
+the materials, intended use, territory, duration, distribution method, and any
+commercial purpose. Permission is effective only when Licensor gives an
+unambiguous written approval defining the permitted scope.
+
+13. COMPLETE LICENSE NOTICE
+
+This document states the complete default permission policy for the Project
+Materials owned or controlled by Licensor. A separate written agreement signed
+or otherwise expressly accepted by Licensor may grant additional or different
+rights for specifically identified materials.
+
+END OF OMEGA NEX-ORA PROPRIETARY LICENSE

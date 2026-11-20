@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" width="1500" height="500" role="img" aria-label="NexOra Database Key Gen banner">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#02030a"/><stop offset=".6" stop-color="#07112b"/><stop offset="1" stop-color="#150b33"/></linearGradient>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00f0ff"/><stop offset=".55" stop-color="#3d7bff"/><stop offset="1" stop-color="#9b5cff"/></linearGradient>
+<radialGradient id="rg"><stop offset="0" stop-color="#00f0ff" stop-opacity=".35"/><stop offset="1" stop-color="#00f0ff" stop-opacity="0"/></radialGradient>
+<radialGradient id="vg" cx=".5" cy=".5" r=".75"><stop offset=".5" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".75"/></radialGradient>
+<pattern id="gp" width="50" height="50" patternUnits="userSpaceOnUse"><path d="M50 0H0V50" fill="none" stroke="#00f0ff" stroke-opacity=".13"/><animateTransform attributeName="patternTransform" type="translate" from="0 0" to="0 50" dur="4s" repeatCount="indefinite"/></pattern>
+<filter id="gl" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<clipPath id="cl"><rect x="486" y="392" width="0" height="40"><animate attributeName="width" values="0;450;450;0" keyTimes="0;.55;.9;1" dur="7s" repeatCount="indefinite"/></rect></clipPath>
+</defs>
+<rect width="1500" height="500" fill="url(#bg)"/>
+<rect width="1500" height="500" fill="url(#gp)"/>
+<circle cx="254" cy="254" r="190" fill="url(#rg)"><animate attributeName="r" values="150;210;150" dur="4s" repeatCount="indefinite"/></circle>
+<circle cx="1340" cy="250" r="200" fill="url(#rg)" opacity=".6"><animate attributeName="r" values="170;215;170" dur="5s" repeatCount="indefinite"/></circle>
+<g transform="translate(110 110) scale(1.2)">
+<g filter="url(#gl)" fill="none" stroke="url(#g)" stroke-linecap="round" stroke-linejoin="round">
+<g><polygon points="120,14 212,67 212,173 120,226 28,173 28,67" stroke-width="3" stroke-dasharray="46 14"/><animateTransform attributeName="transform" type="rotate" from="0 120 120" to="360 120 120" dur="26s" repeatCount="indefinite"/></g>
+<g><circle cx="120" cy="120" r="76" stroke-width="2" stroke-dasharray="3 9"/><animateTransform attributeName="transform" type="rotate" from="360 120 120" to="0 120 120" dur="15s" repeatCount="indefinite"/></g>
+<circle cx="96" cy="120" r="22" stroke-width="5"/>
+<path d="M118 120H178M158 120v18M174 120v12" stroke-width="5"/>
+</g>
+<circle cx="96" cy="120" r="7" fill="#fff"><animate attributeName="opacity" values="1;.2;1" dur="1.6s" repeatCount="indefinite"/></circle>
+<circle r="4" fill="#00f0ff"><animateMotion dur="6s" repeatCount="indefinite" path="M120 44a76 76 0 1 1 0 152a76 76 0 1 1 0-152z"/></circle>
+</g>
+<g transform="translate(1340 250)" fill="none" stroke="url(#g)" filter="url(#gl)">
+<g><circle r="120" stroke-width="3" stroke-dasharray="70 22"/><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="20s" repeatCount="indefinite"/></g>
+<g><circle r="86" stroke-width="2" stroke-dasharray="4 10"/><animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="12s" repeatCount="indefinite"/></g>
+<circle r="44" stroke-width="2" opacity=".7"><animate attributeName="r" values="36;52;36" dur="3s" repeatCount="indefinite"/></circle>
+<circle r="5" fill="#00f0ff" stroke="none"><animateMotion dur="5s" repeatCount="indefinite" path="M0 -120a120 120 0 1 1 0 240a120 120 0 1 1 0 -240z"/></circle>
+</g>
+<g font-family="Orbitron,'Segoe UI','Arial Black',Impact,sans-serif" font-weight="800">
+<text x="480" y="262" font-size="118" letter-spacing="16" fill="url(#g)" filter="url(#gl)">NEXORA</text>
+<text x="486" y="318" font-size="32" font-weight="500" letter-spacing="13" fill="#9fb8d0">DATABASE KEY GEN</text>
+<text x="486" y="360" font-size="17" font-weight="500" letter-spacing="6" fill="#5f819f">SECURE · CLIENT-SIDE · ULTRA FUTURISTIC</text>
+</g>
+<g clip-path="url(#cl)"><text x="486" y="418" font-family="'Courier New',monospace" font-size="26" fill="#00f0ff" filter="url(#gl)">nx_live_7fA93kQ7xZ2mBv5Lr8Tq</text></g>
+<rect y="396" width="12" height="26" fill="#00f0ff"><animate attributeName="x" values="486;936;936;486" keyTimes="0;.55;.9;1" dur="7s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0;1" dur=".8s" repeatCount="indefinite"/></rect>
+<rect y="0" width="3" height="500" fill="#00f0ff" opacity=".4"><animate attributeName="x" values="-10;1510" dur="8s" repeatCount="indefinite"/></rect>
+<g fill="#00f0ff">
+<circle cx="560" cy="90" r="2"><animate attributeName="cy" values="90;60;90" dur="5s" repeatCount="indefinite"/><animate attributeName="opacity" values=".2;1;.2" dur="5s" repeatCount="indefinite"/></circle>
+<circle cx="860" cy="450" r="2.5"><animate attributeName="cy" values="450;420;450" dur="6s" repeatCount="indefinite"/><animate attributeName="opacity" values=".2;1;.2" dur="6s" repeatCount="indefinite"/></circle>
+<circle cx="1020" cy="70" r="2"><animate attributeName="cy" values="70;100;70" dur="4s" repeatCount="indefinite"/><animate attributeName="opacity" values=".2;1;.2" dur="4s" repeatCount="indefinite"/></circle>
+<circle cx="180" cy="60" r="2"><animate attributeName="cy" values="60;90;60" dur="7s" repeatCount="indefinite"/><animate attributeName="opacity" values=".2;1;.2" dur="7s" repeatCount="indefinite"/></circle>
+<circle cx="1180" cy="440" r="2"><animate attributeName="cy" values="440;410;440" dur="5.5s" repeatCount="indefinite"/><animate attributeName="opacity" values=".2;1;.2" dur="5.5s" repeatCount="indefinite"/></circle>
+</g>
+<path d="M28 80V28H80M1420 28H1472V80M28 420V472H80M1472 420V472H1420" fill="none" stroke="#00f0ff" stroke-opacity=".7" stroke-width="3"/>
+<rect width="1500" height="3" fill="url(#g)"/><rect y="497" width="1500" height="3" fill="url(#g)"/>
+<rect width="1500" height="500" fill="url(#vg)"/>
+</svg>

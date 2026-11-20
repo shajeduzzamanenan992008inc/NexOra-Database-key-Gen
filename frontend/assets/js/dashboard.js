@@ -2,6 +2,7 @@ import { api, ApiProblem, setCsrfToken } from "./api.js";
 import {
   $,
   $$,
+  announce,
   clearNode,
   closeDialog,
   confirmAction,
@@ -12,10 +13,22 @@ import {
   formatRelative,
   openDialog,
   setButtonBusy,
+  setToneMessage,
   skeletonRows,
   statusBadge,
   toast,
 } from "./ui.js";
+import {
+  animateNumber,
+  animateTableRows,
+  dismissBootScreen,
+  hideLeaveScreen,
+  initMotion,
+  isLiteMode,
+  playLeaveScreen,
+  pulseElement,
+  setLiteMode,
+} from "./motion.js";
 
 const VIEW_META = {
   overview: {
@@ -25,12 +38,12 @@ const VIEW_META = {
   },
   projects: {
     title: "Projects",
-    subtitle: "One Reader Key per project. Activate, schedule deletion, or permanently remove projects.",
+    subtitle: "Projects can own unlimited Reader Keys. Activate, schedule deletion, or permanently remove a project and every key it owns.",
     eyebrow: "OMEGA NEX-ORA / Project Ops",
   },
   generator: {
     title: "Key Generator",
-    subtitle: "Enter a project name. A new project automatically receives exactly one one-time Reader Key.",
+    subtitle: "Select an existing project or create a new one, choose an expiration, and issue a one-time Reader Key.",
     eyebrow: "OMEGA NEX-ORA / Cryptographic Generator",
   },
   keys: {
@@ -60,39 +73,127 @@ const VIEW_META = {
   },
 };
 
+const PROJECT_LABELS = [
+  "Project Name",
+  "Status",
+  "Keys",
+  "Created",
+  "Auto Delete Date",
+  "Remaining",
+  "Installation",
+  "Actions",
+];
+const KEY_LABELS = [
+  "Key / Key ID",
+  "Project",
+  "Status",
+  "Created",
+  "Expires",
+  "First Used",
+  "Revoked",
+  "Actions",
+];
+const EXPIRATION_LABELS = {
+  "1_day": "1 Day",
+  "7_days": "7 Days",
+  "30_days": "30 Days",
+  "90_days": "90 Days",
+  "1_year": "1 Year",
+  custom: "Custom Expiration",
+  never: "Never Expires",
+};
+const INSTALLATION_LABELS = [
+  "Installation ID",
+  "Project",
+  "Redeemed Key Hint",
+  "Device ID",
+  "Status",
+  "Activated At",
+  "Last Heartbeat",
+  "Actions",
+];
+const SECURITY_LABELS = ["Timestamp", "Event Action", "Outcome", "Target Type", "IP Address"];
+const AUDIT_LABELS = [
+  "Timestamp",
+  "Action",
+  "Target Type",
+  "Target ID",
+  "Outcome",
+  "Actor",
+  "IP Address",
+  "Details",
+];
+
 const state = {
   user: null,
   view: "overview",
   stats: null,
   projects: [],
   keys: [],
-  keysPagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 },
+  keysPagination: { page: 1, page_size: 25, total: 0, total_pages: 1 },
   installations: [],
-  installationsPagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 },
+  installationsPagination: { page: 1, page_size: 25, total: 0, total_pages: 1 },
   auditLogs: [],
-  auditPagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 },
+  auditPagination: { page: 1, page_size: 25, total: 0, total_pages: 1 },
   securityData: null,
   settingsData: null,
   generatedKeys: [],
+  generatorMode: "existing",
+  loggingOut: false,
+  sessionCheck: null,
 };
 
 const numberFormat = new Intl.NumberFormat();
+const copyLabels = new WeakMap();
+const mobileQuery = window.matchMedia("(max-width: 980px)");
+const viewLoads = new Map();
+let mobileNavOpen = false;
+let sessionRedirecting = false;
+
+/* ---------------------------------------------------------------- helpers */
+
+function redirectToLogin() {
+  if (sessionRedirecting) return;
+  sessionRedirecting = true;
+  window.clearInterval(statsTimer);
+  dismissBootScreen();
+  window.location.replace("/login");
+}
 
 function fail(error, fallback = "The request could not be completed.") {
   if (error instanceof ApiProblem && error.status === 401) {
-    window.location.replace("/login");
+    // An already in-flight read can be rejected the moment logout revokes the
+    // session. That is expected and must not duplicate the logout navigation.
+    if (state.loggingOut) return;
+    redirectToLogin();
     return;
   }
+
   const detail =
     error instanceof ApiProblem && error.details && typeof error.details === "object"
       ? Object.entries(error.details)
-          .map(([f, m]) => `${f}: ${m}`)
+          .map(([field, message]) => `${field}: ${message}`)
           .join(" · ")
       : "";
+
   toast(error && error.message ? error.message : fallback, {
     type: "error",
     detail,
   });
+}
+
+function showGlobalError(message) {
+  const node = $("#global-error");
+  if (!node) return;
+  node.textContent = message;
+  node.hidden = false;
+}
+
+function clearGlobalError() {
+  const node = $("#global-error");
+  if (!node) return;
+  node.hidden = true;
+  node.textContent = "";
 }
 
 function setText(selector, value) {
@@ -102,23 +203,137 @@ function setText(selector, value) {
 
 function setStat(name, value) {
   $$(`[data-stat="${name}"]`).forEach((node) => {
-    node.textContent =
-      typeof value === "number" ? numberFormat.format(value) : String(value ?? "—");
+    if (typeof value === "number" && Number.isFinite(value)) {
+      animateNumber(node, value);
+    } else {
+      node.textContent = value !== undefined && value !== null ? String(value) : "—";
+    }
   });
 }
 
-function emptyRow(colspan, title, subtitle) {
+function setBadge(selector, text, tone) {
+  const node = $(selector);
+  if (!node) return;
+  node.textContent = text;
+  node.className = `badge badge-${tone}`;
+}
+
+function debounce(fn, wait = 260) {
+  let timer = 0;
+  return (...args) => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => fn(...args), wait);
+  };
+}
+
+function tableCell(label, content, className) {
+  let children;
+  if (content instanceof Node) children = [content];
+  else if (Array.isArray(content)) children = content;
+  else children = [content === undefined || content === null || content === "" ? "—" : String(content)];
+
+  return el(
+    "td",
+    {
+      "data-label": label,
+      class: className || undefined,
+    },
+    children
+  );
+}
+
+function emptyRow(colspan, title, subtitle, icon = "◇") {
   return el("tr", {}, [
-    el("td", { colspan: String(colspan), class: "text-center" }, [
-      el("div", { class: "empty-state", style: "padding: 32px 16px; text-align: center;" }, [
-        el("strong", { text: title, style: "display: block; font-size: 1.05rem; margin-bottom: 4px;" }),
+    el("td", { colspan: String(colspan), class: "empty-cell" }, [
+      el("div", { class: "empty-state" }, [
+        el("span", { class: "empty-icon", "aria-hidden": "true", text: icon }),
+        el("strong", { text: title }),
         subtitle ? el("span", { class: "muted", text: subtitle }) : null,
       ]),
     ]),
   ]);
 }
 
-/* ------------------------------------------------------------------ Identity */
+function errorRow(colspan, title = "Data unavailable") {
+  return emptyRow(
+    colspan,
+    title,
+    "The authenticated request failed. Use Refresh to try again. No placeholder data is shown.",
+    "!"
+  );
+}
+
+function loadingBlock(label) {
+  return el("div", { class: "loading-block" }, [
+    el("span", { class: "spinner spinner-lg", "aria-hidden": "true" }),
+    el("p", { class: "muted", text: label }),
+  ]);
+}
+
+function recordItem(label, value, { full = false, mono = false } = {}) {
+  const dd = el("dd");
+  if (value instanceof Node) dd.append(value);
+  else if (mono) dd.append(el("code", { text: value === undefined || value === null || value === "" ? "—" : String(value) }));
+  else dd.textContent = value === undefined || value === null || value === "" ? "—" : String(value);
+
+  return el("div", { class: `record-item${full ? " span-2" : ""}` }, [
+    el("dt", { text: label }),
+    dd,
+  ]);
+}
+
+function recordGrid(items) {
+  return el("dl", { class: "record-grid" }, items);
+}
+
+function normalizePagination(raw, fallbackPage = 1, fallbackSize = 25) {
+  const pagination = raw || {};
+  return {
+    page: Number(pagination.page) || fallbackPage,
+    page_size: Number(pagination.page_size || pagination.pageSize) || fallbackSize,
+    total: Number(pagination.total) || 0,
+    total_pages: Number(pagination.total_pages || pagination.totalPages) || 1,
+  };
+}
+
+function beginTableLoad(tbody, columns, labels, summarySelector) {
+  if (tbody) {
+    skeletonRows(tbody, columns, 4, labels);
+    const table = tbody.closest("table");
+    if (table) table.setAttribute("aria-busy", "true");
+  }
+  if (summarySelector) setText(summarySelector, "Loading…");
+}
+
+function endTableLoad(tbody) {
+  const table = tbody ? tbody.closest("table") : null;
+  if (table) table.removeAttribute("aria-busy");
+}
+
+async function copyWithFeedback(value, button, message) {
+  try {
+    await copyText(value);
+    if (button) {
+      if (!copyLabels.has(button)) copyLabels.set(button, button.textContent);
+      button.textContent = "Copied ✓";
+      button.classList.add("is-copied");
+      window.setTimeout(() => {
+        button.classList.remove("is-copied");
+        button.textContent = copyLabels.get(button) || "Copy";
+      }, 1800);
+    }
+    toast(message, { type: "success" });
+    announce(message);
+  } catch (error) {
+    toast(error && error.message ? error.message : "Clipboard copy failed.", { type: "error" });
+  }
+}
+
+function csvCell(value) {
+  return `"${String(value === undefined || value === null ? "" : value).replace(/"/g, '""')}"`;
+}
+
+/* --------------------------------------------------------------- identity */
 
 function applyIdentity() {
   const user = state.user;
@@ -134,95 +349,176 @@ function applyIdentity() {
   setText("#user-initials", initials || "NX");
 }
 
-/* --------------------------------------------------------------------- Views */
+/* ----------------------------------------------------------------- views */
 
 export function showView(viewName, { updateHash = true, reload = true } = {}) {
   if (!VIEW_META[viewName]) viewName = "overview";
   state.view = viewName;
 
-  $$(".nav-item").forEach((btn) => {
-    btn.classList.toggle("is-active", btn.dataset.view === viewName);
+  $$(".nav-item").forEach((button) => {
+    const isActive = button.dataset.view === viewName;
+    const becameActive = isActive && !button.classList.contains("is-active");
+    button.classList.toggle("is-active", isActive);
+    if (isActive) {
+      button.setAttribute("aria-current", "page");
+      if (becameActive) replayMotion(button, "is-just-active", 500);
+    } else {
+      button.removeAttribute("aria-current");
+    }
   });
 
-  $$(".view").forEach((v) => {
-    v.classList.toggle("is-active", v.id === `view-${viewName}`);
+  $$(".view").forEach((view) => {
+    view.classList.toggle("is-active", view.id === `view-${viewName}`);
   });
 
   const meta = VIEW_META[viewName];
   setText("#page-title", meta.title);
   setText("#page-subtitle", meta.subtitle);
   setText("#topbar-eyebrow", meta.eyebrow);
+  document.title = `${meta.title} · NexOra Database Key Generator`;
 
-  // The only creation workflow is the Key Generator.
   const topAction = $("#topbar-quick-action");
-  if (topAction) {
-    topAction.textContent = "⚡ Generate Key";
-    topAction.onclick = () => showView("generator");
+  if (topAction && viewName === "generator") {
+    topAction.textContent = "Generator active";
+  } else if (topAction) {
+    topAction.textContent = "Generate key";
   }
 
-  if (updateHash) {
-    window.location.hash = viewName;
-  }
+  if (updateHash) window.location.hash = viewName;
 
-  if (reload) {
-    loadViewData(viewName);
-  }
+  closeMobileNav({ restoreFocus: false });
+  clearGlobalError();
+  announce(`${meta.title} view opened.`);
+
+  if (reload) loadViewData(viewName);
 }
 
 async function loadViewData(viewName) {
+  // Deduplicate concurrent loads of the same view. A second click, a polling
+  // tick and a visibility event must never stack authenticated requests.
+  if (viewLoads.has(viewName)) return viewLoads.get(viewName);
+
+  const view = $(`#view-${viewName}`);
+  if (view) view.setAttribute("aria-busy", "true");
+
+  const task = (async () => {
+    try {
+      if (viewName === "overview") await loadOverview();
+      else if (viewName === "projects") await loadProjects();
+      else if (viewName === "generator") await loadGenerator();
+      else if (viewName === "keys") await loadKeys();
+      else if (viewName === "installations") await loadInstallations();
+      else if (viewName === "security") await loadSecurity();
+      else if (viewName === "logs") await loadAuditLogs();
+      else if (viewName === "settings") await loadSettings();
+      return true;
+    } catch (error) {
+      fail(error, `Failed to load ${viewName} data.`);
+      return false;
+    } finally {
+      if (view) view.removeAttribute("aria-busy");
+    }
+  })();
+
+  viewLoads.set(viewName, task);
   try {
-    if (viewName === "overview") await loadOverview();
-    else if (viewName === "projects") await loadProjects();
-    else if (viewName === "generator") await loadGenerator();
-    else if (viewName === "keys") await loadKeys();
-    else if (viewName === "installations") await loadInstallations();
-    else if (viewName === "security") await loadSecurity();
-    else if (viewName === "logs") await loadAuditLogs();
-    else if (viewName === "settings") await loadSettings();
-  } catch (err) {
-    fail(err, `Failed to load ${viewName} data.`);
+    return await task;
+  } finally {
+    viewLoads.delete(viewName);
   }
 }
 
-/* ------------------------------------------------------------- View: Overview */
+/* -------------------------------------------------------------- overview */
 
 async function loadOverview() {
-  const [statsData, healthData] = await Promise.all([
-    api.stats().catch(() => null),
-    api.health().catch(() => null),
-  ]);
+  const statsData = await api.stats();
+  lastOverviewRefreshAt = Date.now();
+  state.stats = statsData;
 
-  if (statsData) {
-    state.stats = statsData;
-    setStat("total_projects", statsData.total_projects);
-    setStat("active_projects", statsData.active_projects);
-    setStat("total_keys", statsData.total_keys);
-    setStat("unused_keys", statsData.unused_keys);
-    setStat("used_keys", statsData.used_keys);
-    setStat("expired_keys", statsData.expired_keys);
-    setStat("revoked_keys", statsData.revoked_keys);
-    setStat("active_installations", statsData.active_installations);
+  setStat("total_projects", statsData.total_projects);
+  setStat("active_projects", statsData.active_projects);
+  setStat("total_keys", statsData.total_keys);
+  setStat("unused_keys", statsData.unused_keys);
+  setStat("used_keys", statsData.used_keys);
+  setStat("expired_keys", statsData.expired_keys);
+  setStat("revoked_keys", statsData.revoked_keys);
+  setStat("active_installations", statsData.active_installations);
 
-    const isConnected = statsData.database_status === "connected";
-    const dbText = $("#db-health-text");
-    if (dbText) dbText.textContent = isConnected ? "DB: CONNECTED" : "DB: UNAVAILABLE";
-    const dbChip = $("#db-health-chip");
-    if (dbChip) {
-      dbChip.classList.toggle("chip-danger", !isConnected);
-    }
-    const pulseDb = $("#pulse-database-status");
-    if (pulseDb) {
-      pulseDb.textContent = isConnected ? "CONNECTED" : "UNAVAILABLE";
-      pulseDb.className = `badge ${isConnected ? "badge-success" : "badge-danger"}`;
-    }
-    const pulseHealth = $("#pulse-backend-health");
-    if (pulseHealth) {
-      const isOk = statsData.backend_health === "ok";
-      pulseHealth.textContent = isOk ? "OK" : "DEGRADED";
-      pulseHealth.className = `badge ${isOk ? "badge-success" : "badge-warn"}`;
-    }
+  const isConnected = statsData.database_status === "connected";
+  setText("#db-health-text", isConnected ? "DB: CONNECTED" : "DB: UNAVAILABLE");
+  const dbChip = $("#db-health-chip");
+  if (dbChip) dbChip.classList.toggle("chip-danger", !isConnected);
 
-    renderOverviewAudit(statsData.recent_audit || []);
+  setText("#pulse-database-status", isConnected ? "CONNECTED" : "UNAVAILABLE");
+  setBadge(
+    "#pulse-database-status",
+    isConnected ? "CONNECTED" : "UNAVAILABLE",
+    isConnected ? "success" : "danger"
+  );
+
+  const backendOk = statsData.backend_health === "ok";
+  setBadge(
+    "#pulse-backend-health",
+    backendOk ? "OK" : "DEGRADED",
+    backendOk ? "success" : "warn"
+  );
+
+  renderLifecycle(statsData);
+  renderOverviewAudit(statsData.recent_audit || []);
+}
+
+function renderLifecycle(stats) {
+  const values = {
+    unused: Number(stats.unused_keys) || 0,
+    used: Number(stats.used_keys) || 0,
+    expired: Number(stats.expired_keys) || 0,
+    revoked: Number(stats.revoked_keys) || 0,
+  };
+  const total = values.unused + values.used + values.expired + values.revoked;
+
+  const totalNode = $("#lifecycle-total");
+  if (totalNode) animateNumber(totalNode, total);
+
+  Object.entries(values).forEach(([key, value]) => {
+    const node = $(`[data-lifecycle-value="${key}"]`);
+    if (node) node.textContent = numberFormat.format(value);
+  });
+
+  const circles = {
+    unused: $("#donut-unused"),
+    used: $("#donut-used"),
+    expired: $("#donut-expired"),
+    revoked: $("#donut-revoked"),
+  };
+
+  let offset = 0;
+  Object.entries(values).forEach(([key, value]) => {
+    const circle = circles[key];
+    const share = total > 0 ? (value / total) * 100 : 0;
+    const gap = share > 0 && share < 100 ? Math.min(0.9, share * 0.16) : 0;
+    const visible = Math.max(0, share - gap);
+
+    if (circle) {
+      circle.setAttribute("stroke-dasharray", `${visible} ${Math.max(0, 100 - visible)}`);
+      circle.setAttribute("stroke-dashoffset", String(-offset));
+      circle.setAttribute(
+        "aria-label",
+        `${key}: ${numberFormat.format(value)} key${value === 1 ? "" : "s"}, ${
+          total ? ((value / total) * 100).toFixed(1) : "0.0"
+        } percent`
+      );
+    }
+    offset += share;
+  });
+
+  const redeemable = values.unused + values.used;
+  const activation = redeemable > 0 ? (values.used / redeemable) * 100 : null;
+  setText("#lifecycle-activation", activation === null ? "—" : `${activation.toFixed(1)}%`);
+
+  const legend = $("#lifecycle-legend");
+  if (legend) {
+    legend.classList.remove("is-empty");
+    if (total === 0) legend.classList.add("is-empty");
   }
 }
 
@@ -232,37 +528,61 @@ function renderOverviewAudit(items) {
   clearNode(list);
 
   if (!items.length) {
-    list.append(el("li", { class: "muted text-center", text: "No recent audit activity." }));
+    list.append(
+      el("li", {}, [
+        el("div", { class: "empty-state" }, [
+          el("span", { class: "empty-icon", "aria-hidden": "true", text: "≡" }),
+          el("strong", { text: "No recent audit activity" }),
+          el("span", { class: "muted", text: "Administrative events will appear here as they occur." }),
+        ]),
+      ])
+    );
     return;
   }
 
-  items.slice(0, 7).forEach((item) => {
+  items.slice(0, 7).forEach((item, index) => {
     const isSuccess = item.outcome === "success";
     const li = el("li", { class: "audit-item" }, [
       el("span", {
-        class: `audit-dot ${isSuccess ? "dot-success" : "dot-danger"}`,
-        style: `width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: ${isSuccess ? "var(--success)" : "var(--danger)"}; margin-right: 8px;`,
+        class: `audit-dot ${isSuccess ? "success" : "failure"}`,
+        "aria-hidden": "true",
       }),
-      el("div", { class: "audit-meta", style: "flex: 1;" }, [
-        el("strong", { text: item.action, style: "font-size: 0.9rem;" }),
-        el("small", {
-          class: "muted",
-          text: ` · ${formatRelative(item.created_at)} ${item.project_name ? `(${item.project_name})` : ""}`,
+      el("div", { class: "audit-copy" }, [
+        el("strong", { text: item.action }),
+        el("span", {
+          text: `${item.actor_email || "Administrator"} · ${formatRelative(item.created_at)}${
+            item.project_name ? ` · ${item.project_name}` : ""
+          }`,
         }),
       ]),
       statusBadge(item.outcome),
     ]);
+    li.style.setProperty("animation-delay", `${Math.min(index * 35, 240)}ms`);
     list.append(li);
   });
 }
 
-/* ------------------------------------------------------------- View: Projects */
+/* -------------------------------------------------------------- projects */
 
 async function loadProjects() {
-  const search = $("#project-search-input") ? $("#project-search-input").value.trim() : "";
-  const data = await api.projects({ search });
-  state.projects = data.projects || [];
-  renderProjectsTable(state.projects);
+  const searchInput = $("#project-search-input");
+  const search = searchInput ? searchInput.value.trim() : "";
+  const tbody = $("#projects-table-body");
+  beginTableLoad(tbody, PROJECT_LABELS.length, PROJECT_LABELS, "#projects-summary");
+
+  try {
+    const data = await api.projects({ search });
+    state.projects = data.projects || [];
+    renderProjectsTable(state.projects);
+  } catch (error) {
+    if (tbody) {
+      clearNode(tbody);
+      tbody.append(errorRow(PROJECT_LABELS.length, "Projects unavailable"));
+    }
+    throw error;
+  } finally {
+    endTableLoad(tbody);
+  }
 }
 
 function autoDeleteDateLabel(project) {
@@ -287,9 +607,10 @@ function renderProjectsTable(projects) {
   if (!projects.length) {
     tbody.append(
       emptyRow(
-        8,
+        PROJECT_LABELS.length,
         "No projects found",
-        "Open Key Generator and enter a project name to create the first project."
+        "Open Key Generator and enter a project name to create the first project.",
+        "◫"
       )
     );
     setText("#projects-summary", "0 projects");
@@ -298,124 +619,260 @@ function renderProjectsTable(projects) {
 
   setText("#projects-summary", `Showing ${projects.length} project(s)`);
 
-  projects.forEach((proj) => {
-    const isActive = proj.status === "active";
+  projects.forEach((project) => {
+    const isActive = project.status === "active";
 
-    const tr = el("tr", {}, [
-      el("td", {}, [
-        el("a", {
-          href: "#",
-          class: "link-strong",
-          text: proj.project_name,
-          onclick: (e) => {
-            e.preventDefault();
-            viewProjectDetails(proj.id);
-          },
-        }),
-      ]),
-      el("td", {}, [statusBadge(proj.status)]),
-      el("td", {}, [
-        proj.reader_key_status
-          ? statusBadge(proj.reader_key_status)
-          : el("span", { class: "badge badge-muted", text: "No Key" }),
-      ]),
-      el("td", { text: formatDate(proj.created_at, { time: false }) }),
-      el("td", { text: autoDeleteDateLabel(proj) }),
-      el("td", { text: remainingDaysLabel(proj) }),
-      el("td", {}, [
-        proj.active_installation_id
+    const nameButton = el("a", {
+      href: "#",
+      class: "table-link",
+      text: project.project_name,
+      onclick: (event) => {
+        event.preventDefault();
+        viewProjectDetails(project.id);
+      },
+    });
+
+    const row = el("tr", {}, [
+      tableCell("Project Name", nameButton, "table-primary"),
+      tableCell("Status", statusBadge(project.status)),
+      tableCell(
+        "Keys",
+        el("div", { class: "key-count-cell" }, [
+          el("span", {
+            class: "badge badge-info",
+            text: `${Number(project.total_keys) || 0} key${
+              Number(project.total_keys) === 1 ? "" : "s"
+            }`,
+          }),
+          project.reader_key_status
+            ? el("span", {
+                class: "muted",
+                text: `Latest: ${project.reader_key_status}`,
+              })
+            : el("span", { class: "muted", text: "No keys yet" }),
+        ])
+      ),
+      tableCell("Created", formatDate(project.created_at, { time: false })),
+      tableCell("Auto Delete Date", autoDeleteDateLabel(project)),
+      tableCell("Remaining", remainingDaysLabel(project)),
+      tableCell(
+        "Installation",
+        project.active_installation_id
           ? el("span", { class: "badge badge-success", text: "Active" })
-          : el("span", { class: "muted", text: "None" }),
-      ]),
-      el("td", { class: "align-right" }, [
+          : el("span", { class: "muted", text: "None" })
+      ),
+      tableCell(
+        "Actions",
         el("div", { class: "row-actions" }, [
           el("button", {
             class: "btn btn-ghost btn-sm",
             type: "button",
             text: isActive ? "Deactivate" : "Activate",
-            onclick: () => toggleProjectStatus(proj),
+            onclick: () => toggleProjectStatus(project),
           }),
           el("button", {
             class: "btn btn-danger btn-sm",
             type: "button",
             text: "Delete",
-            onclick: () => deleteProjectPrompt(proj),
+            onclick: () => deleteProjectPrompt(project),
           }),
         ]),
-      ]),
+        "align-right"
+      ),
     ]);
-    tbody.append(tr);
+
+    tbody.append(row);
   });
 }
 
 async function viewProjectDetails(projectId) {
+  const modal = $("#project-detail-modal");
+  const body = $("#project-detail-body");
+  if (!modal || !body) return;
+
+  clearNode(body);
+  body.append(loadingBlock("Loading authenticated project record…"));
+  openDialog(modal);
+
   try {
     const data = await api.project(projectId);
-    const proj = data.project;
-    const body = $("#project-detail-body");
-    clearNode(body);
-
+    const project = data.project;
     const dateInput = el("input", {
       type: "date",
       id: "project-auto-delete-input",
       "aria-label": "Auto delete date",
     });
-    if (proj.auto_delete_at) {
-      dateInput.value = new Date(proj.auto_delete_at).toISOString().slice(0, 10);
+    if (project.auto_delete_at) {
+      dateInput.value = new Date(project.auto_delete_at).toISOString().slice(0, 10);
     }
 
+    const schedule = el("section", { class: "detail-section" }, [
+      el("h3", { text: "Schedule Permanent Deletion" }),
+      el("div", { class: "auto-delete-controls" }, [
+        dateInput,
+        el("button", {
+          class: "btn btn-primary btn-sm",
+          type: "button",
+          text: "Save schedule",
+          onclick: () => saveProjectAutoDelete(project, dateInput.value),
+        }),
+        el("button", {
+          class: "btn btn-ghost btn-sm",
+          type: "button",
+          text: "Clear schedule",
+          onclick: () => saveProjectAutoDelete(project, ""),
+        }),
+      ]),
+      el("p", {
+        class: "muted",
+        text: "Automatic deletion runs only when the server-side purge command runs and the date is due. Leave empty to disable.",
+      }),
+    ]);
+
+    clearNode(body);
     body.append(
-      el("div", { class: "detail-grid" }, [
-        el("div", {}, [el("span", { class: "muted", text: "Project Name:" }), el("h3", { text: proj.project_name })]),
-        el("div", {}, [el("span", { class: "muted", text: "Status:" }), el("div", {}, [statusBadge(proj.status)])]),
-        el("div", {}, [
-          el("span", { class: "muted", text: "Reader Key Status:" }),
-          el("div", {}, [
-            proj.reader_key_status
-              ? statusBadge(proj.reader_key_status)
-              : el("span", { class: "badge badge-muted", text: "No Key" }),
-          ]),
-        ]),
-        el("div", {}, [el("span", { class: "muted", text: "Key Hint:" }), el("p", {}, [el("code", { text: proj.reader_key_hint || "—" })])]),
-        el("div", {}, [el("span", { class: "muted", text: "Project ID:" }), el("p", {}, [el("code", { text: proj.id })])]),
-        el("div", {}, [el("span", { class: "muted", text: "Created At:" }), el("p", { text: formatDate(proj.created_at) })]),
-        el("div", {}, [el("span", { class: "muted", text: "Auto Delete Date:" }), el("p", { text: autoDeleteDateLabel(proj) })]),
-        el("div", {}, [el("span", { class: "muted", text: "Remaining Days:" }), el("p", { text: remainingDaysLabel(proj) })]),
-        el("div", {}, [
-          el("span", { class: "muted", text: "Active Installation:" }),
-          el("p", { text: proj.active_installation_id ? "Active" : "None" }),
-        ]),
-        el("div", {}, [
-          el("span", { class: "muted", text: "Active Device:" }),
-          el("p", { text: proj.active_device_id || "None connected" }),
-        ]),
-        el("div", { class: "detail-grid-item-full" }, [
-          el("span", { class: "muted", text: "Schedule Permanent Deletion:" }),
-          el("div", { class: "auto-delete-controls" }, [
-            dateInput,
-            el("button", {
-              class: "btn btn-primary btn-sm",
-              type: "button",
-              text: "Save schedule",
-              onclick: () => saveProjectAutoDelete(proj, dateInput.value),
-            }),
-            el("button", {
-              class: "btn btn-ghost btn-sm",
-              type: "button",
-              text: "Clear schedule",
-              onclick: () => saveProjectAutoDelete(proj, ""),
-            }),
-          ]),
-          el("small", {
-            class: "muted",
-            text: "Automatic deletion runs only when the server-side purge command runs and the date is due. Leave empty to disable.",
-          }),
-        ]),
-      ])
+      recordGrid([
+        recordItem("Project Name", project.project_name),
+        recordItem("Status", statusBadge(project.status)),
+        recordItem("Total Reader Keys", String(project.total_keys || 0)),
+        recordItem(
+          "Latest Key Status",
+          project.reader_key_status
+            ? statusBadge(project.reader_key_status)
+            : el("span", { class: "badge badge-muted", text: "No Key" })
+        ),
+        recordItem("Latest Key Hint", project.reader_key_hint || "—", { mono: true }),
+        recordItem("Latest Key Expires", project.reader_key_expires_at
+          ? formatDate(project.reader_key_expires_at)
+          : project.reader_key_id
+            ? "Never"
+            : "—"),
+        recordItem("Project ID", project.id, { mono: true }),
+        recordItem("Created At", formatDate(project.created_at)),
+        recordItem("Auto Delete Date", autoDeleteDateLabel(project)),
+        recordItem("Remaining Days", remainingDaysLabel(project)),
+        recordItem("Active Installation", project.active_installation_id ? "Active" : "None"),
+        recordItem("Active Device", project.active_device_id || "None connected"),
+      ]),
+      schedule
     );
-    openDialog($("#project-detail-modal"));
-  } catch (err) {
-    fail(err, "Failed to load project details.");
+
+    const projectKeys = el("section", {
+      class: "detail-section project-keys-section",
+      "aria-labelledby": "project-keys-title",
+    });
+    body.append(projectKeys);
+    await renderProjectKeyList(projectKeys, project);
+  } catch (error) {
+    closeDialog(modal, { immediate: true });
+    fail(error, "Failed to load project details.");
+  }
+}
+
+async function renderProjectKeyList(container, project) {
+  clearNode(container);
+  container.append(
+    el("h3", { id: "project-keys-title", text: "Reader Keys for this Project" }),
+    el("p", {
+      class: "muted",
+      text: "Every Reader Key owned by this project. Revocation applies to one key only and can never be undone.",
+    })
+  );
+
+  const tbody = el("tbody");
+  const table = el("table", { class: "data-table responsive-table" }, [
+    el("thead", {}, [
+      el("tr", {}, [
+        el("th", { text: "Key / Key ID" }),
+        el("th", { text: "Status" }),
+        el("th", { text: "Created" }),
+        el("th", { text: "Expiration" }),
+        el("th", { text: "First Used" }),
+        el("th", { text: "Revoked" }),
+        el("th", { class: "align-right", text: "Actions" }),
+      ]),
+    ]),
+    tbody,
+  ]);
+  container.append(el("div", { class: "table-wrap" }, [table]));
+  skeletonRows(tbody, 7, 3);
+
+  try {
+    const data = await api.readerKeys({
+      project_id: project.id,
+      page: 1,
+      page_size: 100,
+      sort: "created_at",
+      order: "desc",
+    });
+    const keys = data.items || [];
+    clearNode(tbody);
+
+    if (!keys.length) {
+      tbody.append(
+        emptyRow(
+          7,
+          "No Reader Keys yet",
+          "Generate a key to bind a reader to this project.",
+          "⌘"
+        )
+      );
+      return;
+    }
+
+    keys.forEach((key) => {
+      const revoked = key.revoked_at
+        ? el("div", { class: "key-revocation" }, [
+            el("span", { text: formatDate(key.revoked_at) }),
+            el("span", { class: "muted", text: key.revoked_reason || "Revoked by admin" }),
+          ])
+        : el("span", { class: "muted", text: "—" });
+
+      tbody.append(
+        el("tr", {}, [
+          tableCell(
+            "Key / Key ID",
+            el("div", { class: "key-identity" }, [
+              el("a", {
+                href: "#",
+                class: "table-link key-hint",
+                text: key.key_hint,
+                onclick: (event) => {
+                  event.preventDefault();
+                  viewKeyDetails(key.id);
+                },
+              }),
+              el("span", { class: "key-id", text: key.id }),
+            ]),
+            "table-primary"
+          ),
+          tableCell("Status", statusBadge(key.status)),
+          tableCell("Created", formatDate(key.created_at)),
+          tableCell("Expiration", expirationText(key)),
+          tableCell("First Used", formatDate(key.first_used_at || key.used_at)),
+          tableCell("Revoked", revoked),
+          tableCell(
+            "Actions",
+            key.status === "revoked"
+              ? el("span", { class: "badge badge-danger", text: "Revoked" })
+              : el("button", {
+                  class: "btn btn-danger btn-sm",
+                  type: "button",
+                  text: "Revoke",
+                  onclick: () =>
+                    revokeKeyPrompt(key, {
+                      onDone: () => renderProjectKeyList(container, project),
+                    }),
+                }),
+            "align-right"
+          ),
+        ])
+      );
+    });
+    animateTableRows(tbody);
+  } catch {
+    clearNode(tbody);
+    tbody.append(errorRow(7, "Project keys unavailable"));
   }
 }
 
@@ -439,10 +896,10 @@ async function saveProjectAutoDelete(project, dateText) {
       { type: "success" }
     );
     closeDialog($("#project-detail-modal"));
-    await loadProjects();
-    await viewProjectDetails(project.id);
-  } catch (err) {
-    fail(err, "Failed to update the auto-delete schedule.");
+    await loadProjects().catch(() => {});
+    await loadOverview().catch(() => {});
+  } catch (error) {
+    fail(error, "Failed to update the auto-delete schedule.");
   }
 }
 
@@ -463,10 +920,10 @@ async function toggleProjectStatus(project) {
   try {
     await api.setProjectStatus(project.id, newStatus);
     toast(`Project '${project.project_name}' set to ${newStatus}.`, { type: "success" });
-    await loadProjects();
-    await loadOverview();
-  } catch (err) {
-    fail(err, "Failed to update project status.");
+    await loadProjects().catch(() => {});
+    await loadOverview().catch(() => {});
+  } catch (error) {
+    fail(error, "Failed to update project status.");
   }
 }
 
@@ -474,7 +931,7 @@ async function deleteProjectPrompt(project) {
   const confirmed = await confirmAction({
     title: `Permanently delete '${project.project_name}'?`,
     message:
-      "This permanently removes the project, its Reader Key, reader installations, device tokens, and other project-owned records. This cannot be undone. Audit history is preserved.",
+      "This permanently removes the project, every Reader Key it owns, reader installations, device tokens, and other project-owned records. This cannot be undone. Audit history is preserved, and the project name becomes reusable.",
     confirmLabel: "Permanently Delete Project",
     tone: "danger",
     requireText: project.project_name,
@@ -485,65 +942,322 @@ async function deleteProjectPrompt(project) {
   try {
     await api.deleteProject(project.id, confirmed.text);
     toast(`Project '${project.project_name}' permanently deleted.`, { type: "success" });
-    await loadProjects();
-    await loadOverview();
-  } catch (err) {
-    fail(err, "Failed to permanently delete the project.");
+    await loadProjects().catch(() => {});
+    await loadOverview().catch(() => {});
+  } catch (error) {
+    fail(error, "Failed to permanently delete the project.");
   }
 }
 
-function openGeneratorForProject() {
-  showView("generator");
+/* ------------------------------------------------------------- generator */
+
+function expirationText(key) {
+  if (!key) return "—";
+  if (key.is_permanent || key.expiration_preset === "never") return "Never expires";
+  const label = EXPIRATION_LABELS[key.expiration_preset] || "Expires";
+  return key.expires_at ? `${label} · ${formatDate(key.expires_at)}` : label;
 }
 
-/* ----------------------------------------------------------- View: Generator */
+async function loadGeneratorProjects() {
+  const select = $("#gen-project-select");
+  if (!select) return;
+  const current = select.value;
+  try {
+    const data = await api.projects({ include_deleted: false });
+    const projects = (data.projects || []).filter((project) => !project.deleted_at);
+    clearNode(select);
+    select.append(el("option", { value: "", text: "Choose a project…" }));
+    projects.forEach((project) => {
+      select.append(
+        el("option", {
+          value: project.id,
+          text: `${project.project_name} · ${project.total_keys || 0} key${
+            Number(project.total_keys) === 1 ? "" : "s"
+          }`,
+        })
+      );
+    });
+    if (current && Array.from(select.options).some((option) => option.value === current)) {
+      select.value = current;
+    }
+    if (!projects.length && state.generatorMode === "existing") {
+      setGeneratorMode("new", { focus: false });
+    }
+  } catch {
+    // The generator reports its own submit error; keep any existing options.
+  }
+}
+
+function replayMotion(node, className, duration = 420) {
+  if (!node) return;
+  node.classList.remove(className);
+  void node.offsetWidth;
+  node.classList.add(className);
+  window.setTimeout(() => node.classList.remove(className), duration);
+}
+
+const EXPIRATION_PRESETS = [
+  ["1_day", "1 Day"],
+  ["7_days", "7 Days"],
+  ["30_days", "30 Days"],
+  ["90_days", "90 Days"],
+  ["1_year", "1 Year"],
+  ["never", "Never"],
+];
+
+function buildPresetChips() {
+  const rail = $("#gen-expiration-presets");
+  if (!rail || rail.dataset.ready === "true") return;
+  rail.dataset.ready = "true";
+
+  EXPIRATION_PRESETS.forEach(([value, label]) => {
+    const chip = el("button", {
+      class: "preset-chip",
+      type: "button",
+      text: label,
+      "data-preset": value,
+      "aria-pressed": "false",
+    });
+    chip.addEventListener("click", () => {
+      const select = $("#gen-expiration-select");
+      if (!select) return;
+      if (select.value === value) {
+        pulseElement(chip);
+        return;
+      }
+      select.value = value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    rail.append(chip);
+  });
+}
+
+function syncPresetChips() {
+  const select = $("#gen-expiration-select");
+  const value = select ? select.value : "";
+  $$("#gen-expiration-presets .preset-chip").forEach((chip) => {
+    const active = chip.dataset.preset === value;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", String(active));
+  });
+}
+
+function setGeneratorMode(mode, { focus = true } = {}) {
+  state.generatorMode = mode === "new" ? "new" : "existing";
+  const existingButton = $("#gen-mode-existing");
+  const newButton = $("#gen-mode-new");
+  const existingField = $("#gen-existing-field");
+  const newField = $("#gen-new-field");
+  const select = $("#gen-project-select");
+  const nameInput = $("#gen-project-name-input");
+
+  const existing = state.generatorMode === "existing";
+  if (existingButton) {
+    existingButton.classList.toggle("is-active", existing);
+    existingButton.setAttribute("aria-pressed", String(existing));
+  }
+  if (newButton) {
+    newButton.classList.toggle("is-active", !existing);
+    newButton.setAttribute("aria-pressed", String(!existing));
+  }
+  if (existingField) existingField.hidden = !existing;
+  if (newField) newField.hidden = existing;
+  if (select) select.required = existing;
+  if (nameInput) nameInput.required = !existing;
+
+  replayMotion(existing ? existingField : newField, "is-field-in", 320);
+  replayMotion(existing ? existingButton : newButton, "is-selected", 320);
+
+  if (focus) {
+    const target = existing ? select : nameInput;
+    if (target) target.focus({ preventScroll: true });
+  }
+}
+
+function updateExpirationPreview({ animate = false } = {}) {
+  const select = $("#gen-expiration-select");
+  const customField = $("#gen-custom-expiration-field");
+  const customInput = $("#gen-expiration-custom");
+  const preview = $("#gen-expiration-preview");
+  if (!select) return;
+
+  const preset = select.value;
+  const isCustom = preset === "custom";
+  const wasHidden = Boolean(customField && customField.hidden);
+  if (customField) customField.hidden = !isCustom;
+  if (preview) {
+    preview.classList.toggle("is-custom", isCustom);
+    preview.classList.toggle("is-never", preset === "never");
+  }
+  syncPresetChips();
+
+  if (animate) {
+    replayMotion(preview, "is-flash", 540);
+    replayMotion(
+      document.querySelector(`#gen-expiration-presets .preset-chip[data-preset="${preset}"]`),
+      "is-selected",
+      320
+    );
+    if (isCustom && wasHidden) replayMotion(customField, "is-field-in", 320);
+  }
+
+  let text = EXPIRATION_LABELS[preset] || "30 Days";
+  if (preset === "never") {
+    text = "Never expires — stored explicitly on the key.";
+  } else if (isCustom) {
+    const value = customInput ? customInput.value : "";
+    text = value
+      ? `Expires ${new Date(value).toLocaleString()}`
+      : "Choose a date and time below.";
+  }
+  if (preview) {
+    clearNode(preview);
+    preview.append(el("span", { class: "muted", text: "Expiration:" }));
+    preview.append(el("strong", { text }));
+    preview.append(
+      el("span", {
+        class: "muted",
+        text: "Server-enforced · UTC storage · status updates automatically",
+      })
+    );
+  }
+}
 
 async function loadGenerator() {
-  const input = $("#gen-project-name-input");
-  if (input) input.focus();
+  buildPresetChips();
+  await loadGeneratorProjects();
+  setGeneratorMode(state.generatorMode, { focus: false });
+  updateExpirationPreview();
+  const target =
+    state.generatorMode === "existing"
+      ? $("#gen-project-select")
+      : $("#gen-project-name-input");
+  if (target && window.matchMedia("(pointer: fine)").matches) {
+    target.focus({ preventScroll: true });
+  }
 }
 
 async function handleGenerateKeys(event) {
   event.preventDefault();
-  const nameInput = $("#gen-project-name-input");
-  const labelInput = $("#gen-label-input");
-  const errEl = $("#generator-error");
-  const submitBtn = $("#generate-keys-btn");
-  const projectName = nameInput ? nameInput.value.trim() : "";
-  const label = labelInput ? labelInput.value.trim() : "";
-  errEl.textContent = "";
 
-  if (!projectName) {
-    errEl.textContent = "Enter a project name.";
-    if (nameInput) nameInput.focus();
+  const nameInput = $("#gen-project-name-input");
+  const projectSelect = $("#gen-project-select");
+  const labelInput = $("#gen-label-input");
+  const expirationSelect = $("#gen-expiration-select");
+  const customInput = $("#gen-expiration-custom");
+  const errorNode = $("#generator-error");
+  const submitButton = $("#generate-keys-btn");
+  const cryptoVisual = $(".crypto-visual");
+  const projectName = nameInput ? nameInput.value.trim() : "";
+  const projectId = projectSelect ? projectSelect.value : "";
+  const label = labelInput ? labelInput.value.trim() : "";
+  const expiration = expirationSelect ? expirationSelect.value : "30_days";
+
+  if (submitButton && submitButton.disabled) return;
+
+  setToneMessage(errorNode, "", "error");
+  if (nameInput) nameInput.classList.remove("is-invalid");
+  if (projectSelect) projectSelect.classList.remove("is-invalid");
+  if (customInput) customInput.classList.remove("is-invalid");
+
+  if (state.generatorMode === "existing" && !projectId) {
+    setToneMessage(errorNode, "Select an existing project before generating a key.", "error");
+    if (projectSelect) {
+      projectSelect.classList.add("is-invalid");
+      projectSelect.focus();
+    }
+    announce("Select an existing project before generating a key.");
     return;
   }
 
-  setButtonBusy(submitBtn, true, "Generating securely…");
+  if (state.generatorMode === "new" && !projectName) {
+    setToneMessage(errorNode, "Enter a project name before generating a key.", "error");
+    if (nameInput) {
+      nameInput.classList.add("is-invalid");
+      nameInput.focus();
+    }
+    announce("Enter a project name before generating a key.");
+    return;
+  }
 
-  try {
-    const result = await api.generateProjectKey({
-      project_name: projectName,
-      label,
-    });
-    state.generatedKeys = [result.reader_key];
-    renderGeneratedKeysModal(result.reader_key);
-    toast(`Project '${result.project.project_name}' created with one Reader Key.`, {
-      type: "success",
-    });
-    if (nameInput) nameInput.value = "";
-    if (labelInput) labelInput.value = "";
-    await loadOverview();
-  } catch (err) {
-    if (err instanceof ApiProblem && err.status === 409) {
-      state.generatedKeys = [];
-      renderExistingProjectModal(err.details || {}, projectName);
+  let expiresAt = null;
+  if (expiration === "custom") {
+    const raw = customInput ? customInput.value : "";
+    const parsed = raw ? new Date(raw) : null;
+    if (!parsed || Number.isNaN(parsed.getTime())) {
+      setToneMessage(errorNode, "Choose a valid custom expiration date and time.", "error");
+      if (customInput) {
+        customInput.classList.add("is-invalid");
+        customInput.focus();
+      }
       return;
     }
-    fail(err, "Failed to generate the reader key.");
-    errEl.textContent = err && err.message ? err.message : "Failed to generate the reader key.";
+    if (parsed.getTime() <= Date.now()) {
+      setToneMessage(errorNode, "The custom expiration must be in the future.", "error");
+      if (customInput) {
+        customInput.classList.add("is-invalid");
+        customInput.focus();
+      }
+      return;
+    }
+    expiresAt = parsed.toISOString();
+  }
+
+  const generatorForm = $("#key-generator-form");
+  if (generatorForm) generatorForm.setAttribute("aria-busy", "true");
+
+  setButtonBusy(submitButton, true, "Generating securely…");
+  const generatorPanel = generatorForm ? generatorForm.closest(".generator-form-panel") : null;
+  if (submitButton) submitButton.classList.add("is-surging");
+  if (cryptoVisual) cryptoVisual.classList.add("is-processing");
+
+  try {
+    const body = { label, expiration, expires_at: expiresAt };
+    const result =
+      state.generatorMode === "existing"
+        ? await api.generateKeyForProject(projectId, body)
+        : await api.generateProjectKey({
+            project_name: projectName,
+            ...body,
+          });
+
+    state.generatedKeys = result.reader_key ? [result.reader_key] : [];
+    replayMotion(generatorPanel, "is-success", 520);
+    renderGeneratedKeysModal(result.reader_key);
+    toast(
+      result.project_created
+        ? `Project '${result.project.project_name}' created with its first Reader Key.`
+        : `New Reader Key issued for '${result.project.project_name}'.`,
+      { type: "success" }
+    );
+    if (nameInput) nameInput.value = "";
+    if (labelInput) labelInput.value = "";
+    await loadGeneratorProjects();
+    loadOverview().catch(() => {});
+  } catch (error) {
+    if (error instanceof ApiProblem && error.status === 409) {
+      state.generatedKeys = [];
+      renderExistingProjectModal(error.details || {}, projectName);
+      await loadGeneratorProjects();
+      return;
+    }
+
+    const message = error && error.message ? error.message : "Failed to generate the reader key.";
+    setToneMessage(errorNode, message, "error");
+    replayMotion(errorNode, "is-invalid", 460);
+    replayMotion(generatorPanel, "is-shaking", 520);
+    fail(error, "Failed to generate the reader key.");
+    const invalidTarget =
+      state.generatorMode === "new" ? nameInput : projectSelect;
+    if (invalidTarget) {
+      invalidTarget.classList.add("is-invalid");
+      invalidTarget.focus();
+    }
   } finally {
-    setButtonBusy(submitBtn, false);
+    if (generatorForm) generatorForm.removeAttribute("aria-busy");
+    if (submitButton) submitButton.classList.remove("is-surging");
+    setButtonBusy(submitButton, false);
+    if (cryptoVisual) cryptoVisual.classList.remove("is-processing");
   }
 }
 
@@ -554,56 +1268,120 @@ function setResultButtonsVisible(visible) {
   });
 }
 
+function buildKeySegments(plaintext) {
+  const code = el("code", { class: "key-plaintext" });
+  code.setAttribute("aria-label", plaintext);
+  const parts = String(plaintext).split("-");
+
+  parts.forEach((part, index) => {
+    if (index > 0) {
+      code.append(el("span", { class: "key-dash", "aria-hidden": "true", text: "-" }));
+    }
+    const segment = el("span", { class: "key-segment", text: part });
+    segment.style.setProperty("--seg-i", String(index));
+    code.append(segment);
+  });
+
+  return code;
+}
+
 function renderGeneratedKeysModal(key) {
   const container = $("#generated-list");
-  if (!container) return;
-  clearNode(container);
+  const modal = $("#result-modal");
+  if (!container || !modal) return;
 
+  if (!key || !key.plaintext_key) {
+    fail(new Error("The server response did not include a one-time reader key."));
+    return;
+  }
+
+  clearNode(container);
   setText("#result-title", "Reader Key Generated");
   setText(
     "#result-summary",
-    `One-time key for '${key.project_name}'. Plaintext is shown only now.`
+    `One-time key for '${key.project_name}'. Plaintext is shown only now and is cleared when this dialog closes.`
   );
+
   const warning = $("#result-warning");
-  if (warning) warning.hidden = false;
+  if (warning) {
+    warning.hidden = false;
+    warning.textContent =
+      "CRITICAL: Store this plaintext key right now. It is cryptographically hashed and cannot be retrieved again after closing this dialog.";
+  }
   setResultButtonsVisible(true);
 
-  container.append(
-    el("div", { class: "key-item" }, [
-      el("div", {}, [
-        el("code", { class: "key-plaintext", text: key.plaintext_key }),
-        el("div", {
-          class: "muted key-meta",
-          text: `${key.key_hint} · Permanent · Created ${formatDate(key.created_at)}`,
-        }),
-      ]),
-      el("button", {
-        class: "btn btn-ghost btn-sm",
-        type: "button",
-        text: "Copy",
-        onclick: async () => {
-          await copyText(key.plaintext_key);
-          toast("Plaintext key copied to clipboard.", { type: "info" });
-        },
-      }),
-    ])
+  const copyButton = el("button", {
+    class: "btn btn-primary btn-sm key-copy",
+    type: "button",
+    text: "Copy key",
+  });
+  copyButton.addEventListener("click", () =>
+    copyWithFeedback(key.plaintext_key, copyButton, "Plaintext reader key copied to clipboard.")
   );
-  openDialog($("#result-modal"));
+
+  const reveal = el("article", { class: "key-reveal" }, [
+    el("div", { class: "key-reveal-head" }, [
+      el("span", { class: "key-founder-mark", "aria-hidden": "true" }),
+      el("span", { class: "key-reveal-label", text: "Plaintext reader key / one-time reveal" }),
+      el("span", { class: "badge badge-info", text: "ONE-TIME" }),
+    ]),
+    buildKeySegments(key.plaintext_key),
+    el("p", { class: "key-reveal-meta key-reveal-expiration" }, [
+      el("span", { text: "Expiration setting: " }),
+      el("strong", {
+        text:
+          EXPIRATION_LABELS[key.expiration_preset] ||
+          (key.is_permanent ? "Never Expires" : "Custom Expiration"),
+      }),
+      el("span", { text: " · Resulting expiration: " }),
+      el("strong", {
+        text:
+          key.is_permanent || key.expiration_preset === "never"
+            ? "Never (explicit)"
+            : formatDate(key.expires_at),
+      }),
+    ]),
+    el("p", {
+      class: "key-reveal-meta",
+      text: `${key.key_hint} · Created ${formatDate(key.created_at)}${
+        key.label ? ` · ${key.label}` : ""
+      }`,
+    }),
+    el("p", { class: "key-reveal-meta", text: `Key ID ${key.id} · Project ${key.project_name}` }),
+    el("div", { class: "key-reveal-actions" }, [copyButton]),
+  ]);
+
+  openDialog(modal);
+
+  // Defer appending the key-reveal until the dialog is visible so the
+  // entrance and segment animations play while the modal is on-screen.
+  window.requestAnimationFrame(() => {
+    container.append(reveal);
+    // The reveal element is now visible inside the open modal.
+    // Replay the entrance so the cascade plays even if the dialog
+    // was already open (e.g. round-trip to the same view).
+    if (reveal) replayMotion(reveal, "is-key-reveal", 600);
+  });
+
+  announce(`Reader key generated for ${key.project_name}. Copy it now; it is shown only once.`);
 }
 
 function renderExistingProjectModal(details, requestedName) {
   const container = $("#generated-list");
-  if (!container) return;
-  clearNode(container);
+  const modal = $("#result-modal");
+  if (!container || !modal) return;
 
+  clearNode(container);
   const project = details.project || {};
   const key = details.reader_key || null;
+  const name = project.project_name || requestedName;
 
   setText("#result-title", "Project Already Exists");
   setText(
     "#result-summary",
-    `'${project.project_name || requestedName}' already exists. No new project or key was created.`
+    `'${name}' already exists with ${details.key_count || (key ? 1 : 0)} Reader Key(s). No new project was created. Choose it under Existing Project to issue another key.`
   );
+
   const warning = $("#result-warning");
   if (warning) {
     warning.hidden = false;
@@ -612,28 +1390,51 @@ function renderExistingProjectModal(details, requestedName) {
   }
   setResultButtonsVisible(false);
 
-  const rows = [
-    ["Project Name", project.project_name || requestedName],
-    ["Project Status", project.status || "—"],
-    ["Reader Key Status", key ? key.status : "No key exists"],
-    ["Key Hint", key ? key.key_hint : "—"],
-    ["Key Created", key ? formatDate(key.created_at) : "—"],
-    ["Key Used At", key ? formatDate(key.used_at) : "—"],
-  ];
   container.append(
-    el(
-      "dl",
-      { class: "detail-list" },
-      rows.flatMap(([term, value]) => [
-        el("dt", { text: term }),
-        el("dd", { text: value }),
-      ])
-    )
+    recordGrid([
+      recordItem("Project Name", name),
+      recordItem("Project Status", project.status || "—"),
+      recordItem("Reader Key Status", key ? key.status || "—" : "No key exists"),
+      recordItem("Key Hint", key ? key.key_hint || "—" : "—", { mono: true }),
+      recordItem("Key Created", key ? formatDate(key.created_at) : "—"),
+      recordItem("Key Expires", key ? expirationText(key) : "—"),
+      recordItem("Key Used At", key ? formatDate(key.used_at) : "—"),
+    ])
   );
-  openDialog($("#result-modal"));
+
+  openDialog(modal);
+  announce(`Project ${name} already exists. No new key was generated.`);
 }
 
-/* ------------------------------------------------------------- View: Keys */
+function purgeGeneratedKeys() {
+  const container = $("#generated-list");
+  if (container) clearNode(container);
+  state.generatedKeys = [];
+  setText("#result-summary", "");
+}
+
+/* -------------------------------------------------------------- key list */
+
+async function populateProjectsFilter(selector) {
+  const select = $(selector);
+  if (!select) return;
+
+  const current = select.value;
+  try {
+    const data = await api.projects({ include_deleted: false });
+    const projects = data.projects || [];
+    clearNode(select);
+    select.append(el("option", { value: "", text: "All Projects" }));
+    projects.forEach((project) => {
+      select.append(el("option", { value: project.id, text: project.project_name }));
+    });
+    if (current && Array.from(select.options).some((option) => option.value === current)) {
+      select.value = current;
+    }
+  } catch {
+    // Filters are secondary; the key table reports the authoritative error.
+  }
+}
 
 async function loadKeys() {
   const projectId = $("#keys-filter-project") ? $("#keys-filter-project").value : "";
@@ -642,22 +1443,33 @@ async function loadKeys() {
   const search = $("#keys-search-input") ? $("#keys-search-input").value.trim() : "";
   const pageSize = $("#keys-page-size") ? parseInt($("#keys-page-size").value, 10) : 25;
   const page = state.keysPagination.page || 1;
+  const tbody = $("#keys-body");
 
-  // Populate projects filter if empty
-  populateProjectsFilter("#keys-filter-project");
+  beginTableLoad(tbody, KEY_LABELS.length, KEY_LABELS, "#keys-summary");
+  await populateProjectsFilter("#keys-filter-project");
 
-  const data = await api.readerKeys({
-    project_id: projectId,
-    status,
-    expiry_filter: expiryFilter,
-    search,
-    page,
-    page_size: pageSize,
-  });
+  try {
+    const data = await api.readerKeys({
+      project_id: projectId,
+      status,
+      expiry_filter: expiryFilter,
+      search,
+      page,
+      page_size: pageSize,
+    });
 
-  state.keys = data.items || [];
-  state.keysPagination = data.pagination || { page, pageSize, total: 0, totalPages: 1 };
-  renderKeysTable(state.keys);
+    state.keys = data.items || [];
+    state.keysPagination = normalizePagination(data.pagination, page, pageSize);
+    renderKeysTable(state.keys);
+  } catch (error) {
+    if (tbody) {
+      clearNode(tbody);
+      tbody.append(errorRow(KEY_LABELS.length, "Reader keys unavailable"));
+    }
+    throw error;
+  } finally {
+    endTableLoad(tbody);
+  }
 }
 
 function renderKeysTable(keys) {
@@ -665,107 +1477,150 @@ function renderKeysTable(keys) {
   if (!tbody) return;
   clearNode(tbody);
 
-  const pag = state.keysPagination;
+  const pagination = state.keysPagination;
+  const prev = $("#keys-prev-page");
+  const next = $("#keys-next-page");
+
   if (!keys.length) {
-    tbody.append(emptyRow(9, "No reader keys found", "Adjust filters or generate keys for an active project."));
+    tbody.append(
+      emptyRow(
+        KEY_LABELS.length,
+        "No reader keys found",
+        "Adjust the filters or generate a key for a new project.",
+        "⌘"
+      )
+    );
     setText("#keys-summary", "0 keys");
     setText("#keys-page-info", "Page 1 of 1");
+    if (prev) prev.disabled = true;
+    if (next) next.disabled = true;
     return;
   }
 
+  const start = (pagination.page - 1) * pagination.page_size + 1;
+  const end = Math.min(pagination.page * pagination.page_size, pagination.total);
   setText(
     "#keys-summary",
-    `Showing ${(pag.page - 1) * pag.page_size + 1}–${Math.min(
-      pag.page * pag.page_size,
-      pag.total
-    )} of ${pag.total} key(s)`
+    `Showing ${start}–${end} of ${pagination.total} key(s)`
   );
-  setText("#keys-page-info", `Page ${pag.page} of ${pag.total_pages || 1}`);
+  setText("#keys-page-info", `Page ${pagination.page} of ${pagination.total_pages}`);
+  if (prev) prev.disabled = pagination.page <= 1;
+  if (next) next.disabled = pagination.page >= pagination.total_pages;
 
-  $("#keys-prev-page").disabled = pag.page <= 1;
-  $("#keys-next-page").disabled = pag.page >= (pag.total_pages || 1);
+  keys.forEach((key) => {
+    const revocable = key.status !== "revoked";
+    const hint = el("a", {
+      href: "#",
+      class: "table-link key-hint",
+      text: key.key_hint,
+      onclick: (event) => {
+        event.preventDefault();
+        viewKeyDetails(key.id);
+      },
+    });
 
-  keys.forEach((k) => {
-    const isGenerated = k.status === "generated";
-    const tr = el("tr", {}, [
-      el("td", {}, [
-        el("a", {
-          href: "#",
-          style: "font-weight: 600; color: var(--cyan);",
-          text: k.key_hint,
-          onclick: (e) => {
-            e.preventDefault();
-            viewKeyDetails(k.id);
-          },
-        }),
-      ]),
-      el("td", { text: k.project_name }),
-      el("td", { text: k.label || "—" }),
-      el("td", {}, [statusBadge(k.status)]),
-      el("td", {}, [
-        k.is_permanent
-          ? el("span", { class: "badge badge-info", text: "Yes" })
-          : el("span", { class: "muted", text: "No" }),
-      ]),
-      el("td", { text: k.is_permanent ? "Never" : formatDate(k.expires_at) }),
-      el("td", { text: formatDate(k.used_at) }),
-      el("td", { text: formatDate(k.created_at) }),
-      el("td", { class: "align-right" }, [
-        isGenerated
-          ? el("button", {
-              class: "btn btn-danger btn-sm",
-              type: "button",
-              text: "Revoke",
-              onclick: () => revokeKeyPrompt(k),
-            })
-          : null,
-      ]),
+    const identity = el("div", { class: "key-identity" }, [
+      hint,
+      el("span", { class: "key-id", text: key.id }),
+      key.label ? el("span", { class: "key-label", text: key.label }) : null,
     ]);
-    tbody.append(tr);
+
+    const revoked = key.revoked_at
+      ? el("div", { class: "key-revocation" }, [
+          el("span", { text: formatDate(key.revoked_at) }),
+          el("span", { class: "muted", text: key.revoked_reason || "Revoked by admin" }),
+        ])
+      : el("span", { class: "muted", text: "—" });
+
+    const row = el("tr", {}, [
+      tableCell("Key / Key ID", identity, "table-primary"),
+      tableCell("Project", key.project_name, "table-primary"),
+      tableCell("Status", statusBadge(key.status)),
+      tableCell("Created", formatDate(key.created_at)),
+      tableCell("Expires", expirationText(key)),
+      tableCell("First Used", formatDate(key.first_used_at || key.used_at)),
+      tableCell("Revoked", revoked),
+      tableCell(
+        "Actions",
+        el(
+          "div",
+          { class: "row-actions" },
+          revocable
+            ? [
+                el("button", {
+                  class: "btn btn-danger btn-sm",
+                  type: "button",
+                  text: "Revoke",
+                  onclick: () => revokeKeyPrompt(key),
+                }),
+              ]
+            : [el("span", { class: "badge badge-danger", text: "Revoked" })]
+        ),
+        "align-right"
+      ),
+    ]);
+
+    tbody.append(row);
   });
 }
 
 async function viewKeyDetails(keyId) {
+  const modal = $("#detail-modal");
+  const body = $("#detail-body");
+  if (!modal || !body) return;
+
+  clearNode(body);
+  body.append(loadingBlock("Loading authenticated key record…"));
+  openDialog(modal);
+
   try {
     const data = await api.readerKey(keyId);
     const key = data.key;
-    const body = $("#detail-body");
-    clearNode(body);
+    const items = [
+      recordItem("Key ID", key.id, { mono: true }),
+      recordItem("Key Hint (Masked)", key.key_hint, { mono: true }),
+      recordItem("Status", statusBadge(key.status)),
+      recordItem("Project", key.project_name),
+      recordItem("Label", key.label || "None"),
+      recordItem(
+        "Expiration Setting",
+        EXPIRATION_LABELS[key.expiration_preset] || (key.is_permanent ? "Never Expires" : "Custom")
+      ),
+      recordItem("Expires At", key.is_permanent ? "Never" : formatDate(key.expires_at)),
+      recordItem("Created At", formatDate(key.created_at)),
+      recordItem("First Used At", formatDate(key.first_used_at || key.used_at)),
+    ];
 
-    body.append(
-      el("div", { class: "detail-grid", style: "display: grid; grid-template-columns: 1fr 1fr; gap: 16px;" }, [
-        el("div", {}, [el("span", { class: "muted", text: "Key Hint (Masked):" }), el("h3", { text: key.key_hint })]),
-        el("div", {}, [el("span", { class: "muted", text: "Status:" }), el("div", {}, [statusBadge(key.status)])]),
-        el("div", {}, [el("span", { class: "muted", text: "Project:" }), el("p", { text: key.project_name })]),
-        el("div", {}, [el("span", { class: "muted", text: "Label:" }), el("p", { text: key.label || "None" })]),
-        el("div", {}, [el("span", { class: "muted", text: "Is Permanent:" }), el("p", { text: key.is_permanent ? "Yes" : "No" })]),
-        el("div", {}, [el("span", { class: "muted", text: "Expires At:" }), el("p", { text: key.is_permanent ? "Never" : formatDate(key.expires_at) })]),
-        el("div", {}, [el("span", { class: "muted", text: "Created At:" }), el("p", { text: formatDate(key.created_at) })]),
-        el("div", {}, [el("span", { class: "muted", text: "Used At:" }), el("p", { text: formatDate(key.used_at) })]),
-        key.status === "revoked"
-          ? el("div", { style: "grid-column: span 2;" }, [
-              el("span", { class: "muted", text: "Revoked Reason:" }),
-              el("p", { style: "color: var(--danger);", text: key.revoked_reason || "Revoked by admin" }),
-            ])
-          : null,
-        key.installation_id
-          ? el("div", { style: "grid-column: span 2;" }, [
-              el("span", { class: "muted", text: "Connected Reader Device:" }),
-              el("p", { text: `${key.device_id || "Unknown device"} (${key.installation_status})` }),
-            ])
-          : null,
-      ])
-    );
-    openDialog($("#detail-modal"));
-  } catch (err) {
-    fail(err, "Failed to load key details.");
+    if (key.status === "revoked") {
+      items.push(
+        recordItem("Revoked At", formatDate(key.revoked_at)),
+        recordItem("Revoked By", key.revoked_by_email || "Administrator"),
+        recordItem("Revoked Reason", key.revoked_reason || "Revoked by admin", { full: true })
+      );
+    }
+    if (key.installation_id) {
+      items.push(
+        recordItem(
+          "Connected Reader Device",
+          `${key.device_id || "Unknown device"} (${key.installation_status || "unknown"})`,
+          { full: true }
+        )
+      );
+    }
+
+    clearNode(body);
+    body.append(recordGrid(items));
+  } catch (error) {
+    closeDialog(modal, { immediate: true });
+    fail(error, "Failed to load key details.");
   }
 }
 
-async function revokeKeyPrompt(key) {
+async function revokeKeyPrompt(key, { onDone } = {}) {
   const confirmed = await confirmAction({
     title: `Revoke Reader Key '${key.key_hint}'?`,
-    message: "Revoking this key is permanent. It will no longer be redeemable by any Reader App.",
+    message:
+      "Revoking this key is permanent. If it has an active Reader installation, that installation and its device tokens are revoked immediately. A revoked key can never become active again.",
     confirmLabel: "Revoke Key",
     tone: "danger",
     requireReason: true,
@@ -779,45 +1634,56 @@ async function revokeKeyPrompt(key) {
     toast(`Reader key '${key.key_hint}' revoked.`, { type: "success" });
     await loadKeys();
     await loadOverview();
-  } catch (err) {
-    fail(err, "Failed to revoke reader key.");
+    if (typeof onDone === "function") await onDone();
+  } catch (error) {
+    fail(error, "Failed to revoke reader key.");
   }
 }
 
-async function populateProjectsFilter(selector) {
-  const sel = $(selector);
-  if (!sel || sel.children.length > 1) return;
-  const data = await api.projects({ include_deleted: false });
-  (data.projects || []).forEach((p) => {
-    sel.append(el("option", { value: p.id, text: p.project_name }));
-  });
-}
-
-/* ----------------------------------------------------- View: Installations */
+/* ---------------------------------------------------------- installations */
 
 async function loadInstallations() {
   const projectId = $("#installations-filter-project")
     ? $("#installations-filter-project").value
     : "";
-  const status = $("#installations-filter-status") ? $("#installations-filter-status").value : "";
+  const status = $("#installations-filter-status")
+    ? $("#installations-filter-status").value
+    : "";
   const search = $("#installations-search-input")
     ? $("#installations-search-input").value.trim()
     : "";
   const page = state.installationsPagination.page || 1;
+  const tbody = $("#installations-table-body");
 
-  populateProjectsFilter("#installations-filter-project");
+  beginTableLoad(
+    tbody,
+    INSTALLATION_LABELS.length,
+    INSTALLATION_LABELS,
+    "#installations-summary"
+  );
+  await populateProjectsFilter("#installations-filter-project");
 
-  const data = await api.installations({
-    project_id: projectId,
-    status,
-    search,
-    page,
-    page_size: 25,
-  });
+  try {
+    const data = await api.installations({
+      project_id: projectId,
+      status,
+      search,
+      page,
+      page_size: 25,
+    });
 
-  state.installations = data.items || [];
-  state.installationsPagination = data.pagination || { page, pageSize: 25, total: 0, totalPages: 1 };
-  renderInstallationsTable(state.installations);
+    state.installations = data.items || [];
+    state.installationsPagination = normalizePagination(data.pagination, page, 25);
+    renderInstallationsTable(state.installations);
+  } catch (error) {
+    if (tbody) {
+      clearNode(tbody);
+      tbody.append(errorRow(INSTALLATION_LABELS.length, "Installations unavailable"));
+    }
+    throw error;
+  } finally {
+    endTableLoad(tbody);
+  }
 }
 
 function renderInstallationsTable(installations) {
@@ -825,90 +1691,111 @@ function renderInstallationsTable(installations) {
   if (!tbody) return;
   clearNode(tbody);
 
-  const pag = state.installationsPagination;
+  const pagination = state.installationsPagination;
+  const prev = $("#installations-prev-page");
+  const next = $("#installations-next-page");
+
   if (!installations.length) {
-    tbody.append(emptyRow(8, "No installations found", "Reader installations appear here when a Reader App redeems a key."));
+    tbody.append(
+      emptyRow(
+        INSTALLATION_LABELS.length,
+        "No installations found",
+        "Reader installations appear here when a Reader App redeems a key.",
+        "✇"
+      )
+    );
     setText("#installations-summary", "0 installations");
     setText("#installations-page-info", "Page 1 of 1");
+    if (prev) prev.disabled = true;
+    if (next) next.disabled = true;
     return;
   }
 
+  const start = (pagination.page - 1) * pagination.page_size + 1;
+  const end = Math.min(pagination.page * pagination.page_size, pagination.total);
   setText(
     "#installations-summary",
-    `Showing ${(pag.page - 1) * pag.page_size + 1}–${Math.min(
-      pag.page * pag.page_size,
-      pag.total
-    )} of ${pag.total} installation(s)`
+    `Showing ${start}–${end} of ${pagination.total} installation(s)`
   );
-  setText("#installations-page-info", `Page ${pag.page} of ${pag.total_pages || 1}`);
+  setText("#installations-page-info", `Page ${pagination.page} of ${pagination.total_pages}`);
+  if (prev) prev.disabled = pagination.page <= 1;
+  if (next) next.disabled = pagination.page >= pagination.total_pages;
 
-  $("#installations-prev-page").disabled = pag.page <= 1;
-  $("#installations-next-page").disabled = pag.page >= (pag.total_pages || 1);
+  installations.forEach((installation) => {
+    const isActive = installation.status === "active";
+    const idLink = el("a", {
+      href: "#",
+      class: "table-link",
+      text: (installation.id || "").slice(0, 8),
+      onclick: (event) => {
+        event.preventDefault();
+        viewInstallationDetails(installation.id);
+      },
+    });
 
-  installations.forEach((inst) => {
-    const isActive = inst.status === "active";
-    const tr = el("tr", {}, [
-      el("td", {}, [
-        el("a", {
-          href: "#",
-          style: "color: var(--cyan); font-weight: 600;",
-          text: (inst.id || "").slice(0, 8),
-          onclick: (e) => {
-            e.preventDefault();
-            viewInstallationDetails(inst.id);
-          },
-        }),
-      ]),
-      el("td", { text: inst.project_name }),
-      el("td", {}, [el("code", { text: inst.key_hint })]),
-      el("td", { text: inst.device_id || "—" }),
-      el("td", {}, [statusBadge(inst.status)]),
-      el("td", { text: formatDate(inst.activated_at) }),
-      el("td", { text: formatRelative(inst.last_seen_at) }),
-      el("td", { class: "align-right" }, [
+    const row = el("tr", {}, [
+      tableCell("Installation ID", idLink, "table-primary"),
+      tableCell("Project", installation.project_name),
+      tableCell("Redeemed Key Hint", el("code", { class: "key-hint", text: installation.key_hint || "—" })),
+      tableCell("Device ID", installation.device_id || "—"),
+      tableCell("Status", statusBadge(installation.status)),
+      tableCell("Activated At", formatDate(installation.activated_at)),
+      tableCell("Last Heartbeat", formatRelative(installation.last_seen_at)),
+      tableCell(
+        "Actions",
         isActive
           ? el("button", {
               class: "btn btn-danger btn-sm",
               type: "button",
               text: "Revoke",
-              onclick: () => revokeInstallationPrompt(inst),
+              onclick: () => revokeInstallationPrompt(installation),
             })
           : null,
-      ]),
+        "align-right"
+      ),
     ]);
-    tbody.append(tr);
+
+    tbody.append(row);
   });
 }
 
 async function viewInstallationDetails(installationId) {
+  const modal = $("#installation-detail-modal");
+  const body = $("#installation-detail-body");
+  if (!modal || !body) return;
+
+  clearNode(body);
+  body.append(loadingBlock("Loading authenticated installation record…"));
+  openDialog(modal);
+
   try {
     const data = await api.installation(installationId);
-    const inst = data.installation;
-    const body = $("#installation-detail-body");
-    clearNode(body);
+    const installation = data.installation;
 
+    clearNode(body);
     body.append(
-      el("div", { class: "detail-grid", style: "display: grid; grid-template-columns: 1fr 1fr; gap: 16px;" }, [
-        el("div", {}, [el("span", { class: "muted", text: "Installation ID:" }), el("p", {}, [el("code", { text: inst.id })])]),
-        el("div", {}, [el("span", { class: "muted", text: "Status:" }), el("div", {}, [statusBadge(inst.status)])]),
-        el("div", {}, [el("span", { class: "muted", text: "Project:" }), el("h3", { text: inst.project_name })]),
-        el("div", {}, [el("span", { class: "muted", text: "Device Identifier:" }), el("p", { text: inst.device_id || "Unspecified" })]),
-        el("div", {}, [el("span", { class: "muted", text: "Activated At:" }), el("p", { text: formatDate(inst.activated_at) })]),
-        el("div", {}, [el("span", { class: "muted", text: "Last Heartbeat:" }), el("p", { text: formatDate(inst.last_seen_at) })]),
-        el("div", {}, [el("span", { class: "muted", text: "Client IP:" }), el("p", { text: inst.ip_address || "—" })]),
-        el("div", {}, [el("span", { class: "muted", text: "Redeemed Key:" }), el("p", {}, [el("code", { text: inst.key_hint })])]),
+      recordGrid([
+        recordItem("Installation ID", installation.id, { mono: true }),
+        recordItem("Status", statusBadge(installation.status)),
+        recordItem("Project", installation.project_name),
+        recordItem("Device Identifier", installation.device_id || "Unspecified"),
+        recordItem("Activated At", formatDate(installation.activated_at)),
+        recordItem("Last Heartbeat", formatDate(installation.last_seen_at)),
+        recordItem("Client IP", installation.ip_address || "—", { mono: true }),
+        recordItem("Redeemed Key", installation.key_hint || "—", { mono: true }),
       ])
     );
-    openDialog($("#installation-detail-modal"));
-  } catch (err) {
-    fail(err, "Failed to load installation details.");
+  } catch (error) {
+    closeDialog(modal, { immediate: true });
+    fail(error, "Failed to load installation details.");
   }
 }
 
-async function revokeInstallationPrompt(inst) {
+async function revokeInstallationPrompt(installation) {
   const confirmed = await confirmAction({
-    title: `Revoke Installation for '${inst.project_name}'?`,
-    message: "Revoking this installation will immediately invalidate its device token credentials. The Reader App will no longer be authorized to reconnect or record heartbeats. A new Reader Key must be generated to connect a new device.",
+    title: `Revoke Installation for '${installation.project_name}'?`,
+    message:
+      "Revoking this installation will immediately invalidate its device token credentials. The Reader App will no longer be authorized to reconnect or record heartbeats. A new Reader Key must be generated to connect a new device.",
     confirmLabel: "Revoke Installation & Invalidate Token",
     tone: "danger",
     requireReason: true,
@@ -918,38 +1805,41 @@ async function revokeInstallationPrompt(inst) {
   if (!confirmed.confirmed) return;
 
   try {
-    await api.revokeInstallation(inst.id, confirmed.reason);
+    await api.revokeInstallation(installation.id, confirmed.reason);
     toast("Reader installation revoked successfully.", { type: "success" });
     await loadInstallations();
     await loadOverview();
-  } catch (err) {
-    fail(err, "Failed to revoke installation.");
+  } catch (error) {
+    fail(error, "Failed to revoke installation.");
   }
 }
 
-/* ---------------------------------------------------------- View: Security */
+/* --------------------------------------------------------------- security */
 
 async function loadSecurity() {
   const data = await api.securityStatus();
   state.securityData = data;
 
   const auth = data.auth || {};
-  setText("#sec-admin-email", auth.admin_email || "admin@example.com");
+  const session = data.session || {};
+  const database = data.database || {};
+
+  setText("#sec-admin-email", auth.admin_email || "—");
   setText("#sec-admin-role", (auth.admin_role || "owner").toUpperCase());
   setText("#sec-failed-attempts", auth.failed_login_attempts ?? 0);
-
-  const session = data.session || {};
   setText("#sec-cookie-name", session.cookie_name || "nexora_session");
-  setText("#sec-session-ttl", `${Math.round((session.session_ttl_seconds || 28800) / 3600)} hours`);
+  setText(
+    "#sec-session-ttl",
+    `${Math.round((session.session_ttl_seconds || 28800) / 3600)} hours`
+  );
 
-  const db = data.database || {};
-  const isDbConnected = db.status === "connected";
-  const secDbStatus = $("#sec-db-status");
-  if (secDbStatus) {
-    secDbStatus.textContent = isDbConnected ? "CONNECTED" : "UNAVAILABLE";
-    secDbStatus.className = `badge ${isDbConnected ? "badge-success" : "badge-danger"}`;
-  }
-  setText("#sec-db-ssl", db.ssl_mode || "require");
+  const isDbConnected = database.status === "connected";
+  setBadge(
+    "#sec-db-status",
+    isDbConnected ? "CONNECTED" : "UNAVAILABLE",
+    isDbConnected ? "success" : "danger"
+  );
+  setText("#sec-db-ssl", database.ssl_mode || "require");
 
   renderSecurityEvents(data.recent_events || []);
 }
@@ -960,41 +1850,61 @@ function renderSecurityEvents(events) {
   clearNode(tbody);
 
   if (!events.length) {
-    tbody.append(emptyRow(5, "No recent security events", "Events appear as logins and revocations take place."));
+    tbody.append(
+      emptyRow(
+        SECURITY_LABELS.length,
+        "No recent security events",
+        "Events appear as logins, key revocations, and installation changes take place.",
+        "🛡"
+      )
+    );
     return;
   }
 
-  events.forEach((ev) => {
-    const tr = el("tr", {}, [
-      el("td", { text: formatDate(ev.created_at) }),
-      el("td", {}, [el("strong", { text: ev.action })]),
-      el("td", {}, [statusBadge(ev.outcome)]),
-      el("td", { text: ev.target_type || "—" }),
-      el("td", {}, [el("code", { text: ev.ip_address || "—" })]),
+  events.forEach((event) => {
+    const row = el("tr", {}, [
+      tableCell("Timestamp", formatDate(event.created_at)),
+      tableCell("Event Action", event.action, "table-primary"),
+      tableCell("Outcome", statusBadge(event.outcome)),
+      tableCell("Target Type", event.target_type || "—"),
+      tableCell("IP Address", el("code", { class: "key-hint", text: event.ip_address || "—" })),
     ]);
-    tbody.append(tr);
+    tbody.append(row);
   });
 }
 
-/* -------------------------------------------------------- View: Audit Logs */
+/* ------------------------------------------------------------- audit logs */
 
 async function loadAuditLogs() {
   const search = $("#audit-search-input") ? $("#audit-search-input").value.trim() : "";
   const action = $("#audit-filter-action") ? $("#audit-filter-action").value : "";
   const outcome = $("#audit-filter-outcome") ? $("#audit-filter-outcome").value : "";
   const page = state.auditPagination.page || 1;
+  const tbody = $("#audit-table-body");
 
-  const data = await api.auditLogs({
-    search,
-    action,
-    outcome,
-    page,
-    page_size: 25,
-  });
+  beginTableLoad(tbody, AUDIT_LABELS.length, AUDIT_LABELS, "#audit-summary");
 
-  state.auditLogs = data.items || [];
-  state.auditPagination = data.pagination || { page, pageSize: 25, total: 0, totalPages: 1 };
-  renderAuditTable(state.auditLogs);
+  try {
+    const data = await api.auditLogs({
+      search,
+      action,
+      outcome,
+      page,
+      page_size: 25,
+    });
+
+    state.auditLogs = data.items || [];
+    state.auditPagination = normalizePagination(data.pagination, page, 25);
+    renderAuditTable(state.auditLogs);
+  } catch (error) {
+    if (tbody) {
+      clearNode(tbody);
+      tbody.append(errorRow(AUDIT_LABELS.length, "Audit trail unavailable"));
+    }
+    throw error;
+  } finally {
+    endTableLoad(tbody);
+  }
 }
 
 function renderAuditTable(items) {
@@ -1002,74 +1912,88 @@ function renderAuditTable(items) {
   if (!tbody) return;
   clearNode(tbody);
 
-  const pag = state.auditPagination;
+  const pagination = state.auditPagination;
+  const prev = $("#audit-prev-page");
+  const next = $("#audit-next-page");
+
   if (!items.length) {
-    tbody.append(emptyRow(8, "No audit logs found", "Administrative events will be automatically recorded here."));
+    tbody.append(
+      emptyRow(
+        AUDIT_LABELS.length,
+        "No audit logs found",
+        "Administrative events are automatically recorded here.",
+        "≡"
+      )
+    );
     setText("#audit-summary", "0 records");
     setText("#audit-page-info", "Page 1 of 1");
+    if (prev) prev.disabled = true;
+    if (next) next.disabled = true;
     return;
   }
 
-  setText(
-    "#audit-summary",
-    `Showing ${(pag.page - 1) * pag.page_size + 1}–${Math.min(
-      pag.page * pag.page_size,
-      pag.total
-    )} of ${pag.total} event(s)`
-  );
-  setText("#audit-page-info", `Page ${pag.page} of ${pag.total_pages || 1}`);
-
-  $("#audit-prev-page").disabled = pag.page <= 1;
-  $("#audit-next-page").disabled = pag.page >= (pag.total_pages || 1);
+  const start = (pagination.page - 1) * pagination.page_size + 1;
+  const end = Math.min(pagination.page * pagination.page_size, pagination.total);
+  setText("#audit-summary", `Showing ${start}–${end} of ${pagination.total} event(s)`);
+  setText("#audit-page-info", `Page ${pagination.page} of ${pagination.total_pages}`);
+  if (prev) prev.disabled = pagination.page <= 1;
+  if (next) next.disabled = pagination.page >= pagination.total_pages;
 
   items.forEach((item) => {
-    const tr = el("tr", {}, [
-      el("td", { text: formatDate(item.created_at) }),
-      el("td", {}, [el("strong", { text: item.action })]),
-      el("td", { text: item.target_type || "—" }),
-      el("td", {}, [el("code", { text: (item.target_id || "—").slice(0, 8) })]),
-      el("td", {}, [statusBadge(item.outcome)]),
-      el("td", { text: item.actor_email || "System / Admin" }),
-      el("td", {}, [el("code", { text: item.ip_address || "—" })]),
-      el("td", { class: "align-right" }, [
+    const row = el("tr", {}, [
+      tableCell("Timestamp", formatDate(item.created_at)),
+      tableCell("Action", item.action, "table-primary"),
+      tableCell("Target Type", item.target_type || "—"),
+      tableCell(
+        "Target ID",
+        el("code", { class: "key-hint", text: item.target_id ? item.target_id.slice(0, 8) : "—" })
+      ),
+      tableCell("Outcome", statusBadge(item.outcome)),
+      tableCell("Actor", item.actor_email || "System / Admin"),
+      tableCell("IP Address", el("code", { class: "key-hint", text: item.ip_address || "—" })),
+      tableCell(
+        "Details",
         el("button", {
           class: "btn btn-ghost btn-sm",
           type: "button",
           text: "View",
           onclick: () => viewLogDetails(item),
         }),
-      ]),
+        "align-right"
+      ),
     ]);
-    tbody.append(tr);
+    tbody.append(row);
   });
 }
 
 function viewLogDetails(item) {
   const body = $("#log-detail-body");
-  clearNode(body);
+  if (!body) return;
 
+  clearNode(body);
   body.append(
-    el("div", {}, [
-      el("p", {}, [el("strong", { text: "Action: " }), el("span", { text: item.action })]),
-      el("p", {}, [el("strong", { text: "Timestamp: " }), el("span", { text: formatDate(item.created_at) })]),
-      el("p", {}, [el("strong", { text: "Outcome: " }), statusBadge(item.outcome)]),
-      el("p", {}, [el("strong", { text: "Target: " }), el("span", { text: `${item.target_type || ""} (${item.target_id || ""})` })]),
-      el("p", {}, [el("strong", { text: "Actor: " }), el("span", { text: item.actor_email || "System" })]),
-      el("p", {}, [el("strong", { text: "IP Address: " }), el("code", { text: item.ip_address || "—" })]),
-      el("p", {}, [el("strong", { text: "User Agent: " }), el("span", { class: "muted", text: item.user_agent || "—" })]),
-      el("hr", { style: "border: none; border-top: 1px solid var(--line); margin: 12px 0;" }),
-      el("strong", { text: "Event Details Payload:" }),
-      el("pre", {
-        class: "glass",
-        style: "padding: 12px; border-radius: var(--radius-sm); max-height: 200px; overflow-y: auto; font-size: 0.85rem;",
-        text: JSON.stringify(item.details || {}, null, 2),
-      }),
-    ])
+    recordGrid([
+      recordItem("Action", item.action),
+      recordItem("Timestamp", formatDate(item.created_at)),
+      recordItem("Outcome", statusBadge(item.outcome)),
+      recordItem("Target Type", item.target_type || "—"),
+      recordItem("Target ID", item.target_id || "—", { mono: true }),
+      recordItem("Actor", item.actor_email || "System"),
+      recordItem("IP Address", item.ip_address || "—", { mono: true }),
+      recordItem("User Agent", item.user_agent || "—", { full: true }),
+    ]),
+    el("hr", { class: "modal-divider" }),
+    el("h3", { class: "detail-section", text: "Event Details Payload" }),
+    el("pre", {
+      class: "code-block",
+      text: JSON.stringify(item.details || {}, null, 2),
+    })
   );
+
   openDialog($("#log-detail-modal"));
 }
 
-/* ---------------------------------------------------------- View: Settings */
+/* --------------------------------------------------------------- settings */
 
 async function loadSettings() {
   const data = await api.settings();
@@ -1084,17 +2008,17 @@ async function loadSettings() {
   const bulk = $("#setting-max-bulk");
   if (bulk) bulk.value = data.max_bulk_keys ?? 500;
 
-  const hb = $("#setting-heartbeat-interval");
-  if (hb) hb.value = data.heartbeat_interval_seconds ?? 300;
+  const heartbeat = $("#setting-heartbeat-interval");
+  if (heartbeat) heartbeat.value = data.heartbeat_interval_seconds ?? 300;
 
-  const rl = $("#setting-rate-limits");
-  if (rl) rl.value = data.api_rate_limits || "60/min";
+  const rateLimits = $("#setting-rate-limits");
+  if (rateLimits) rateLimits.value = data.api_rate_limits || "60/min";
 
-  const tz = $("#setting-timezone");
-  if (tz) tz.value = data.display_timezone || "UTC";
+  const timezone = $("#setting-timezone");
+  if (timezone) timezone.value = data.display_timezone || "UTC";
 
-  const maint = $("#setting-maintenance-mode");
-  if (maint) maint.checked = Boolean(data.maintenance_mode);
+  const maintenance = $("#setting-maintenance-mode");
+  if (maintenance) maintenance.checked = Boolean(data.maintenance_mode);
 
   const autoDelete = $("#setting-auto-delete-days");
   if (autoDelete) autoDelete.value = data.auto_delete_days ?? 0;
@@ -1102,313 +2026,816 @@ async function loadSettings() {
 
 async function handleSaveSettings(event) {
   event.preventDefault();
-  const btn = $("#save-settings-btn");
-  setButtonBusy(btn, true, "Saving…");
+
+  const form = $("#system-settings-form");
+  const message = $("#settings-message");
+  const button = $("#save-settings-btn");
+
+  if (form && !form.reportValidity()) {
+    setToneMessage(message, "Complete all required fields with valid values.", "error");
+    return;
+  }
+
+  const expiry = parseInt($("#setting-default-expiry")?.value, 10);
+  const bulk = parseInt($("#setting-max-bulk")?.value, 10);
+  const heartbeat = parseInt($("#setting-heartbeat-interval")?.value, 10);
+  const autoDeleteDays = parseInt($("#setting-auto-delete-days")?.value, 10);
+
+  if (![expiry, bulk, heartbeat, autoDeleteDays].every((value) => Number.isFinite(value))) {
+    setToneMessage(message, "Numeric settings must contain valid numbers.", "error");
+    return;
+  }
 
   const updates = {
     key_prefix: $("#setting-key-prefix").value.trim(),
-    default_key_expiry_days: parseInt($("#setting-default-expiry").value, 10),
-    max_bulk_keys: parseInt($("#setting-max-bulk").value, 10),
-    heartbeat_interval_seconds: parseInt($("#setting-heartbeat-interval").value, 10),
+    default_key_expiry_days: expiry,
+    max_bulk_keys: bulk,
+    heartbeat_interval_seconds: heartbeat,
     api_rate_limits: $("#setting-rate-limits").value.trim(),
     display_timezone: $("#setting-timezone").value,
     maintenance_mode: $("#setting-maintenance-mode").checked,
-    auto_delete_days: parseInt($("#setting-auto-delete-days").value, 10) || 0,
+    auto_delete_days: autoDeleteDays,
   };
+
+  setButtonBusy(button, true, "Saving…");
+  setToneMessage(message, "Saving configuration…", "info");
 
   try {
     await api.updateSettings(updates);
+    setToneMessage(message, "System settings updated successfully.", "success");
     toast("System settings updated successfully.", { type: "success" });
+    const panel = $(".form-panel-contained");
+    if (panel) {
+      panel.classList.remove("is-saved");
+      void panel.offsetWidth;
+      panel.classList.add("is-saved");
+      window.setTimeout(() => panel.classList.remove("is-saved"), 1200);
+    }
     await loadSettings();
-  } catch (err) {
-    fail(err, "Failed to save settings.");
+  } catch (error) {
+    setToneMessage(
+      message,
+      error && error.message ? error.message : "Failed to save settings.",
+      "error"
+    );
+    fail(error, "Failed to save settings.");
   } finally {
-    setButtonBusy(btn, false);
+    setButtonBusy(button, false);
   }
 }
 
-/* ------------------------------------------------- Event Listeners & Boot */
+/* --------------------------------------------------------------- shell UX */
 
-async function openDeleteAllDialog() {
-  const errEl = $("#delete-all-error");
-  if (errEl) errEl.textContent = "";
+const DELETE_ALL_PHRASE = "DELETE ALL PROJECTS";
+let lastNavFocus = null;
+let statsTimer = 0;
+let lastOverviewRefreshAt = 0;
+
+function openMobileNav() {
+  if (!mobileQuery.matches || mobileNavOpen) return;
+  const sidebar = $("#sidebar");
+  const backdrop = $("#sidebar-backdrop");
+  const toggle = $("#mobile-nav-toggle");
+  if (!sidebar) return;
+
+  lastNavFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  mobileNavOpen = true;
+  sidebar.classList.add("is-open");
+  if (backdrop) backdrop.hidden = false;
+  document.body.classList.add("nav-open");
+  if (toggle) toggle.setAttribute("aria-expanded", "true");
+  const close = $("#sidebar-close");
+  if (close) close.focus({ preventScroll: true });
+}
+
+function closeMobileNav({ restoreFocus = true } = {}) {
+  const sidebar = $("#sidebar");
+  const backdrop = $("#sidebar-backdrop");
+  const toggle = $("#mobile-nav-toggle");
+  const wasOpen = mobileNavOpen || Boolean(sidebar && sidebar.classList.contains("is-open"));
+
+  mobileNavOpen = false;
+  if (sidebar) sidebar.classList.remove("is-open");
+  if (backdrop) backdrop.hidden = true;
+  document.body.classList.remove("nav-open");
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
+
+  if (wasOpen && restoreFocus) {
+    const target = lastNavFocus && document.contains(lastNavFocus) ? lastNavFocus : toggle;
+    if (target) target.focus({ preventScroll: true });
+  }
+  lastNavFocus = null;
+}
+
+function resolveHashView() {
+  const raw = window.location.hash.replace(/^#\/?/, "").toLowerCase();
+  if (VIEW_META[raw]) return raw;
+  return "overview";
+}
+
+function reportLoad(task, fallback) {
+  task().catch((error) => fail(error, fallback));
+}
+
+/* ------------------------------------------------------------ destructive */
+
+function openDeleteAllDialog() {
+  const modal = $("#delete-all-modal");
+  if (!modal) return;
+
+  const count = Number(state.stats && state.stats.total_projects);
+  const resolved = Number.isFinite(count) ? count : state.projects.length;
+  setText(
+    "#delete-all-count",
+    resolved
+      ? `${resolved} project${resolved === 1 ? "" : "s"} will be permanently deleted in one transaction.`
+      : "No projects are currently registered. The request will complete without deleting records."
+  );
+
   const confirmInput = $("#delete-all-confirm-input");
   const passwordInput = $("#delete-all-password-input");
   if (confirmInput) confirmInput.value = "";
   if (passwordInput) passwordInput.value = "";
-
-  try {
-    const data = await api.projects({});
-    setText(
-      "#delete-all-count",
-      `${(data.projects || []).length} project(s) will be permanently deleted.`
-    );
-  } catch {
-    setText("#delete-all-count", "Project count unavailable.");
-  }
-
-  openDialog($("#delete-all-modal"));
-  if (confirmInput) setTimeout(() => confirmInput.focus(), 40);
+  setToneMessage($("#delete-all-error"), "", "error");
+  openDialog(modal);
+  window.setTimeout(() => {
+    if (confirmInput) confirmInput.focus({ preventScroll: true });
+  }, 60);
 }
 
-async function handleDeleteAll() {
+async function submitDeleteAll() {
   const confirmInput = $("#delete-all-confirm-input");
   const passwordInput = $("#delete-all-password-input");
-  const errEl = $("#delete-all-error");
-  const submitBtn = $("#delete-all-submit");
+  const errorNode = $("#delete-all-error");
+  const button = $("#delete-all-submit");
   const confirmation = confirmInput ? confirmInput.value.trim() : "";
   const password = passwordInput ? passwordInput.value : "";
-  if (errEl) errEl.textContent = "";
 
-  if (confirmation !== "DELETE ALL PROJECTS") {
-    if (errEl) errEl.textContent = "Type DELETE ALL PROJECTS exactly.";
+  if (confirmation !== DELETE_ALL_PHRASE) {
+    setToneMessage(
+      errorNode,
+      `Type ${DELETE_ALL_PHRASE} exactly to confirm permanent deletion.`,
+      "error"
+    );
+    if (confirmInput) confirmInput.focus();
     return;
   }
   if (!password) {
-    if (errEl) errEl.textContent = "Enter your administrator password.";
+    setToneMessage(errorNode, "Enter the administrator password to re-authenticate.", "error");
+    if (passwordInput) passwordInput.focus();
     return;
   }
 
-  setButtonBusy(submitBtn, true, "Deleting all projects…");
+  setToneMessage(errorNode, "", "error");
+  setButtonBusy(button, true, "Deleting…");
+
   try {
     const result = await api.deleteAllProjects(confirmation, password);
+    const deleted = Number(result && result.deleted_count) || 0;
+    toast(
+      deleted
+        ? `${deleted} project${deleted === 1 ? "" : "s"} permanently deleted.`
+        : "Delete All completed. No projects were present.",
+      { type: "success" }
+    );
+    announce("All projects permanently deleted.");
+    if (confirmInput) confirmInput.value = "";
+    if (passwordInput) passwordInput.value = "";
     closeDialog($("#delete-all-modal"));
-    toast(`Permanently deleted ${result.deleted_count} project(s).`, {
-      type: "success",
-    });
-    await loadProjects();
-    await loadOverview();
-  } catch (err) {
-    if (errEl) errEl.textContent = err.message || "Delete-all failed.";
+    state.projects = [];
+    await loadOverview().catch(() => {});
+    if (state.view === "projects") await loadProjects().catch(() => {});
+  } catch (error) {
+    if (passwordInput) passwordInput.value = "";
+    setToneMessage(
+      errorNode,
+      error && error.message ? error.message : "Delete All failed.",
+      "error"
+    );
+    fail(error, "Failed to delete all projects.");
   } finally {
-    setButtonBusy(submitBtn, false);
+    setButtonBusy(button, false);
   }
 }
 
-function setupEventListeners() {
-  // Navigation
-  $$(".nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => showView(btn.dataset.view));
+/* -------------------------------------------------------------- key flows */
+
+function exportGeneratedKeysCsv() {
+  const keys = state.generatedKeys.filter((key) => key && key.plaintext_key);
+  if (!keys.length) {
+    toast("No plaintext key is available in this session.", { type: "error" });
+    return;
+  }
+
+  const header = [
+    "key_id",
+    "project_name",
+    "reader_key",
+    "key_hint",
+    "created_at",
+    "expiration_preset",
+    "expires_at",
+    "is_permanent",
+    "label",
+  ];
+  const lines = [header.map(csvCell).join(",")];
+  keys.forEach((key) => {
+    lines.push(
+      [
+        key.id,
+        key.project_name,
+        key.plaintext_key,
+        key.key_hint,
+        key.created_at,
+        key.expiration_preset || (key.is_permanent ? "never" : "custom"),
+        key.expires_at || "",
+        key.is_permanent ? "yes" : "no",
+        key.label || "",
+      ]
+        .map(csvCell)
+        .join(",")
+    );
   });
 
-  // Deep linking via hash
-  window.addEventListener("hashchange", () => {
-    const hash = window.location.hash.replace("#", "");
-    if (hash && VIEW_META[hash] && hash !== state.view) {
-      showView(hash, { updateHash: false });
-    }
+  downloadText(
+    `nexora-reader-key-${new Date().toISOString().slice(0, 10)}.csv`,
+    `${lines.join("\r\n")}\r\n`,
+    "text/csv;charset=utf-8"
+  );
+  toast("CSV downloaded. It contains the one-time plaintext key — store it securely.", {
+    type: "warning",
+    timeout: 8000,
   });
-
-  // Buttons with data-go
-  $$( "[data-go]" ).forEach((btn) => {
-    btn.addEventListener("click", () => showView(btn.dataset.go));
-  });
-
-  // Refresh button
-  const refreshBtn = $("#refresh-btn");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", () => loadViewData(state.view));
-  }
-
-  // Logout
-  const logoutBtn = $("#logout-btn");
-  if (logoutBtn) {
-    logoutBtn.addEventListener("click", async () => {
-      try {
-        await api.logout();
-      } finally {
-        window.location.replace("/login");
-      }
-    });
-  }
-
-  // Modals close button handler
-  $$("[data-close]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const modal = $(`#${btn.dataset.close}`);
-      if (modal) closeDialog(modal);
-    });
-  });
-
-  // Projects View: destructive bulk action
-  const deleteAllBtn = $("#delete-all-projects-btn");
-  if (deleteAllBtn) deleteAllBtn.addEventListener("click", openDeleteAllDialog);
-  const deleteAllSubmit = $("#delete-all-submit");
-  if (deleteAllSubmit) deleteAllSubmit.addEventListener("click", handleDeleteAll);
-
-  // Project search & filter
-  const projSearch = $("#project-search-input");
-  if (projSearch) {
-    projSearch.addEventListener("input", () => loadProjects());
-  }
-  const projRefBtn = $("#projects-refresh-btn");
-  if (projRefBtn) {
-    projRefBtn.addEventListener("click", () => loadProjects());
-  }
-
-  // Key Generator Form
-  const keyGenForm = $("#key-generator-form");
-  if (keyGenForm) {
-    keyGenForm.addEventListener("submit", handleGenerateKeys);
-  }
-
-  // Result Modal Copy & Download
-  const copyAllBtn = $("#copy-all");
-  if (copyAllBtn) {
-    copyAllBtn.addEventListener("click", async () => {
-      const texts = state.generatedKeys.map((k) => k.plaintext_key).join("\n");
-      await copyText(texts);
-      toast("All plaintext keys copied to clipboard.", { type: "info" });
-    });
-  }
-
-  const downloadCsvBtn = $("#download-keys-csv");
-  if (downloadCsvBtn) {
-    downloadCsvBtn.addEventListener("click", () => {
-      const lines = [
-        "Key ID,Project Name,Plaintext Key,Key Hint,Is Permanent,Expires At",
-        ...state.generatedKeys.map(
-          (k) =>
-            `"${k.id}","${k.project_name || ""}","${k.plaintext_key}","${k.key_hint}","${
-              k.is_permanent
-            }","${k.expires_at || ""}"`
-        ),
-      ];
-      downloadText("nexora-generated-keys.csv", lines.join("\n"));
-    });
-  }
-
-  // Keys View Filters & Pagination
-  const keysSearch = $("#keys-search-input");
-  if (keysSearch) keysSearch.addEventListener("input", () => loadKeys());
-  const keysProj = $("#keys-filter-project");
-  if (keysProj) keysProj.addEventListener("change", () => loadKeys());
-  const keysStatus = $("#keys-filter-status");
-  if (keysStatus) keysStatus.addEventListener("change", () => loadKeys());
-  const keysExpiry = $("#keys-filter-expiry");
-  if (keysExpiry) keysExpiry.addEventListener("change", () => loadKeys());
-  const keysPageSize = $("#keys-page-size");
-  if (keysPageSize) keysPageSize.addEventListener("change", () => loadKeys());
-
-  const keysPrev = $("#keys-prev-page");
-  if (keysPrev) {
-    keysPrev.addEventListener("click", () => {
-      if (state.keysPagination.page > 1) {
-        state.keysPagination.page -= 1;
-        loadKeys();
-      }
-    });
-  }
-  const keysNext = $("#keys-next-page");
-  if (keysNext) {
-    keysNext.addEventListener("click", () => {
-      if (state.keysPagination.page < state.keysPagination.totalPages) {
-        state.keysPagination.page += 1;
-        loadKeys();
-      }
-    });
-  }
-
-  const exportKeysBtn = $("#export-keys-btn");
-  if (exportKeysBtn) {
-    exportKeysBtn.addEventListener("click", () => {
-      const projectId = $("#keys-filter-project") ? $("#keys-filter-project").value : "";
-      const status = $("#keys-filter-status") ? $("#keys-filter-status").value : "";
-      const search = $("#keys-search-input") ? $("#keys-search-input").value.trim() : "";
-      const expiry = $("#keys-filter-expiry") ? $("#keys-filter-expiry").value : "";
-      const url = api.exportReaderKeysUrl({
-        project_id: projectId,
-        status,
-        search,
-        expiry_filter: expiry,
-      });
-      window.location.href = url;
-    });
-  }
-
-  // Installations View Filters & Pagination
-  const instSearch = $("#installations-search-input");
-  if (instSearch) instSearch.addEventListener("input", () => loadInstallations());
-  const instProj = $("#installations-filter-project");
-  if (instProj) instProj.addEventListener("change", () => loadInstallations());
-  const instStatus = $("#installations-filter-status");
-  if (instStatus) instStatus.addEventListener("change", () => loadInstallations());
-
-  const instPrev = $("#installations-prev-page");
-  if (instPrev) {
-    instPrev.addEventListener("click", () => {
-      if (state.installationsPagination.page > 1) {
-        state.installationsPagination.page -= 1;
-        loadInstallations();
-      }
-    });
-  }
-  const instNext = $("#installations-next-page");
-  if (instNext) {
-    instNext.addEventListener("click", () => {
-      if (state.installationsPagination.page < state.installationsPagination.totalPages) {
-        state.installationsPagination.page += 1;
-        loadInstallations();
-      }
-    });
-  }
-
-  // Audit Logs View Filters & Pagination
-  const auditSearch = $("#audit-search-input");
-  if (auditSearch) auditSearch.addEventListener("input", () => loadAuditLogs());
-  const auditAction = $("#audit-filter-action");
-  if (auditAction) auditAction.addEventListener("change", () => loadAuditLogs());
-  const auditOutcome = $("#audit-filter-outcome");
-  if (auditOutcome) auditOutcome.addEventListener("change", () => loadAuditLogs());
-  const auditRefresh = $("#audit-refresh-btn");
-  if (auditRefresh) auditRefresh.addEventListener("click", () => loadAuditLogs());
-
-  const auditPrev = $("#audit-prev-page");
-  if (auditPrev) {
-    auditPrev.addEventListener("click", () => {
-      if (state.auditPagination.page > 1) {
-        state.auditPagination.page -= 1;
-        loadAuditLogs();
-      }
-    });
-  }
-  const auditNext = $("#audit-next-page");
-  if (auditNext) {
-    auditNext.addEventListener("click", () => {
-      if (state.auditPagination.page < state.auditPagination.totalPages) {
-        state.auditPagination.page += 1;
-        loadAuditLogs();
-      }
-    });
-  }
-
-  // Settings View Form
-  const settingsForm = $("#system-settings-form");
-  if (settingsForm) {
-    settingsForm.addEventListener("submit", handleSaveSettings);
-  }
 }
 
-async function boot() {
-  setupEventListeners();
+async function exportReaderKeysCsv() {
+  const button = $("#export-keys-btn");
+  setButtonBusy(button, true, "Exporting…");
 
   try {
-    const sessionData = await api.session();
-    state.user = sessionData.user;
-    if (sessionData.csrf_token) {
-      setCsrfToken(sessionData.csrf_token);
-    }
-    applyIdentity();
+    const params = {
+      project_id: $("#keys-filter-project") ? $("#keys-filter-project").value : "",
+      status: $("#keys-filter-status") ? $("#keys-filter-status").value : "",
+      expiry_filter: $("#keys-filter-expiry") ? $("#keys-filter-expiry").value : "",
+      search: $("#keys-search-input") ? $("#keys-search-input").value.trim() : "",
+    };
+    const response = await fetch(api.exportReaderKeysUrl(params), {
+      credentials: "same-origin",
+      headers: { Accept: "text/csv" },
+    });
 
-    // Determine initial view from hash
-    const initialView = window.location.hash.replace("#", "") || "overview";
-    showView(initialView, { updateHash: false });
-  } catch (error) {
-    if (error instanceof ApiProblem && error.status === 401) {
+    if (response.status === 401) {
       window.location.replace("/login");
       return;
     }
-    fail(error, "Failed to initialize administrator session.");
+    if (!response.ok) {
+      throw new Error(`The server rejected the export request (${response.status}).`);
+    }
+
+    const text = await response.text();
+    downloadText(
+      `nexora-reader-keys-${new Date().toISOString().slice(0, 10)}.csv`,
+      text,
+      "text/csv;charset=utf-8"
+    );
+    toast("Reader key CSV exported.", { type: "success" });
+    announce("Reader key CSV exported.");
+  } catch (error) {
+    fail(error, "Failed to export reader keys.");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+/* ---------------------------------------------------------------- actions */
+
+async function refreshActiveView() {
+  const button = $("#refresh-btn");
+  setButtonBusy(button, true, "Refreshing…");
+  const ok = await loadViewData(state.view);
+  setButtonBusy(button, false);
+  if (ok) {
+    toast("Console data refreshed.", { type: "success" });
+    announce("Console data refreshed.");
+  }
+}
+
+async function handleLogout() {
+  if (state.loggingOut) return;
+  state.loggingOut = true;
+
+  const button = $("#logout-btn");
+  setButtonBusy(button, true, "Signing out…");
+  closeMobileNav({ restoreFocus: false });
+  window.clearInterval(statsTimer);
+
+  // Let the in-flight session bootstrap finish so its CSRF rotation cannot
+  // race the revocation request.
+  if (state.sessionCheck) {
+    try {
+      await state.sessionCheck;
+    } catch {
+      // The bootstrap path already reports its own failure.
+    }
+  }
+
+  // Revoke the server session FIRST. Navigating before the revocation could
+  // leave the cookie valid, and the login page would then restore it.
+  try {
+    await api.logoutSafe();
+  } catch (error) {
+    state.loggingOut = false;
+    setButtonBusy(button, false);
+    startStatsPolling();
+    hideLeaveScreen();
+    fail(error, "Sign-out failed. Your session is still active.");
+    return;
+  }
+
+  setCsrfToken("");
+  state.user = null;
+
+  try {
+    await playLeaveScreen({
+      kicker: "OMEGA NEX-ORA / SECURE HANDSHAKE",
+      title: "Session terminated",
+      status: "REVOKING SERVER SESSION / CLEARING LOCAL STATE",
+      duration: 260,
+    });
+  } catch {
+    // The visual transition is best-effort; navigation is not.
+  }
+
+  window.location.replace("/login");
+}
+
+function bindRefreshButton(selector, loader, fallback) {
+  const button = $(selector);
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    setButtonBusy(button, true, "Refreshing…");
+    try {
+      await loader();
+      toast("Data refreshed.", { type: "success" });
+    } catch (error) {
+      fail(error, fallback);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  });
+}
+
+function bindPagination(prevSelector, nextSelector, stateKey, loader, fallback) {
+  const prev = $(prevSelector);
+  const next = $(nextSelector);
+
+  if (prev) {
+    prev.addEventListener("click", () => {
+      const pagination = state[stateKey];
+      if (!pagination || pagination.page <= 1) return;
+      const previous = pagination.page;
+      pagination.page -= 1;
+      loader().catch((error) => {
+        state[stateKey].page = previous;
+        fail(error, fallback);
+      });
+    });
+  }
+
+  if (next) {
+    next.addEventListener("click", () => {
+      const pagination = state[stateKey];
+      if (!pagination || pagination.page >= pagination.total_pages) return;
+      const previous = pagination.page;
+      pagination.page += 1;
+      loader().catch((error) => {
+        state[stateKey].page = previous;
+        fail(error, fallback);
+      });
+    });
+  }
+}
+
+/* ----------------------------------------------------------- event wiring */
+
+function setupEventListeners() {
+  const mobileToggle = $("#mobile-nav-toggle");
+  if (mobileToggle) {
+    mobileToggle.addEventListener("click", () => {
+      if (mobileNavOpen) closeMobileNav();
+      else openMobileNav();
+    });
+  }
+
+  const sidebarClose = $("#sidebar-close");
+  if (sidebarClose) sidebarClose.addEventListener("click", () => closeMobileNav());
+
+  const backdrop = $("#sidebar-backdrop");
+  if (backdrop) backdrop.addEventListener("click", () => closeMobileNav());
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && mobileNavOpen) {
+      event.preventDefault();
+      closeMobileNav();
+      return;
+    }
+
+    if (event.key !== "Tab" || !mobileNavOpen) return;
+
+    const sidebar = $("#sidebar");
+    if (!sidebar) return;
+    const focusable = Array.from(
+      sidebar.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((node) => node instanceof HTMLElement && node.offsetParent !== null);
+    if (!focusable.length) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+
+    if (event.shiftKey && (active === first || !sidebar.contains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !sidebar.contains(active))) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+
+  if (typeof mobileQuery.addEventListener === "function") {
+    mobileQuery.addEventListener("change", (event) => {
+      if (!event.matches) closeMobileNav({ restoreFocus: false });
+    });
+  }
+
+  $$(".nav-item[data-view]").forEach((button) => {
+    button.addEventListener("click", () => showView(button.dataset.view));
+  });
+
+  $$("[data-go]").forEach((button) => {
+    button.addEventListener("click", () => showView(button.dataset.go));
+  });
+
+  const quickAction = $("#topbar-quick-action");
+  if (quickAction) {
+    quickAction.addEventListener("click", () => {
+      if (state.view === "generator") {
+        const target =
+          state.generatorMode === "existing"
+            ? $("#gen-project-select")
+            : $("#gen-project-name-input");
+        if (target) target.focus({ preventScroll: true });
+      } else {
+        showView("generator");
+      }
+    });
+  }
+
+  const refresh = $("#refresh-btn");
+  if (refresh) refresh.addEventListener("click", refreshActiveView);
+
+  const logout = $("#logout-btn");
+  if (logout) {
+    // The static shell is visible before this module runs; keep the control
+    // disabled until its real handler exists so an early click cannot no-op.
+    logout.disabled = false;
+    logout.addEventListener("click", handleLogout);
+  }
+
+  const projectSearch = $("#project-search-input");
+  if (projectSearch) {
+    projectSearch.addEventListener(
+      "input",
+      debounce(() => reportLoad(loadProjects, "Failed to search projects."), 300)
+    );
+  }
+
+  bindRefreshButton("#projects-refresh-btn", loadProjects, "Failed to refresh projects.");
+
+  const deleteAllButton = $("#delete-all-projects-btn");
+  if (deleteAllButton) deleteAllButton.addEventListener("click", openDeleteAllDialog);
+
+  const deleteAllSubmit = $("#delete-all-submit");
+  if (deleteAllSubmit) deleteAllSubmit.addEventListener("click", submitDeleteAll);
+
+  const generatorForm = $("#key-generator-form");
+  if (generatorForm) generatorForm.addEventListener("submit", handleGenerateKeys);
+
+  const modeExisting = $("#gen-mode-existing");
+  if (modeExisting) modeExisting.addEventListener("click", () => setGeneratorMode("existing"));
+  const modeNew = $("#gen-mode-new");
+  if (modeNew) modeNew.addEventListener("click", () => setGeneratorMode("new"));
+
+  buildPresetChips();
+  const expirationSelect = $("#gen-expiration-select");
+  if (expirationSelect) {
+    expirationSelect.addEventListener("change", () =>
+      updateExpirationPreview({ animate: true })
+    );
+  }
+  const customExpiration = $("#gen-expiration-custom");
+  if (customExpiration) {
+    customExpiration.addEventListener("input", () =>
+      updateExpirationPreview({ animate: true })
+    );
+  }
+
+  const keysSearch = $("#keys-search-input");
+  if (keysSearch) {
+    keysSearch.addEventListener(
+      "input",
+      debounce(() => {
+        state.keysPagination.page = 1;
+        reportLoad(loadKeys, "Failed to search reader keys.");
+      }, 320)
+    );
+  }
+
+  ["#keys-filter-project", "#keys-filter-status", "#keys-filter-expiry", "#keys-page-size"].forEach(
+    (selector) => {
+      const control = $(selector);
+      if (!control) return;
+      control.addEventListener("change", () => {
+        state.keysPagination.page = 1;
+        reportLoad(loadKeys, "Failed to filter reader keys.");
+      });
+    }
+  );
+
+  bindPagination(
+    "#keys-prev-page",
+    "#keys-next-page",
+    state.keysPagination,
+    loadKeys,
+    "Failed to load the previous key page."
+  );
+
+  const exportButton = $("#export-keys-btn");
+  if (exportButton) exportButton.addEventListener("click", exportReaderKeysCsv);
+
+  const installationsSearch = $("#installations-search-input");
+  if (installationsSearch) {
+    installationsSearch.addEventListener(
+      "input",
+      debounce(() => {
+        state.installationsPagination.page = 1;
+        reportLoad(loadInstallations, "Failed to search installations.");
+      }, 320)
+    );
+  }
+
+  ["#installations-filter-project", "#installations-filter-status"].forEach((selector) => {
+    const control = $(selector);
+    if (!control) return;
+    control.addEventListener("change", () => {
+      state.installationsPagination.page = 1;
+      reportLoad(loadInstallations, "Failed to filter installations.");
+    });
+  });
+
+  bindPagination(
+    "#installations-prev-page",
+    "#installations-next-page",
+    state.installationsPagination,
+    loadInstallations,
+    "Failed to load the previous installation page."
+  );
+
+  const auditSearch = $("#audit-search-input");
+  if (auditSearch) {
+    auditSearch.addEventListener(
+      "input",
+      debounce(() => {
+        state.auditPagination.page = 1;
+        reportLoad(loadAuditLogs, "Failed to search audit logs.");
+      }, 320)
+    );
+  }
+
+  ["#audit-filter-action", "#audit-filter-outcome"].forEach((selector) => {
+    const control = $(selector);
+    if (!control) return;
+    control.addEventListener("change", () => {
+      state.auditPagination.page = 1;
+      reportLoad(loadAuditLogs, "Failed to filter audit logs.");
+    });
+  });
+
+  bindRefreshButton("#audit-refresh-btn", loadAuditLogs, "Failed to refresh audit logs.");
+
+  bindPagination(
+    "#audit-prev-page",
+    "#audit-next-page",
+    state.auditPagination,
+    loadAuditLogs,
+    "Failed to load the previous audit page."
+  );
+
+  const settingsForm = $("#system-settings-form");
+  if (settingsForm) settingsForm.addEventListener("submit", handleSaveSettings);
+
+  const copyAll = $("#copy-all");
+  if (copyAll) {
+    copyAll.addEventListener("click", () => {
+      const values = state.generatedKeys
+        .filter((key) => key && key.plaintext_key)
+        .map((key) => key.plaintext_key);
+      if (!values.length) {
+        toast("No plaintext key is available in this session.", { type: "error" });
+        return;
+      }
+      copyWithFeedback(values.join("\n"), copyAll, "Plaintext reader key copied to clipboard.");
+    });
+  }
+
+  const downloadCsv = $("#download-keys-csv");
+  if (downloadCsv) downloadCsv.addEventListener("click", exportGeneratedKeysCsv);
+
+  $$("[data-close]").forEach((button) => {
+    button.addEventListener("click", () => closeDialog(document.getElementById(button.dataset.close)));
+  });
+
+  $$("dialog.modal").forEach((dialog) => {
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeDialog(dialog);
+    });
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) closeDialog(dialog);
+    });
+  });
+
+  const resultModal = $("#result-modal");
+  if (resultModal) resultModal.addEventListener("close", purgeGeneratedKeys);
+
+  const deleteAllModal = $("#delete-all-modal");
+  if (deleteAllModal) {
+    deleteAllModal.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey) return;
+      if (!(event.target instanceof HTMLInputElement)) return;
+      event.preventDefault();
+      submitDeleteAll();
+    });
+    deleteAllModal.addEventListener("close", () => {
+      const confirmInput = $("#delete-all-confirm-input");
+      const passwordInput = $("#delete-all-password-input");
+      if (confirmInput) confirmInput.value = "";
+      if (passwordInput) passwordInput.value = "";
+      setToneMessage($("#delete-all-error"), "", "error");
+      setButtonBusy($("#delete-all-submit"), false);
+    });
+  }
+
+  window.addEventListener("hashchange", () => {
+    const next = resolveHashView();
+    if (next !== state.view) showView(next, { updateHash: false });
+  });
+
+  window.addEventListener("pagehide", purgeGeneratedKeys);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (state.view !== "overview" || !state.user) return;
+    if (viewLoads.has("overview")) return;
+    // Returning to the tab must not trigger a request storm.
+    if (Date.now() - lastOverviewRefreshAt < 30000) return;
+    loadViewData("overview").catch(() => {});
+  });
+
+  window.addEventListener("pagehide", () => window.clearInterval(statsTimer));
+}
+
+function initMotionSettings() {
+  const toggle = $("#setting-lite-mode");
+  const profile = $("#motion-profile");
+  const reduced = $("#motion-reduced");
+  const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  const sync = () => {
+    const lite = isLiteMode();
+    if (toggle) toggle.checked = lite;
+    if (profile) {
+      profile.textContent = lite ? "LITE" : "FULL";
+      profile.className = `badge ${lite ? "badge-warn" : "badge-info"}`;
+    }
+    if (reduced) {
+      reduced.textContent = motionQuery.matches ? "REDUCED" : "FULL MOTION";
+      reduced.className = `badge ${motionQuery.matches ? "badge-warn" : "badge-muted"}`;
+    }
+  };
+
+  if (toggle) {
+    toggle.addEventListener("change", () => {
+      const active = setLiteMode(toggle.checked);
+      sync();
+      toast(
+        active
+          ? "Reduced visual effects enabled for this device."
+          : "Full cinematic effects restored for this device.",
+        { type: "info" }
+      );
+    });
+  }
+
+  window.addEventListener("nexora:litechange", sync);
+  if (typeof motionQuery.addEventListener === "function") {
+    motionQuery.addEventListener("change", sync);
+  }
+  sync();
+}
+
+function startStatsPolling() {
+  window.clearInterval(statsTimer);
+  statsTimer = window.setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    if (state.view !== "overview" || !state.user) return;
+    if (viewLoads.has("overview")) return;
+    loadViewData("overview").catch(() => {});
+  }, 60000);
+}
+
+/* ------------------------------------------------------------------- boot */
+
+async function boot() {
+  // Hard safety net: the console veil is decorative and can never outlive the
+  // first render, even if the session endpoint or the database stalls.
+  const bootGuard = window.setTimeout(dismissBootScreen, 1500);
+
+  try {
+    initMotion();
+  } catch (error) {
+    // Motion is optional; never let it stop the console from wiring up.
+  }
+  dismissBootScreen();
+
+  try {
+    setupEventListeners();
+  } catch (error) {
+    showGlobalError(
+      "Part of the console interface could not be initialized. Reload the page to try again."
+    );
+  }
+  try {
+    initMotionSettings();
+  } catch (error) {
+    // Display preferences are optional.
+  }
+
+  const requestedView = resolveHashView();
+  let sessionReady = false;
+
+  try {
+    state.sessionCheck = api.session({ timeoutMs: 9000 });
+    const session = await state.sessionCheck;
+    if (!session || !session.user) {
+      throw new ApiProblem("Session invalid.", 401, "session_expired");
+    }
+    setCsrfToken(session.csrf_token);
+    state.user = session.user;
+    applyIdentity();
+    sessionReady = true;
+  } catch (error) {
+    if (error instanceof ApiProblem && error.status === 401) {
+      redirectToLogin();
+      window.clearTimeout(bootGuard);
+      return;
+    }
+
+    const message =
+      error && error.message ? error.message : "Unable to verify the admin session.";
+    dismissBootScreen();
+    showGlobalError(`${message} Use Refresh after connectivity is restored.`);
+    toast(message, { type: "error" });
+  } finally {
+    state.sessionCheck = null;
+  }
+
+  if (
+    !window.location.hash ||
+    !VIEW_META[window.location.hash.replace(/^#\/?/, "").toLowerCase()]
+  ) {
+    window.history.replaceState(null, "", `#${requestedView}`);
+  }
+
+  showView(requestedView, { updateHash: false, reload: false });
+  startStatsPolling();
+  dismissBootScreen();
+  window.clearTimeout(bootGuard);
+
+  // Data loads strictly after the shell is interactive. It is never awaited
+  // behind the boot overlay, and every request carries a bounded timeout.
+  if (sessionReady) {
+    loadViewData(requestedView)
+      .then((loaded) => {
+        if (!loaded) {
+          showGlobalError(
+            "Some live console data could not be loaded. Your session is still active; use Refresh to retry."
+          );
+        }
+      })
+      .catch(() => {});
   }
 }
 

@@ -172,7 +172,7 @@ def cmd_migrate(_args: argparse.Namespace) -> int:
 
 
 def cmd_migration_status(_args: argparse.Namespace) -> int:
-    """Read-only migration and Migration 007 schema readiness check."""
+    """Read-only migration and Migration 008 schema readiness check."""
     settings = _settings()
     db = Database(settings.database)
     try:
@@ -195,9 +195,9 @@ def cmd_migration_status(_args: argparse.Namespace) -> int:
                     f"database={item['database'][:12]}",
                     file=sys.stderr,
                 )
-        migration = readiness["migration_007"]
+        migration = readiness["migration_008"]
         print(
-            "007:"
+            "008:"
             f" present={migration['present']}"
             f" recorded={migration['applied']}"
             f" checksum={str(migration['checksum'])[:12]}"
@@ -355,7 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     migration_status = sub.add_parser(
         "migration-status",
-        help="Read-only migration and Migration 007 schema readiness check.",
+        help="Read-only migration and Migration 008 schema readiness check.",
     )
     migration_status.set_defaults(func=cmd_migration_status)
 

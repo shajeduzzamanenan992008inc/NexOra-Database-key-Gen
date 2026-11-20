@@ -11,6 +11,8 @@ from ..serialization import isoformat
 from ..services.auth_service import AuthService
 from ..services.license_service import LicenseService
 from ..services.project_service import ProjectService
+from ..services.universal_service import UniversalService
+from ..services.webhook_service import WebhookService
 from ..validation import Payload, client_ip, user_agent
 
 
@@ -32,6 +34,22 @@ def project_service() -> ProjectService:
 
 def auth_service() -> AuthService:
     return current_app.extensions["auth_service"]
+
+
+def universal_service() -> UniversalService:
+    if "universal_service" not in current_app.extensions:
+        current_app.extensions["universal_service"] = UniversalService(
+            current_app.extensions["db"], current_app.extensions["settings"]
+        )
+    return current_app.extensions["universal_service"]
+
+
+def webhook_service() -> WebhookService:
+    if "webhook_service" not in current_app.extensions:
+        current_app.extensions["webhook_service"] = WebhookService(
+            current_app.extensions["db"], current_app.extensions["settings"]
+        )
+    return current_app.extensions["webhook_service"]
 
 
 def request_meta() -> tuple[str, str]:

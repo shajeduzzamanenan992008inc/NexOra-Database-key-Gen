@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from .db import sqlstate
 
 MIGRATION_007 = "007_project_key_management.sql"
+MIGRATION_008 = "008_multi_key_expiration.sql"
 
 # Missing-schema states that can be caused by an unapplied or incomplete
 # migration. Normal data errors (for example 23505 unique violations) are not
@@ -25,11 +26,10 @@ _MISSING_SCHEMA_STATES = frozenset({"42P01", "42703", "42883", "3F000"})
 # Insertion order matters: a column error can also mention its relation, so
 # the more specific object must be checked before the table name.
 _MIGRATION_BY_OBJECT = {
-    "nexora_deleted_project_names": MIGRATION_007,
+    "expiration_preset": MIGRATION_008,
+    "ix_reader_keys_project_created": MIGRATION_008,
     "auto_delete_at": MIGRATION_007,
-    "ux_reader_keys_project_single": MIGRATION_007,
     "ix_nexora_projects_auto_delete": MIGRATION_007,
-    "ix_nexora_deleted_project_names_deleted_at": MIGRATION_007,
     "nexora_projects": "005_nexora_projects.sql",
     "reader_keys": "005_nexora_projects.sql",
     "reader_installations": "005_nexora_projects.sql",
