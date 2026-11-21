@@ -327,6 +327,8 @@ export const api = {
       body: { confirm_project_name: confirmProjectName, password },
       timeoutMs: 30000,
     }),
+  universalProjectDeletePreview: () =>
+    request("/api/v1/universal/projects/delete-preview"),
   deleteAllUniversalProjects: (confirmation, password) =>
     request("/api/v1/universal/projects", {
       method: "DELETE",

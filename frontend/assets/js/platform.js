@@ -535,7 +535,15 @@ function deleteProject(project) {
   ]));
 }
 
-function deleteAllProjects() {
+async function deleteAllProjects() {
+  let preview;
+  try {
+    preview = await api.universalProjectDeletePreview();
+  } catch (error) {
+    fail(error, "The deletion preview could not be loaded.");
+    return;
+  }
+  const counts = preview.counts || {};
   const phrase = input({ placeholder: "DELETE ALL PROJECTS", maxlength: "64", autocomplete: "off" });
   const password = input({ type: "password", maxlength: "128", autocomplete: "current-password" });
   const submit = button("Delete every project", async () => {
@@ -559,6 +567,14 @@ function deleteAllProjects() {
   }, "btn btn-danger btn-sm");
   showPanel("Delete all projects", el("div", { class: "stack" }, [
     el("p", { class: "muted", text: "Owner-only. Requires the exact phrase and a fresh password check. This is a permanent database deletion, not an archive." }),
+    el("dl", { class: "record-grid" }, [
+      el("div", { class: "record-item" }, [node("dt", "", "Projects"), el("dd", { text: numberFormat.format(counts.projects || 0) })]),
+      el("div", { class: "record-item" }, [node("dt", "", "Keys"), el("dd", { text: numberFormat.format(counts.keys || 0) })]),
+      el("div", { class: "record-item" }, [node("dt", "", "Devices"), el("dd", { text: numberFormat.format(counts.devices || 0) })]),
+      el("div", { class: "record-item" }, [node("dt", "", "Webhooks"), el("dd", { text: numberFormat.format(counts.webhooks || 0) })]),
+      el("div", { class: "record-item" }, [node("dt", "", "Key types"), el("dd", { text: numberFormat.format(counts.key_types || 0) })]),
+      el("div", { class: "record-item" }, [node("dt", "", "Delivery records"), el("dd", { text: numberFormat.format(counts.deliveries || 0) })]),
+    ]),
     field("Confirmation phrase", phrase),
     field("Current password", password),
     el("div", { class: "card-actions" }, [submit]),

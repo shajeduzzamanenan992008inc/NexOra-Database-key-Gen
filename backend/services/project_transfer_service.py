@@ -558,6 +558,32 @@ class ProjectTransferService:
             "project_name_reusable": True,
         }
 
+    def delete_preview(self) -> dict[str, Any]:
+        """Return the exact blast radius before a delete-all confirmation."""
+        counts = self.db.fetch_one(
+            """
+            SELECT
+              (SELECT COUNT(*)::int FROM nexora_projects) AS projects,
+              (SELECT COUNT(*)::int FROM nexora_key_types WHERE project_id IS NOT NULL) AS key_types,
+              (SELECT COUNT(*)::int FROM reader_keys) AS keys,
+              (SELECT COUNT(*)::int FROM nexora_devices) AS devices,
+              (SELECT COUNT(*)::int FROM nexora_webhooks) AS webhooks,
+              (SELECT COUNT(*)::int FROM nexora_webhook_deliveries) AS deliveries,
+              (SELECT COUNT(*)::int FROM nexora_imported_key_records) AS imported_records
+            """
+        ) or {}
+        return {
+            "mode": "permanent",
+            "counts": {key: int(value or 0) for key, value in counts.items()},
+            "preserved": [
+                "administrator accounts",
+                "administrator sessions",
+                "administrator settings",
+                "audit history",
+                "legacy SMS Reader data",
+            ],
+        }
+
     def delete_all_projects(
         self,
         *,

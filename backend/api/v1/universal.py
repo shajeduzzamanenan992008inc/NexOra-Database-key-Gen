@@ -361,6 +361,15 @@ def universal_project_delete(project_id: str):
     )
 
 
+@bp.get("/universal/projects/delete-preview")
+@require_auth(*MANAGE_ROLES)
+def universal_projects_delete_preview():
+    _authorize("project:delete_all")
+    if _actor().get("role") != "owner":
+        raise ApiError(403, "owner_required", "Only an Owner can delete all projects.")
+    return _json(transfer_service().delete_preview())
+
+
 @bp.delete("/universal/projects")
 @require_auth(*MANAGE_ROLES)
 def universal_projects_delete_all():

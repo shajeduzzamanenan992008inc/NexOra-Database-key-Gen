@@ -440,3 +440,85 @@ action, actor email, target, outcome, IP, user agent and details.
 
 Exceeding a limit returns `429` with `details.retry_after_seconds` and a `Retry-After` header.
 `RATE_LIMIT_ENABLED=false` disables it (not recommended in production).
+
+---
+
+## Universal project transfer, roles, and scheduler
+
+All routes below require an authenticated administrator session, CSRF protection on
+mutations, and the permission shown. Authorization is server-side.
+
+### Project export
+
+| Method | Path | Permission | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/universal/projects/{id}/export/preview` | `project:export` | Counts, excluded-secret flags, warnings |
+| `GET` | `/api/v1/universal/projects/{id}/export` | `project:export` | JSON bundle; add `?format=zip` for ZIP |
+| `POST` | `/api/v1/universal/projects/export` | `project:export` | `{"project_ids":[...],"format":"zip"}` or `{"all":true}` |
+| `GET` | `/api/v1/universal/keys/export` | `export:read` | Filtered key metadata; `format=json` or `csv` |
+
+Bundles are version `1`, format `nexora-project-bundle`. They contain project
+configuration, declarative key types, key/device metadata, redacted webhook
+destinations, and imported metadata. Plaintext keys, key hashes, device
+credentials, webhook signing secrets, database URLs, and platform secrets are
+excluded. ZIP entries are `manifest.json`, `project.json`, and `README.txt`; the
+manifest contains the SHA-256 of `project.json`.
+
+### Project import
+
+`POST /api/v1/universal/projects/import/preview` and
+`POST /api/v1/universal/projects/import` accept `multipart/form-data`:
+
+| Field | Required | Values |
+| --- | --- | --- |
+| `file` | yes | JSON or ZIP bundle (maximum 8 MiB) |
+| `mode` | no | `keep_existing` (default), `import_as_new`, `replace_existing` |
+| `project_name` | no | New name for the imported project |
+| `replace_confirmed` | replace only | `true` |
+| `confirm` | replace only | Exact existing project name |
+
+Preview returns the bundle format/version, source and resolved project identity,
+conflict action, existing-project metadata, counts, key types, warnings, and
+`secrets_exposed: false`. Import is one transaction; failure rolls back every
+write. Imported keys/devices become regeneration-required metadata records,
+never active credentials. Imported webhooks are created inactive.
+
+### Permanent deletion
+
+| Method | Path | Authorization |
+| --- | --- | --- |
+| `DELETE` | `/api/v1/universal/projects/{id}` | `project:delete`; body `{"confirm_project_name":"...","password":"..."}` |
+| `GET` | `/api/v1/universal/projects/delete-preview` | Owner only; counts before delete-all |
+| `DELETE` | `/api/v1/universal/projects` | Owner only; `{"confirmation":"DELETE ALL PROJECTS","password":"..."}` |
+
+Single deletion removes owned children transactionally, writes a safe audit
+snapshot, preserves audit history and administrators, and makes the name
+reusable. Delete-all preserves administrator accounts, sessions, settings,
+audit, and legacy SMS data. The preview returns projects, key types, keys,
+devices, webhooks, deliveries, and imported-record counts.
+
+### Custom roles and assignment
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| `GET` | `/api/v1/universal/roles` | `admin:read` |
+| `POST` | `/api/v1/universal/roles` | `admin:roles` |
+| `PATCH` | `/api/v1/universal/roles/{id}` | `admin:roles` |
+| `POST` | `/api/v1/universal/roles/{id}/clone` | `admin:roles` |
+| `DELETE` | `/api/v1/universal/roles/{id}` | `admin:roles` |
+| `PATCH` | `/api/v1/universal/admins/{id}/role` | `admin:roles` |
+| `POST` | `/api/v1/universal/admins/{id}/sessions/revoke` | `admin:sessions` |
+
+Create body: `{"id":"ops_reader","name":"Ops Reader","description":"...","permissions":["project:read"]}`.
+Custom ids match `^[a-z][a-z0-9_]{2,49}$`. Non-owners cannot grant permissions
+they do not hold or any critical permission; only an Owner assigns Owner; the
+last Owner cannot be demoted; assigned roles cannot be deleted. Every mutation
+is audited.
+
+### Scheduler
+
+`GET /api/v1/universal/automation/scheduler` (`automation:read`) returns the job
+list, advisory lock key, interval, batch size, queue/due counts, recent runs, and
+the last successful run. The CLI commands `universal-scheduler-run`,
+`universal-scheduler-status`, and `universal-automation-run` are documented in
+[`SCHEDULER.md`](SCHEDULER.md).

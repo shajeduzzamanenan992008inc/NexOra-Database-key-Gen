@@ -1,16 +1,4 @@
 <p align="center">
-  <img src="assets/branding/nexora-keygen-logo.svg" alt="Nexora-Keygen" width="100%" />
-</p>
-
-<p align="center">
-  <img src="assets\omega-key-assets\svg\database-key.svg" alt="database-key" width="100%" />
-</p>
-
-<p align="center">
-  <img src="assets\omega-key-assets\svg\readme-icon.svg" alt="readme-icon" width="100%" />
-</p>
-
-<p align="center">
   <img src="assets/branding/nexora-keygen-banner.svg" alt="NexOra Database Key Generator banner" width="100%" />
 </p>
 
@@ -160,6 +148,7 @@ The supplied documentation says the PostgreSQL schema is managed through `db/mig
 | `007_project_key_management.sql` | Adds the one-Reader-Key-per-project constraint, auto-delete metadata, deleted-name tombstones, supporting indexes, and RLS. |
 | `008_multi_key_expiration.sql` | Adds multi-key expiration support without changing the one-key-per-project Reader contract. |
 | `009_universal_key_platform.sql` | Adds universal project metadata, permission catalogue, 20 built-in key types, extended keys, devices, API usage, webhooks, notifications, automation, platform roles, audit request IDs, indexes, and RLS. |
+| `010_project_transfer_roles_scheduler.sql` | Adds custom platform roles, imported key/device metadata, scheduler ledger fields, and project-transfer support indexes. |
 
 The documented migration command is:
 
@@ -167,7 +156,7 @@ The documented migration command is:
 python -m backend.cli migrate
 ```
 
-> **Production migration gate:** migrations 005–009 require an approved backup/PITR checkpoint and migration window. Do not apply them to production until that approval is complete. Migration 009 was applied only to a dedicated local test database during this work.
+> **Production migration gate:** migrations 005–010 require an approved backup/PITR checkpoint and migration window. Do not apply them to production until that approval is complete. Migrations 009 and 010 were applied only to a dedicated local test database during this work.
 
 ## Project and Reader-Key Lifecycle
 
@@ -247,6 +236,17 @@ operational notes are in [`docs/UNIVERSAL_PLATFORM_GUIDE.md`](docs/UNIVERSAL_PLA
 | `GET` | `/universal/notifications` | Notification center. |
 | `GET` | `/universal/search` | Global search. |
 | `POST` | `/universal/automation/run` | Run expiry/cleanup/retry automation. |
+| `GET` | `/universal/automation/scheduler` | Scheduler status, queue depth, and recent runs. |
+| `GET` | `/universal/projects/<id>/export/preview` | Project backup counts and security notice. |
+| `GET` | `/universal/projects/<id>/export` | Export a JSON or ZIP project bundle. |
+| `POST` | `/universal/projects/export` | Export selected or all projects as a ZIP/JSON collection. |
+| `POST` | `/universal/projects/import/preview` | Validate a JSON/ZIP bundle without writing. |
+| `POST` | `/universal/projects/import` | Transactional project restore with conflict policy. |
+| `GET` | `/universal/projects/delete-preview` | Owner-only pre-deletion counts. |
+| `DELETE` | `/universal/projects/<id>` | Permanent project deletion with name and password confirmation. |
+| `DELETE` | `/universal/projects` | Owner-only delete-all with exact phrase and password. |
+| `GET/POST` | `/universal/roles` | List or create custom platform roles. |
+| `PATCH/DELETE` | `/universal/roles/<id>` | Update, clone, or delete a custom role. |
 | `GET` | `/universal/openapi.json` | OpenAPI document for the v1 surface. |
 | `POST` | `/access/authenticate` | Authenticate a universal project key (no browser session). |
 
@@ -270,17 +270,27 @@ The Reader App is an independent client and should use only the public Reader AP
 - The Reader App must not embed server-side secrets, a Supabase service-role key, or a direct database password.
 - The Reader App's own source code, release process, and Android-specific behavior are outside this repository's documented scope.
 
-## Scheduled Project Cleanup
+## Scheduled Project Cleanup and Automation
 
-Automatic deletion is documented as disabled until an administrator configures a retention period (`auto_delete_days > 0`) and/or a project-level schedule.
+Automatic deletion remains disabled until an administrator configures a retention period (`auto_delete_days > 0`) and/or a project-level schedule.
 
-The documented server-side command is:
+The existing server-side cleanup command is:
 
 ```bash
 python -m backend.cli purge-expired-projects --limit 100
 ```
 
-The supplied README states that the command deletes only projects whose `auto_delete_at` timestamp is due, does not run from browser JavaScript, and writes a `project.delete` audit event for each deleted project.
+For universal automation, project purge, and expired-session pruning, run the standalone lock-protected scheduler:
+
+```bash
+python -m backend.cli universal-scheduler-run --once
+python -m backend.cli universal-scheduler-run --once --dry-run
+python -m backend.cli universal-scheduler-status
+```
+
+The Flask web process never runs an infinite scheduler loop. One worker at a time is protected by a PostgreSQL advisory lock; every sweep is bounded, recorded in `nexora_automation_runs`, and audited. Cron, systemd, Windows Task Scheduler, retry policy, monitoring, and failure recovery are documented in [`docs/SCHEDULER.md`](docs/SCHEDULER.md).
+
+Project backup, restore, conflict handling, and permanent deletion are documented in [`docs/PROJECT_BACKUP.md`](docs/PROJECT_BACKUP.md). Custom roles and anti-escalation rules are in [`docs/CUSTOM_ROLES.md`](docs/CUSTOM_ROLES.md); webhook SSRF, DNS pinning, redirect, and TLS controls are in [`docs/SECURITY_WEBHOOKS.md`](docs/SECURITY_WEBHOOKS.md).
 
 ## Testing & Verification
 
@@ -290,7 +300,7 @@ Run the test suite from the full source repository:
 python -m pytest -v
 ```
 
-Current local result after the universal platform work: **268 passed, 26 skipped, exit 0** (`309.31s`). The 26 skips belong to the optional SMS Reader suite. A separate Chrome verification covered login, all 20 platform views, project creation, one-time key reveal, key inventory, and mobile navigation.
+Current local result after the universal transfer, roles, scheduler, and deletion-preview work: **277 passed, 26 skipped, exit 0** plus the separate Playwright browser checks. The 26 skips belong to the optional SMS Reader suite. The real-Chrome responsive audit passed **282 checks across 11 viewports**, covering login, dashboard, one-time key reveal, modal containment, mobile navigation, reduced motion, and lite mode. A separate authenticated platform smoke passed **33 checks**: login, all 20 views, project creation, export preview, delete-all pre-execution totals, mobile navigation, and the bounded shutdown animation. It is reproducible with `python scripts/platform_browser_smoke.py` against the local test database.
 
 Test areas:
 
@@ -298,6 +308,11 @@ Test areas:
 - Project-name normalization and Reader Key lifecycle.
 - Versioned API behavior and dashboard integration.
 - Generate-key, one-key-per-project, activation, auto-delete, hard-delete, and delete-all behavior.
+- Project export/import validation, conflict modes, and transaction rollback.
+- Permanent project deletion, delete-all blast-radius preview, owner checks, and audit events.
+- Custom role CRUD, assignment, escalation guards, and last-owner protection.
+- Scheduler idempotency, dry-run/status, and advisory locking.
+- Webhook SSRF, DNS pinning, redirect rejection, timeouts, and response bounds.
 - Frontend CSP and XSS hardening.
 
 See the full repository's `docs/PROJECT_KEY_MANAGEMENT_TEST_REPORT.md` for the recorded command and test output.
@@ -307,7 +322,7 @@ See the full repository's `docs/PROJECT_KEY_MANAGEMENT_TEST_REPORT.md` for the r
 ```text
 .
 ├── backend/                  # Flask application, services, and /api/v1 routes
-├── db/migrations/            # Forward-only PostgreSQL migrations, including 009
+├── db/migrations/            # Forward-only PostgreSQL migrations, including 010
 ├── frontend/                 # Login, dashboard, and /platform console
 ├── assets/omega-key-assets/  # Animation assets served read-only
 ├── docs/                     # Guides, audits, and delivery reports

@@ -55,9 +55,18 @@ def upload_bundle(actor, path: str, bundle: dict, **fields):
 
 
 # --------------------------------------------------------------- export/import
-def test_project_export_preview_and_zip(owner):
+def test_project_export_preview_and_zip(owner, db):
     project = create_project(owner, "Export Project")
     generate(owner, project["id"])
+    db.execute(
+        """
+        INSERT INTO nexora_webhooks (project_id, name, url, events, secret_salt)
+        VALUES (%s, 'Export hook',
+                'https://example.test/hook?token=must-not-leak',
+                ARRAY['key.created'], 'salt')
+        """,
+        (project["id"],),
+    )
 
     preview = owner.get(f"/api/v1/universal/projects/{project['id']}/export/preview")
     assert preview.status_code == 200, preview.get_json()
@@ -75,6 +84,9 @@ def test_project_export_preview_and_zip(owner):
     assert bundle["keys"][0]["key_hint"]
     assert "key_hash" not in bundle["keys"][0]
     assert bundle["keys"][0]["requires_regeneration"] is True
+    assert bundle["webhooks"][0]["url"] == "https://example.test/hook"
+    assert bundle["webhooks"][0]["url_query_redacted"] is True
+    assert "must-not-leak" not in json.dumps(bundle)
 
     archive = owner.get(
         f"/api/v1/universal/projects/{project['id']}/export?format=zip"
@@ -220,6 +232,12 @@ def test_project_delete_requires_password_and_is_audited(owner, db):
 def test_delete_all_is_owner_only_phrase_and_password_checked(owner, admin, db):
     create_project(owner, "Bulk One")
     create_project(owner, "Bulk Two")
+
+    preview = owner.get("/api/v1/universal/projects/delete-preview")
+    assert preview.status_code == 200, preview.get_json()
+    assert preview.get_json()["counts"]["projects"] >= 2
+    assert preview.get_json()["mode"] == "permanent"
+    assert admin.get("/api/v1/universal/projects/delete-preview").status_code == 403
 
     denied = admin.delete(
         "/api/v1/universal/projects",

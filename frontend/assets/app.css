@@ -4156,8 +4156,10 @@ body.nav-open { overflow: hidden; }
   .responsive-table td { padding: 8px; }
   .responsive-table tr { border-radius: 12px; }
 
-  .modal { width: calc(100vw - 12px); max-width: calc(100vw - 8px); }
-  .modal-card { padding: 14px; border-radius: 14px; gap: 13px; }
+  /* Symmetric gutters keep the top-layer dialog inside the viewport even
+     when the UA max-width and the body padding disagree. */
+  .modal { width: calc(100vw - 24px); max-width: calc(100vw - 24px); }
+  .modal-card { width: 100%; max-width: 100%; padding: 14px; border-radius: 14px; gap: 13px; }
   .modal-head { gap: 10px; }
   .modal-head h2 { font-size: 1.1rem; }
   .icon-close { width: 34px; height: 34px; font-size: 1.2rem; }
