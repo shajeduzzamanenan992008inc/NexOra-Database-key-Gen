@@ -25,10 +25,10 @@ import {
   hideLeaveScreen,
   initMotion,
   isLiteMode,
-  playLeaveScreen,
   pulseElement,
   setLiteMode,
 } from "./motion.js";
+import { clearSensitiveState, runShutdownAnimation } from "./shutdown.js";
 
 const VIEW_META = {
   overview: {
@@ -2355,13 +2355,9 @@ async function handleLogout() {
   setCsrfToken("");
   state.user = null;
 
+  clearSensitiveState();
   try {
-    await playLeaveScreen({
-      kicker: "OMEGA NEX-ORA / SECURE HANDSHAKE",
-      title: "Session terminated",
-      status: "REVOKING SERVER SESSION / CLEARING LOCAL STATE",
-      duration: 260,
-    });
+    await runShutdownAnimation({ duration: 1500 });
   } catch {
     // The visual transition is best-effort; navigation is not.
   }

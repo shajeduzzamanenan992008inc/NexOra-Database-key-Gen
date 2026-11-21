@@ -17,6 +17,7 @@ import {
 } from "./ui.js";
 import { dismissBootScreen, initMotion, isLiteMode, setLiteMode } from "./motion.js";
 import { omegaAsset, omegaPicture } from "./omega-assets.js";
+import { secureSignOut } from "./shutdown.js";
 
 initMotion();
 
@@ -431,10 +432,15 @@ function newProjectForm() {
 async function renderProjects(root) {
   const data = await api.universalProjects({ page_size: 100 });
   state.projects = data.items || [];
+  const actions = [
+    button("New project", () => showPanel("Create a project", newProjectForm()), "btn btn-primary btn-sm"),
+    button("Export all (ZIP)", exportAllProjects, "btn btn-ghost btn-sm"),
+  ];
+  if (state.user && state.user.role === "owner") {
+    actions.push(button("Delete all projects", deleteAllProjects, "btn btn-danger btn-sm"));
+  }
   root.append(
-    pageHeader("Universal projects", "Each project is an isolation boundary for keys, permissions, scope, and device policy.", [
-      button("New project", () => showPanel("Create a project", newProjectForm()), "btn btn-primary btn-sm"),
-    ]),
+    pageHeader("Universal projects", "Each project is an isolation boundary for keys, permissions, scope, and device policy.", actions),
     table(
       ["Project", "Type", "Status", "Keys", "Devices", "Expires", "Created", "Actions"],
       state.projects.map((project) => el("tr", {}, [
@@ -451,14 +457,112 @@ async function renderProjects(root) {
         cell(el("div", { class: "row-actions" }, [
           button("Edit", () => editProject(project)),
           button("Clone", () => cloneProject(project)),
+          button("Export", () => exportProject(project)),
           project.effective_status !== "archived"
             ? button("Archive", () => archiveProject(project), "btn btn-danger btn-sm")
             : null,
+          button("Delete", () => deleteProject(project), "btn btn-danger btn-sm"),
         ]), "align-right"),
       ])),
       "No universal projects"
     )
   );
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+async function exportProject(project) {
+  try {
+    const preview = await api.universalProjectExportPreview(project.id);
+    const box = el("div", { class: "stack" }, [
+      el("p", { class: "muted", text: "Exports contain project configuration, key metadata, devices and webhook configuration. Key material and hashes are never recoverable from a bundle." }),
+      el("dl", { class: "record-grid" }, [
+        el("div", { class: "record-item" }, [node("dt", "", "Project"), el("dd", { text: preview.project.project_name })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Keys"), el("dd", { text: String(preview.counts.keys) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Key types"), el("dd", { text: String(preview.counts.key_types) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Devices"), el("dd", { text: String(preview.counts.devices) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Webhooks"), el("dd", { text: String(preview.counts.webhooks) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Secrets exposed"), el("dd", { text: "No" })]),
+      ]),
+      el("div", { class: "card-actions" }, [
+        link("Download JSON", api.universalProjectExportUrl(project.id, "json"), "btn btn-primary btn-sm"),
+        link("Download ZIP backup", api.universalProjectExportUrl(project.id, "zip"), "btn btn-ghost btn-sm"),
+      ]),
+      ...(preview.warnings || []).map((warning) => el("p", { class: "muted", text: `• ${warning}` })),
+    ]);
+    showPanel(`Export '${project.project_name}'`, box);
+  } catch (error) { fail(error, "Export preview failed."); }
+}
+
+async function exportAllProjects() {
+  if (!state.projects.length) return toast("There are no projects to export.", { type: "info" });
+  try {
+    const blob = await api.exportUniversalProjectsBlob({ all: true, format: "zip" });
+    downloadBlob("nexora-projects-bundle.zip", blob);
+    toast("Project archive downloaded.", { type: "success" });
+  } catch (error) { fail(error, "Bulk export failed."); }
+}
+
+function deleteProject(project) {
+  const name = input({ placeholder: project.project_name, maxlength: "200", autocomplete: "off" });
+  const password = input({ type: "password", maxlength: "128", autocomplete: "current-password" });
+  const submit = button("Permanently delete project", async () => {
+    if (!name.value.trim()) return toast("Type the exact project name.", { type: "error" });
+    if (!password.value) return toast("Enter your current password.", { type: "error" });
+    setButtonBusy(submit, true, "Deleting…");
+    try {
+      const result = await api.deleteUniversalProject(project.id, name.value.trim(), password.value);
+      toast(`Deleted '${result.project.project_name}'. ${result.counts.keys} key(s) removed.`, { type: "success" });
+      closeSecretDialog();
+      showView("projects", { reload: true });
+    } catch (error) { fail(error, "Permanent deletion failed."); }
+    finally { setButtonBusy(submit, false); }
+  }, "btn btn-danger btn-sm");
+  showPanel(`Delete '${project.project_name}' permanently`, el("div", { class: "stack" }, [
+    el("p", { class: "muted", text: "This removes the project and every owned key, device, webhook, delivery, imported record and usage row in one transaction. Audit history and administrator accounts are preserved. The archive action is separate and reversible." }),
+    field("Type the exact project name", name),
+    field("Current password (re-authentication)", password),
+    el("div", { class: "card-actions" }, [submit]),
+  ]));
+}
+
+function deleteAllProjects() {
+  const phrase = input({ placeholder: "DELETE ALL PROJECTS", maxlength: "64", autocomplete: "off" });
+  const password = input({ type: "password", maxlength: "128", autocomplete: "current-password" });
+  const submit = button("Delete every project", async () => {
+    if (phrase.value.trim() !== "DELETE ALL PROJECTS") return toast("Type DELETE ALL PROJECTS exactly.", { type: "error" });
+    if (!password.value) return toast("Enter your current password.", { type: "error" });
+    const confirmed = await confirmAction({
+      title: "Delete all projects?",
+      message: "This permanently deletes every project and its keys, devices, webhooks, deliveries and imported metadata. Administrator accounts, settings and audit history are preserved. This cannot be undone.",
+      confirmLabel: "Delete all projects",
+      tone: "danger",
+    });
+    if (!confirmed.confirmed) return;
+    setButtonBusy(submit, true, "Deleting all…");
+    try {
+      const result = await api.deleteAllUniversalProjects("DELETE ALL PROJECTS", password.value);
+      toast(`Deleted ${result.deleted_count} project(s) and ${result.counts.keys} key(s).`, { type: "success" });
+      closeSecretDialog();
+      showView("projects", { reload: true });
+    } catch (error) { fail(error, "Delete-all failed."); }
+    finally { setButtonBusy(submit, false); }
+  }, "btn btn-danger btn-sm");
+  showPanel("Delete all projects", el("div", { class: "stack" }, [
+    el("p", { class: "muted", text: "Owner-only. Requires the exact phrase and a fresh password check. This is a permanent database deletion, not an archive." }),
+    field("Confirmation phrase", phrase),
+    field("Current password", password),
+    el("div", { class: "card-actions" }, [submit]),
+  ]));
 }
 
 function editProject(project) {
@@ -1201,24 +1305,110 @@ async function renderImportExport(root) {
     key_type_id: type.value,
     keys: textarea.value.split("\n").map((key) => key.trim()).filter(Boolean).map((key) => ({ key })),
   });
+
+  const exportProject = select(state.projects.map((p) => [p.id, p.project_name]));
+  const projectPreview = el("div", { class: "stack" });
+  const bundleFile = el("input", { type: "file", accept: ".json,.zip,application/json,application/zip" });
+  const importMode = select([
+    ["keep_existing", "Keep existing (merge non-conflicting children)"],
+    ["import_as_new", "Import as a new project (rename)"],
+    ["replace_existing", "Replace existing project (destructive)"],
+  ]);
+  const newName = input({ placeholder: "Optional imported project name", maxlength: "200" });
+  const importPreview = el("div", { class: "stack" });
+  const confirmName = input({ placeholder: "Type the existing project name", maxlength: "200", autocomplete: "off" });
+  const replaceFlag = el("input", { type: "checkbox" });
+  const replaceBlock = el("div", { class: "stack", hidden: "hidden" }, [
+    el("p", { class: "muted", text: "Replacement permanently deletes the existing project and its keys, devices, webhooks and imported metadata in the same transaction. Nothing is overwritten silently." }),
+    field("Type the existing project name", confirmName),
+    el("label", { class: "field" }, [replaceFlag, el("span", { text: " I understand this permanently replaces the existing project." })]),
+  ]);
+  let previewAction = "";
+  const buildForm = () => {
+    const form = new FormData();
+    if (bundleFile.files && bundleFile.files[0]) form.append("file", bundleFile.files[0]);
+    form.append("mode", importMode.value);
+    if (newName.value.trim()) form.append("project_name", newName.value.trim());
+    return form;
+  };
+
   root.append(
-    pageHeader("Import and export", "Exports contain metadata only. Imports hash supplied plaintext and never echo it back."),
+    pageHeader("Import and export", "Project bundles are validated, transactional and secret-free. Key metadata exports never contain plaintext or HMAC digests."),
     el("div", { class: "platform-grid" }, [
-      card("Export", [
-        el("p", { class: "muted", text: "Download key metadata for inventory and audit reconciliation. Plaintext and HMAC digests are excluded." }),
+      card("Project backup", [
+        el("p", { class: "muted", text: "Export the project, custom key types, key metadata, devices and webhook configuration with an integrity manifest." }),
+        field("Project", exportProject),
         el("div", { class: "card-actions" }, [
-          link("JSON export", api.universalKeysExportUrl({ format: "json" }), "btn btn-primary btn-sm"),
-          link("CSV export", api.universalKeysExportUrl({ format: "csv" }), "btn btn-ghost btn-sm"),
+          button("Preview", async () => {
+            clearNode(projectPreview);
+            if (!exportProject.value) return toast("Choose a project.", { type: "error" });
+            try {
+              const preview = await api.universalProjectExportPreview(exportProject.value);
+              projectPreview.append(
+                el("p", { class: "muted", text: `${preview.project.project_name} · ${preview.counts.keys} keys · ${preview.counts.devices} devices · ${preview.counts.webhooks} webhooks` }),
+                el("p", { class: "muted", text: `Secrets exposed: ${preview.security.secrets_exposed ? "YES" : "No"} · key material included: ${preview.security.key_material_included ? "YES" : "No"}` }),
+                ...(preview.warnings || []).map((warning) => node("p", "muted", `• ${warning}`))
+              );
+            } catch (error) { fail(error, "Export preview failed."); }
+          }, "btn btn-ghost btn-sm"),
+          button("Download JSON", () => {
+            if (!exportProject.value) return toast("Choose a project.", { type: "error" });
+            window.location.assign(api.universalProjectExportUrl(exportProject.value, "json"));
+          }, "btn btn-primary btn-sm"),
+          button("Download ZIP", () => {
+            if (!exportProject.value) return toast("Choose a project.", { type: "error" });
+            window.location.assign(api.universalProjectExportUrl(exportProject.value, "zip"));
+          }, "btn btn-ghost btn-sm"),
         ]),
+        projectPreview,
       ]),
-      card("Export a project", [
-        el("p", { class: "muted", text: "Project configuration, statistics, and custom type definitions without secrets." }),
-        el("div", { class: "card-actions" }, state.projects.slice(0, 1).map((p) => button(`Export '${p.project_name}'`, async () => {
-          try {
-            const data = await api.universalProjectExport(p.id);
-            downloadText(`${p.project_name.replace(/\W+/g, "-").toLowerCase()}-export.json`, JSON.stringify(data, null, 2), "application/json");
-          } catch (error) { fail(error, "Project export failed."); }
-        }, "btn btn-ghost btn-sm"))),
+      card("Project restore", [
+        el("p", { class: "muted", text: "Upload a .json or .zip bundle. Nothing is written until you review the preview and confirm." }),
+        field("Bundle file", bundleFile),
+        field("Conflict policy", importMode),
+        field("New project name (optional)", newName),
+        el("div", { class: "card-actions" }, [
+          button("Validate bundle", async () => {
+            clearNode(importPreview);
+            previewAction = "";
+            if (!bundleFile.files || !bundleFile.files[0]) return toast("Choose a bundle file.", { type: "error" });
+            try {
+              const result = await api.universalProjectImportPreview(buildForm());
+              previewAction = result.action;
+              replaceBlock.hidden = result.action !== "replace";
+              importPreview.append(
+                el("p", { class: "muted", text: `${result.project.project_name} · schema ${result.bundle.version} · action: ${result.action}` }),
+                el("p", { class: "muted", text: `${result.counts.key_types} key types · ${result.counts.keys} keys · ${result.counts.devices} devices · ${result.counts.webhooks} webhooks` }),
+                result.existing_project ? el("p", { class: "muted", text: `Existing project: ${result.existing_project.project_name}` }) : null,
+                ...(result.warnings || []).map((warning) => node("p", "muted", `• ${warning}`)),
+                ...(result.key_types || []).map((item) => node("p", "muted", `Key type ${item.id}: ${item.permissions.join(", ") || "no permissions"}`))
+              );
+            } catch (error) { fail(error, "Bundle validation failed."); }
+          }, "btn btn-ghost btn-sm"),
+          button("Import bundle", async () => {
+            if (!previewAction) return toast("Validate the bundle first.", { type: "error" });
+            if (previewAction === "replace" && (!replaceFlag.checked || !confirmName.value.trim())) {
+              return toast("Confirm replacement with the existing project name.", { type: "error" });
+            }
+            const form = buildForm();
+            form.append("confirm", confirmName.value.trim());
+            form.append("replace_confirmed", replaceFlag.checked ? "true" : "false");
+            try {
+              const result = await api.universalProjectImport(form);
+              toast(`Imported '${result.project.project_name}' (${result.counts.keys_imported} key metadata records).`, { type: "success" });
+              showView("projects", { reload: true });
+            } catch (error) { fail(error, "Project import failed."); }
+          }, "btn btn-primary btn-sm"),
+        ]),
+        replaceBlock,
+        importPreview,
+      ]),
+    ]),
+    card("Key metadata export", [
+      el("p", { class: "muted", text: "Download key inventory for reconciliation. Plaintext and HMAC digests are excluded." }),
+      el("div", { class: "card-actions" }, [
+        link("JSON export", api.universalKeysExportUrl({ format: "json" }), "btn btn-primary btn-sm"),
+        link("CSV export", api.universalKeysExportUrl({ format: "csv" }), "btn btn-ghost btn-sm"),
       ]),
     ]),
     card("Import keys", el("div", { class: "stack" }, [
@@ -1256,7 +1446,7 @@ async function renderImportExport(root) {
 }
 
 async function renderAutomation(root) {
-  const data = await api.automationRuns();
+  const [data, scheduler] = await Promise.all([api.automationRuns(), api.schedulerStatus()]);
   const runButton = button("Run automation now", async () => {
     setButtonBusy(runButton, true, "Running…");
     try {
@@ -1266,8 +1456,28 @@ async function renderAutomation(root) {
     } catch (error) { fail(error, "Automation run failed."); }
     finally { setButtonBusy(runButton, false); }
   }, "btn btn-primary btn-sm");
+  const counts = scheduler.counts || {};
   root.append(
     pageHeader("Automation", "Idempotent expiry sweeps, key retention cleanup, device inactivity, notifications, and webhook retries.", [runButton]),
+    el("div", { class: "platform-grid" }, [
+      card("Scheduler worker", [
+        el("p", { class: "muted", text: "The web process never runs an infinite loop. A separate worker executes these jobs under a PostgreSQL advisory lock." }),
+        el("dl", { class: "record-grid" }, [
+          el("div", { class: "record-item" }, [node("dt", "", "Jobs"), el("dd", { text: (scheduler.jobs || []).join(", ") })]),
+          el("div", { class: "record-item" }, [node("dt", "", "Configured interval"), el("dd", { text: `${scheduler.interval_seconds}s` })]),
+          el("div", { class: "record-item" }, [node("dt", "", "Batch size"), el("dd", { text: String(scheduler.batch_size) })]),
+          el("div", { class: "record-item" }, [node("dt", "", "Last success"), el("dd", { text: scheduler.last_success ? formatDate(scheduler.last_success) : "Never" })]),
+        ]),
+        el("p", { class: "muted", text: "CLI: python -m backend.cli universal-scheduler-run --once" }),
+      ]),
+      card("Queued work", el("dl", { class: "record-grid" }, [
+        el("div", { class: "record-item" }, [node("dt", "", "Projects"), el("dd", { text: String(counts.projects || 0) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Keys"), el("dd", { text: String(counts.keys || 0) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Webhook queue"), el("dd", { text: String(counts.webhook_queue || 0) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Projects due for purge"), el("dd", { text: String(counts.projects_due || 0) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Unread notifications"), el("dd", { text: String(counts.unread_notifications || 0) })]),
+      ])),
+    ]),
     table(
       ["Started", "Job", "Status", "Finished", "Details", "Error"],
       (data.runs || []).map((run) => el("tr", {}, [
@@ -1280,18 +1490,123 @@ async function renderAutomation(root) {
       ])),
       "No automation runs"
     ),
-    el("p", { class: "muted", text: "Scheduling is performed by a server cron/CLI worker calling this same automation service. This button executes one real run; it does not create a scheduler." })
+    el("p", { class: "muted", text: "Deployment, cron, retry policy and monitoring are documented in docs/SCHEDULER.md." })
   );
+}
+
+function roleEditor(role, templates) {
+  const editing = Boolean(role && role.custom);
+  const selected = new Set(role?.permissions || []);
+  const name = input({ value: role?.name || "", placeholder: "Role name", maxlength: "80" });
+  const roleId = input({ value: role?.id || "", placeholder: "lowercase_id", maxlength: "50" });
+  if (editing) roleId.disabled = true;
+  const description = el("textarea", { rows: "2", placeholder: "What is this role for?" });
+  description.value = role?.description || "";
+  const template = select([["", "Start blank"], ...(templates || []).map((item) => [item.id, item.name])]);
+  const boxes = [];
+  const grid = el("div", { class: "form-grid span-2" });
+  (state.rolePermissions || []).forEach((permission) => {
+    const box = el("input", { type: "checkbox", checked: selected.has(permission.id) });
+    box.addEventListener("change", () => {
+      if (box.checked) selected.add(permission.id);
+      else selected.delete(permission.id);
+    });
+    boxes.push([permission.id, box, permission]);
+    grid.append(el("label", { class: "field" }, [
+      box,
+      el("span", { text: ` ${permission.id} — ${permission.description || ""}` }),
+      el("small", { text: `risk: ${permission.risk || "standard"}` }),
+    ]));
+  });
+  template.addEventListener("change", () => {
+    const item = (templates || []).find((candidate) => candidate.id === template.value);
+    if (!item) return;
+    selected.clear();
+    (item.permissions || []).forEach((permission) => selected.add(permission));
+    boxes.forEach(([permissionId, box]) => { box.checked = selected.has(permissionId); });
+    if (!name.value.trim()) name.value = item.name;
+    if (!description.value.trim()) description.value = item.description || "";
+  });
+  const submit = button(editing ? "Save role" : "Create role", async () => {
+    if (!name.value.trim()) return toast("Enter a role name.", { type: "error" });
+    if (!selected.size) return toast("Select at least one permission.", { type: "error" });
+    const body = {
+      name: name.value.trim(),
+      description: description.value.trim(),
+      permissions: Array.from(selected),
+    };
+    if (!editing) body.id = roleId.value.trim() || undefined;
+    setButtonBusy(submit, true, editing ? "Saving…" : "Creating…");
+    try {
+      if (editing) await api.updateRole(role.id, body);
+      else await api.createRole(body);
+      toast(editing ? "Role updated." : "Role created.", { type: "success" });
+      closeSecretDialog();
+      showView("roles", { reload: true });
+    } catch (error) { fail(error, "Role save failed."); }
+    finally { setButtonBusy(submit, false); }
+  }, "btn btn-primary btn-sm");
+  showPanel(editing ? `Edit role '${role.name}'` : "Create a custom role", el("div", { class: "stack" }, [
+    el("p", { class: "muted", text: "Authorization is always evaluated server-side. A non-owner cannot grant permissions beyond their own authority or any critical permission." }),
+    el("div", { class: "form-grid" }, [
+      field("Role name", name),
+      field("Role id", roleId, editing ? "Role ids are immutable." : "3-50 lowercase letters, digits or underscores."),
+      field("Description", description),
+      field("Template (new roles)", template),
+    ]),
+    grid,
+    el("div", { class: "card-actions" }, [submit]),
+  ]));
 }
 
 async function renderRoles(root) {
   const data = await api.universalRoles();
   const roles = data.roles || [];
   const perms = data.permissions || [];
+  state.rolePermissions = perms;
   const roleNames = roles.map((role) => role.id);
   root.append(
-    pageHeader("Platform roles", "Owner and administrator roles include the permissions shown. Custom roles are limited to their explicit subset."),
-    el("div", { class: "platform-table-wrap" }, [
+    pageHeader("Platform roles", "Built-in roles are immutable. Custom roles are named permission sets evaluated on every request.", [
+      button("New custom role", () => roleEditor(null, data.templates || []), "btn btn-primary btn-sm"),
+    ]),
+    table(
+      ["Role", "Id", "Kind", "Permissions", "Assigned", "Actions"],
+      roles.map((role) => el("tr", {}, [
+        cell(el("div", {}, [el("strong", { text: role.name }), el("div", { class: "muted", text: role.description || "" })])),
+        cell(el("span", { class: "mono", text: role.id })),
+        cell(pill(role.built_in ? "built-in" : "custom", role.built_in ? "info" : "good")),
+        cell(String((role.permissions || []).length)),
+        cell(role.assigned_count === null || role.assigned_count === undefined ? "—" : String(role.assigned_count)),
+        cell(el("div", { class: "row-actions" }, [
+          role.custom ? button("Edit", () => roleEditor(role, data.templates || [])) : null,
+          button("Clone", () => {
+            const name = input({ placeholder: `Copy of ${role.name}`, maxlength: "80" });
+            showPanel(`Clone '${role.name}'`, el("div", { class: "stack" }, [
+              field("New role name", name),
+              button("Create clone", async () => {
+                try {
+                  await api.cloneRole(role.id, { name: name.value.trim() || undefined });
+                  toast("Role cloned.", { type: "success" });
+                  closeSecretDialog();
+                  showView("roles", { reload: true });
+                } catch (error) { fail(error, "Role clone failed."); }
+              }, "btn btn-primary btn-sm"),
+            ]));
+          }),
+          role.custom ? button("Delete", async () => {
+            const confirmed = await confirmAction({ title: `Delete '${role.name}'?`, message: "A role that is still assigned to an administrator cannot be deleted.", confirmLabel: "Delete role", tone: "danger" });
+            if (!confirmed.confirmed) return;
+            try {
+              await api.deleteRole(role.id);
+              toast("Role deleted.", { type: "success" });
+              showView("roles", { reload: true });
+            } catch (error) { fail(error, "Role deletion failed."); }
+          }, "btn btn-danger btn-sm") : null,
+        ]), "align-right"),
+      ])),
+      "No roles"
+    ),
+    card("Permission matrix", el("div", { class: "platform-table-wrap" }, [
       el("table", { class: "matrix" }, [
         el("thead", {}, [el("tr", {}, [el("th", { text: "Permission" }), ...roleNames.map((name) => el("th", { text: name }))])]),
         el("tbody", {}, perms.map((permission) => el("tr", {}, [
@@ -1302,37 +1617,40 @@ async function renderRoles(root) {
           })),
         ]))),
       ]),
-    ])
+    ]))
   );
 }
 
 async function renderAdmins(root) {
-  const data = await api.universalAdmins();
+  const [data, roleData] = await Promise.all([api.universalAdmins(), api.universalRoles()]);
   const admins = data.admins || [];
+  const roles = roleData.roles || [];
+  const builtins = roles.filter((role) => role.built_in && role.id !== "custom");
+  const customs = roles.filter((role) => role.custom);
   root.append(
-    pageHeader("Administrators", "Only an Owner can change platform roles. Role changes and session revocations are audited."),
+    pageHeader("Administrators", "Only an Owner can assign the Owner role. A non-owner cannot grant permissions beyond their own authority. Every change is audited."),
     table(
       ["Administrator", "Base role", "Platform role", "Active sessions", "Last login", "Status", "Actions"],
       admins.map((admin) => {
         const roleSelect = select([
-          ["owner", "Owner"], ["administrator", "Administrator"],
-          ["project_manager", "Project manager"], ["key_manager", "Key manager"],
-          ["read_only", "Read only"], ["custom", "Custom"],
-        ], { value: admin.platform_role || "read_only" });
+          ...builtins.map((role) => [role.id, role.name]),
+          ...customs.map((role) => [role.id, `${role.name} (custom)`]),
+        ], { value: admin.platform_role_id || admin.platform_role || "read_only" });
         return el("tr", {}, [
           cell(el("div", {}, [el("strong", { text: admin.full_name || admin.email }), el("div", { class: "mono", text: admin.email })])),
           cell(admin.role),
-          cell(roleSelect),
+          cell(el("div", {}, [roleSelect, admin.platform_role_id ? el("div", { class: "mono", text: `custom: ${admin.platform_role_id}` }) : null])),
           cell(String(admin.active_sessions || 0)),
           cell(admin.last_login_at ? formatDate(admin.last_login_at) : "Never"),
           cell(statusBadge(admin.is_active ? "active" : "inactive")),
           cell(el("div", { class: "row-actions" }, [
             button("Apply role", async () => {
+              const selected = roles.find((role) => role.id === roleSelect.value);
+              const body = selected && selected.custom
+                ? { platform_role: "custom", platform_role_id: selected.id }
+                : { platform_role: roleSelect.value };
               try {
-                await api.setAdminRole(admin.id, {
-                  platform_role: roleSelect.value,
-                  platform_permissions: roleSelect.value === "custom" ? ["analytics:read", "project:read", "key:read"] : [],
-                });
+                await api.setAdminRole(admin.id, body);
                 toast("Platform role updated.", { type: "success" });
                 showView("admins", { reload: true });
               } catch (error) { fail(error, "Role update failed."); }
@@ -1558,13 +1876,19 @@ async function bootstrap() {
 
 $("#logout-btn")?.addEventListener("click", async () => {
   const button = $("#logout-btn");
+  if (button.disabled) return;
   setButtonBusy(button, true, "Signing out…");
   try {
-    await api.logoutSafe();
-    window.location.replace("/login");
+    // Server revocation happens before the animation starts. The animation is
+    // bounded and navigation still proceeds if it fails or motion is reduced.
+    await secureSignOut({
+      logout: api.logoutSafe,
+      onRevoked: () => { setCsrfToken(""); state.user = null; },
+      navigateTo: "/login",
+    });
   } catch (error) {
     setButtonBusy(button, false);
-    fail(error, "Sign out failed.");
+    fail(error, "Sign out failed. Your session is still active.");
   }
 });
 

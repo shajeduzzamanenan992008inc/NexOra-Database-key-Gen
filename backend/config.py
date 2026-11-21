@@ -68,6 +68,19 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return value
 
 
+def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    raw = _string_env(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number.") from None
+    if not minimum <= value <= maximum:
+        raise ConfigError(f"{name} must be between {minimum} and {maximum}.")
+    return value
+
+
 @dataclass(frozen=True)
 class DatabaseSettings:
     """A parsed PostgreSQL/Supabase connection description.
@@ -325,6 +338,15 @@ class Settings:
     # ---- NexOra Phase 1: Reader installation limit ----
     # Only one active reader installation is permitted per project.
     max_reader_installations_per_project: int = 1
+    # ---- Webhook delivery bounds (SSRF-safe transport) ----
+    webhook_timeout_seconds: float = 5.0
+    webhook_max_response_bytes: int = 64 * 1024
+    webhook_max_request_bytes: int = 64 * 1024
+    # ---- Standalone scheduler ----
+    scheduler_batch_size: int = 100
+    scheduler_interval_seconds: int = 60
+    # ---- Project transfer ----
+    project_import_max_bytes: int = 8 * 1024 * 1024
 
     @property
     def is_production(self) -> bool:
@@ -370,6 +392,33 @@ class Settings:
             rate_limit_enabled=_bool_env("RATE_LIMIT_ENABLED", True),
             trust_proxy=_bool_env("TRUST_PROXY", False),
             max_bulk_keys=_int_env("MAX_BULK_KEYS", 500, minimum=1, maximum=2000),
+            webhook_timeout_seconds=_float_env(
+                "WEBHOOK_TIMEOUT_SECONDS", 5.0, minimum=0.5, maximum=30.0
+            ),
+            webhook_max_response_bytes=_int_env(
+                "WEBHOOK_MAX_RESPONSE_BYTES",
+                64 * 1024,
+                minimum=1024,
+                maximum=1024 * 1024,
+            ),
+            webhook_max_request_bytes=_int_env(
+                "WEBHOOK_MAX_REQUEST_BYTES",
+                64 * 1024,
+                minimum=1024,
+                maximum=1024 * 1024,
+            ),
+            scheduler_batch_size=_int_env(
+                "SCHEDULER_BATCH_SIZE", 100, minimum=1, maximum=1000
+            ),
+            scheduler_interval_seconds=_int_env(
+                "SCHEDULER_INTERVAL_SECONDS", 60, minimum=5, maximum=86400
+            ),
+            project_import_max_bytes=_int_env(
+                "PROJECT_IMPORT_MAX_BYTES",
+                8 * 1024 * 1024,
+                minimum=64 * 1024,
+                maximum=32 * 1024 * 1024,
+            ),
             # NexOra Phase 1: Supabase credentials (validated together)
             supabase_url=supabase_url,
             supabase_service_role_key=supabase_key,

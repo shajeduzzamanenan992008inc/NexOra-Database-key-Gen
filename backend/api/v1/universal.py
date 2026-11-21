@@ -18,11 +18,16 @@ from flask import Blueprint, Response, g, jsonify, request
 from ...errors import ApiError, ValidationError
 from ...security.decorators import require_auth
 from ...serialization import jsonable
+from ...services.audit import audit
 from ...validation import Payload, require_json
 from ..helpers import (
+    auth_service,
     pagination_args,
     request_meta,
+    role_service,
+    scheduler_service,
     settings,
+    transfer_service,
     universal_service,
     webhook_service,
 )
@@ -165,25 +170,232 @@ def universal_project_clone(project_id: str):
     return _json(result, 201)
 
 
+def _bundle_upload():
+    cfg = settings()
+    limit = int(getattr(cfg, "project_import_max_bytes", 8 * 1024 * 1024))
+    file = request.files.get("file")
+    if file is not None:
+        data = file.read(limit + 1)
+        if len(data) > limit:
+            raise ValidationError({"file": "The bundle exceeds the size limit."})
+        return transfer_service().parse_upload(data, file.filename or "")
+    body = require_json(request)
+    bundle = body.get("bundle") if isinstance(body, dict) else None
+    if isinstance(bundle, dict):
+        return bundle
+    raise ValidationError({"file": "Upload a .json or .zip project bundle."})
+
+
+def _form_value(name: str, default: str = "") -> str:
+    if request.form:
+        return str(request.form.get(name) or default)
+    body = request.get_json(silent=True) or {}
+    value = body.get(name, default) if isinstance(body, dict) else default
+    return str(value) if value is not None else default
+
+
+@bp.get("/universal/projects/<project_id>/export/preview")
+@require_auth(*MANAGE_ROLES)
+def universal_project_export_preview(project_id: str):
+    _authorize("project:export")
+    return _json(transfer_service().export_preview(project_id))
+
+
 @bp.get("/universal/projects/<project_id>/export")
 @require_auth(*MANAGE_ROLES)
 def universal_project_export(project_id: str):
-    _authorize("export:read")
-    service = _service()
-    stats = service.project_stats(project_id)
-    types = service.list_key_types(project_id=project_id, include_inactive=True)
+    _authorize("project:export")
+    service = transfer_service()
+    export_format = _query("format", "json").lower()
+    if export_format == "zip":
+        data, filename = service.export_zip(project_id)
+        return Response(
+            data,
+            mimetype="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
+    bundle = service.export_project(project_id)
+    return _json(bundle)
+
+
+@bp.post("/universal/projects/export")
+@require_auth(*MANAGE_ROLES)
+def universal_projects_export_bulk():
+    _authorize("project:export")
+    body = require_json(request)
+    if not isinstance(body, dict):
+        raise ValidationError({"body": "Must be an object."})
+    export_format = str(body.get("format") or "zip").lower()
+    if body.get("all"):
+        rows = _service().list_projects(page=1, page_size=100)
+        project_ids = [str(row["id"]) for row in rows.get("items", [])]
+    else:
+        raw = body.get("project_ids")
+        if not isinstance(raw, list) or not raw:
+            raise ValidationError({"project_ids": "Select at least one project."})
+        project_ids = [str(value) for value in raw]
+    service = transfer_service()
+    if export_format == "json":
+        return _json(
+            {
+                "format": "nexora-project-collection",
+                "version": 1,
+                "projects": [service.export_project(pid) for pid in project_ids[:50]],
+                "secrets_exposed": False,
+            }
+        )
+    data, filename = service.export_many_zip(project_ids)
+    return Response(
+        data,
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@bp.post("/universal/projects/import/preview")
+@require_auth(*MANAGE_ROLES)
+def universal_project_import_preview():
+    _authorize("project:import")
+    bundle = _bundle_upload()
+    mode = _form_value("mode", "keep_existing")
+    project_name = _form_value("project_name", "").strip() or None
+    validated = transfer_service().validate_bundle(
+        bundle, mode=mode, project_name=project_name
+    )
     return _json(
         {
-            "format": "nexora-project-v1",
-            "project": stats["project"],
-            "statistics": stats,
+            "bundle": {
+                "format": bundle.get("format"),
+                "version": bundle.get("version"),
+                "exported_at": bundle.get("exported_at"),
+            },
+            "project": {
+                "source_id": validated["project"]["source_id"],
+                "project_name": validated["project"]["project_name"],
+                "source_project_name": validated["project"]["source_project_name"],
+                "project_type": validated["project"]["project_type"],
+                "status": validated["project"]["status"],
+            },
+            "mode": validated["mode"],
+            "action": validated["action"],
+            "existing_project": validated["existing_project"],
+            "counts": validated["counts"],
             "key_types": [
-                item
-                for item in types["key_types"]
-                if str(item.get("project_id") or "") == project_id
+                {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "permissions": item["permissions"],
+                    "scopes": item["scopes"],
+                }
+                for item in validated["key_types"]
             ],
+            "warnings": validated["warnings"],
+            "validation_errors": [],
             "secrets_exposed": False,
         }
+    )
+
+
+@bp.post("/universal/projects/import")
+@require_auth(*MANAGE_ROLES)
+def universal_project_import():
+    _authorize("project:import")
+    bundle = _bundle_upload()
+    ip, agent = request_meta()
+    result = transfer_service().import_bundle(
+        bundle,
+        mode=_form_value("mode", "keep_existing"),
+        project_name=_form_value("project_name", "").strip() or None,
+        confirm=_form_value("confirm", ""),
+        replace_confirmed=_form_value("replace_confirmed", "").lower()
+        in {"1", "true", "yes", "on"},
+        actor=_actor(),
+        ip_address=ip,
+        user_agent=agent,
+        request_id=_request_id(),
+    )
+    return _json(result, 201)
+
+
+@bp.delete("/universal/projects/<project_id>")
+@require_auth(*MANAGE_ROLES)
+def universal_project_delete(project_id: str):
+    _authorize("project:delete")
+    payload = Payload(require_json(request))
+    confirm_name = payload.string(
+        "confirm_project_name", required=True, min_length=1, max_length=200
+    )
+    password = payload.string(
+        "password", required=True, min_length=1, max_length=128, strip=False
+    )
+    payload.finish()
+    project = transfer_service()._project(project_id)
+    if (confirm_name or "").strip() != str(project["project_name"]).strip():
+        raise ValidationError(
+            {"confirm_project_name": "Type the exact project name to confirm deletion."}
+        )
+    if not auth_service().verify_admin_password(_actor()["id"], password or ""):
+        audit(
+            auth_service().db,
+            actor=_actor(),
+            action="project.delete",
+            target_type="project",
+            target_id=project_id,
+            outcome="failure",
+            details={"reason": "reauth_failed", "surface": "universal"},
+        )
+        raise ApiError(
+            403, "reauth_failed", "Password confirmation failed. Sign in again and retry."
+        )
+    ip, agent = request_meta()
+    return _json(
+        transfer_service().delete_project(
+            project_id, actor=_actor(), ip_address=ip, user_agent=agent
+        )
+    )
+
+
+@bp.delete("/universal/projects")
+@require_auth(*MANAGE_ROLES)
+def universal_projects_delete_all():
+    _authorize("project:delete_all")
+    if _actor().get("role") != "owner":
+        raise ApiError(403, "owner_required", "Only an Owner can delete all projects.")
+    payload = Payload(require_json(request))
+    confirmation = payload.string(
+        "confirmation", required=True, min_length=1, max_length=64
+    )
+    password = payload.string(
+        "password", required=True, min_length=1, max_length=128, strip=False
+    )
+    payload.finish()
+    if confirmation != "DELETE ALL PROJECTS":
+        raise ValidationError(
+            {"confirmation": "Type DELETE ALL PROJECTS exactly to confirm."}
+        )
+    if not auth_service().verify_admin_password(_actor()["id"], password or ""):
+        audit(
+            auth_service().db,
+            actor=_actor(),
+            action="project.delete_all",
+            target_type="project",
+            outcome="failure",
+            details={"reason": "reauth_failed", "surface": "universal"},
+        )
+        raise ApiError(
+            403, "reauth_failed", "Password confirmation failed. Sign in again and retry."
+        )
+    ip, agent = request_meta()
+    return _json(
+        transfer_service().delete_all_projects(
+            actor=_actor(), ip_address=ip, user_agent=agent
+        )
     )
 
 
@@ -697,12 +909,87 @@ def universal_automation_runs():
     return _json(_hooks().list_automation_runs())
 
 
+@bp.get("/universal/automation/scheduler")
+@require_auth(*MANAGE_ROLES)
+def universal_automation_scheduler():
+    _authorize("automation:read")
+    return _json(scheduler_service().status())
+
+
 # ------------------------------------------------------------ roles/admins
 @bp.get("/universal/roles")
 @require_auth(*MANAGE_ROLES)
 def universal_roles():
     _authorize("admin:read")
-    return _json(_service().list_roles())
+    return _json(role_service().list_roles())
+
+
+@bp.post("/universal/roles")
+@require_auth(*MANAGE_ROLES)
+def universal_role_create():
+    _authorize("admin:roles")
+    ip, agent = request_meta()
+    return _json(
+        role_service().create_role(
+            require_json(request),
+            actor=_actor(),
+            ip_address=ip,
+            user_agent=agent,
+            request_id=_request_id(),
+        ),
+        201,
+    )
+
+
+@bp.patch("/universal/roles/<role_id>")
+@require_auth(*MANAGE_ROLES)
+def universal_role_update(role_id: str):
+    _authorize("admin:roles")
+    ip, agent = request_meta()
+    return _json(
+        role_service().update_role(
+            role_id,
+            require_json(request),
+            actor=_actor(),
+            ip_address=ip,
+            user_agent=agent,
+            request_id=_request_id(),
+        )
+    )
+
+
+@bp.post("/universal/roles/<role_id>/clone")
+@require_auth(*MANAGE_ROLES)
+def universal_role_clone(role_id: str):
+    _authorize("admin:roles")
+    ip, agent = request_meta()
+    return _json(
+        role_service().clone_role(
+            role_id,
+            require_json(request),
+            actor=_actor(),
+            ip_address=ip,
+            user_agent=agent,
+            request_id=_request_id(),
+        ),
+        201,
+    )
+
+
+@bp.delete("/universal/roles/<role_id>")
+@require_auth(*MANAGE_ROLES)
+def universal_role_delete(role_id: str):
+    _authorize("admin:roles")
+    ip, agent = request_meta()
+    return _json(
+        role_service().delete_role(
+            role_id,
+            actor=_actor(),
+            ip_address=ip,
+            user_agent=agent,
+            request_id=_request_id(),
+        )
+    )
 
 
 @bp.get("/universal/admins")
@@ -717,6 +1004,10 @@ def universal_admins():
 def universal_admin_role(admin_id: str):
     _authorize("admin:roles")
     body = require_json(request)
+    platform_role_id = str(body.get("platform_role_id") or "").strip() or None
+    body["platform_role"] = str(
+        body.get("platform_role") or ("custom" if platform_role_id else "")
+    ).strip()
     payload = Payload(body)
     platform_role = payload.string(
         "platform_role", required=True, min_length=1, max_length=30
@@ -728,6 +1019,7 @@ def universal_admin_role(admin_id: str):
             admin_id,
             platform_role=platform_role or "",
             platform_permissions=body.get("platform_permissions"),
+            platform_role_id=platform_role_id,
             actor=_actor(),
             ip_address=ip,
             user_agent=agent,

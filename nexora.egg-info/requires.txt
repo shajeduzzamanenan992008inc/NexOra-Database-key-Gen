@@ -1,0 +1,11 @@
+argon2-cffi<26,>=23
+Flask<4,>=3.1
+pg8000<2,>=1.31
+python-dotenv<2,>=1.0
+waitress<4,>=3.0
+
+[gunicorn]
+gunicorn
+
+[waitress]
+waitress

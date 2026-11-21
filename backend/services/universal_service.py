@@ -587,26 +587,39 @@ class UniversalService:
         return row
 
     # ---------------------------------------------------------------- roles
-    def authorize(self, actor: dict[str, Any], permission: str) -> None:
-        if not actor or not actor.get("id"):
-            raise ApiError(401, "not_authenticated", "Sign in to continue.")
+    def _effective_permissions(self, actor: dict[str, Any]) -> frozenset[str]:
+        """Resolve the actor's current platform permissions from the database."""
         if actor.get("role") == "owner":
-            return
+            return frozenset({"*"})
         row = self.db.fetch_one(
             """
-            SELECT platform_role, platform_permissions
+            SELECT platform_role, platform_permissions, platform_role_id
               FROM admin_users WHERE id = %s AND is_active = true
             """,
-            (actor["id"],),
+            (actor.get("id"),),
         )
         if not row:
             raise ApiError(401, "not_authenticated", "Sign in to continue.")
+        role_id = row.get("platform_role_id")
+        if role_id:
+            role = self.db.fetch_one(
+                "SELECT permissions FROM nexora_roles WHERE id = %s", (role_id,)
+            )
+            if role:
+                return frozenset(
+                    str(item) for item in _json_list(role.get("permissions"))
+                )
         platform_role = str(row.get("platform_role") or "read_only")
-        allowed = ROLE_PERMISSIONS.get(platform_role, frozenset())
         if platform_role == "custom":
-            allowed = frozenset(
+            return frozenset(
                 str(item) for item in _json_list(row.get("platform_permissions"))
             )
+        return ROLE_PERMISSIONS.get(platform_role, frozenset())
+
+    def authorize(self, actor: dict[str, Any], permission: str) -> None:
+        if not actor or not actor.get("id"):
+            raise ApiError(401, "not_authenticated", "Sign in to continue.")
+        allowed = self._effective_permissions(actor)
         if "*" in allowed or permission in allowed:
             return
         raise ApiError(
@@ -648,6 +661,38 @@ class UniversalService:
         )
         return {"admins": rows}
 
+    def _assert_can_grant(
+        self, actor: dict[str, Any], permissions: list[str]
+    ) -> None:
+        """Stop a non-owner from granting permissions they do not hold."""
+        if actor.get("role") == "owner":
+            return
+        effective = self._effective_permissions(actor)
+        beyond = sorted(set(permissions) - effective)
+        if beyond:
+            raise ApiError(
+                403,
+                "privilege_escalation",
+                "You cannot grant permissions beyond your own authority.",
+                {"permissions": beyond},
+            )
+        risks = {
+            str(row["id"]): str(row.get("risk") or "standard")
+            for row in self.db.fetch_all(
+                "SELECT id, risk FROM nexora_permission_definitions"
+            )
+        }
+        critical = sorted(
+            permission for permission in permissions if risks.get(permission) == "critical"
+        )
+        if critical:
+            raise ApiError(
+                403,
+                "privilege_escalation",
+                "Critical permissions can only be granted by an Owner.",
+                {"permissions": critical},
+            )
+
     def set_admin_role(
         self,
         admin_id: str,
@@ -658,17 +703,36 @@ class UniversalService:
         ip_address: str | None,
         user_agent: str | None,
         request_id: str | None,
+        platform_role_id: str | None = None,
     ) -> dict[str, Any]:
         platform_role = (platform_role or "").strip().lower()
         if platform_role not in PLATFORM_ROLES:
             raise ValidationError({"platform_role": "Unknown platform role."})
         target = self.db.fetch_one(
-            "SELECT id, email, role, platform_role FROM admin_users WHERE id = %s",
+            "SELECT id, email, role, platform_role, platform_role_id FROM admin_users WHERE id = %s",
             (admin_id,),
         )
         if not target:
             raise ApiError(404, "ADMIN_NOT_FOUND", "Administrator not found.")
-        permissions = _string_list(platform_permissions or [], "platform_permissions")
+        role_id = (platform_role_id or "").strip() or None
+        if role_id:
+            role = self.db.fetch_one(
+                "SELECT id, permissions FROM nexora_roles WHERE id = %s", (role_id,)
+            )
+            if not role:
+                raise ValidationError({"platform_role_id": "Unknown custom role."})
+            platform_role = "custom"
+            permissions = _string_list(
+                _json_list(role.get("permissions")), "platform_permissions"
+            )
+        else:
+            permissions = _string_list(
+                platform_permissions or [], "platform_permissions"
+            )
+        if platform_role == "owner" and actor.get("role") != "owner":
+            raise ApiError(
+                403, "owner_required", "Only an Owner can assign the Owner role."
+            )
         known = {
             row["id"] for row in self.db.fetch_all("SELECT id FROM nexora_permission_definitions")
         }
@@ -679,6 +743,7 @@ class UniversalService:
             raise ValidationError(
                 {"platform_permissions": "Custom roles require at least one permission."}
             )
+        self._assert_can_grant(actor, permissions)
         base_role = {
             "owner": "owner",
             "read_only": "viewer",
@@ -697,12 +762,14 @@ class UniversalService:
             cursor.execute(
                 """
                 UPDATE admin_users
-                   SET platform_role = %s, platform_permissions = %s::jsonb,
-                       role = %s, updated_at = now()
+                   SET platform_role = %s, platform_role_id = %s,
+                       platform_permissions = %s::jsonb, role = %s,
+                       updated_at = now()
                  WHERE id = %s
                 """,
                 (
                     platform_role,
+                    role_id if platform_role == "custom" else None,
                     json.dumps(permissions),
                     base_role,
                     admin_id,
@@ -720,7 +787,9 @@ class UniversalService:
                 details={
                     "target_email": target["email"],
                     "old_platform_role": target["platform_role"],
+                    "old_platform_role_id": target.get("platform_role_id"),
                     "new_platform_role": platform_role,
+                    "new_platform_role_id": role_id,
                     "permissions": permissions,
                 },
                 strict=True,

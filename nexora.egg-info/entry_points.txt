@@ -1,0 +1,3 @@
+[console_scripts]
+nexora = run:main
+nexora-sms = run_sms:main

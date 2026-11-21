@@ -54,7 +54,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or Settings.from_env()
 
     app = Flask(__name__, static_folder=None)
-    app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
+    # Project bundle uploads are validated separately (8 MiB JSON/ZIP with a
+    # stricter parser). The Flask ceiling only needs to admit the multipart
+    # envelope; it is not a trust boundary for bundle contents.
+    app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
     app.config["SETTINGS"] = settings
     app.secret_key = settings.secret_key
     app.json.sort_keys = False

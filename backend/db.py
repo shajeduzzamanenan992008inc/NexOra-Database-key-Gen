@@ -179,6 +179,40 @@ class Database:
 
     # -- query helpers --------------------------------------------------------
 
+    @contextmanager
+    def session_lock(self, key: int) -> Iterator[bool]:
+        """Hold a PostgreSQL session advisory lock for the enclosed block.
+
+        A session lock is used by the standalone scheduler so the lock survives
+        the many short transactions the job performs. The connection is pinned
+        for the duration of the block and is discarded if unlocking fails, which
+        guarantees the lock is released by connection teardown.
+        """
+
+        connection = self._acquire()
+        broken = False
+        acquired = False
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute("SELECT pg_try_advisory_lock(%s)", (int(key),))
+                row = cursor.fetchone()
+                acquired = bool(row and row[0])
+                connection.commit()
+                yield acquired
+                if acquired:
+                    cursor.execute("SELECT pg_advisory_unlock(%s)", (int(key),))
+                    connection.commit()
+            except BaseException:
+                broken = True
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                raise
+        finally:
+            self._release(connection, broken=broken)
+
     def fetch_all(
         self, sql: str, params: Sequence[Any] | None = ()
     ) -> list[dict[str, Any]]:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import sys
 from pathlib import Path
 
@@ -296,6 +297,76 @@ def cmd_list_admins(_args: argparse.Namespace) -> int:
         db.close()
 
 
+def cmd_universal_automation_run(args: argparse.Namespace) -> int:
+    """Run one idempotent automation sweep (no web process loop)."""
+    from .services.webhook_service import WebhookService
+
+    settings = _settings()
+    db = Database(settings.database)
+    try:
+        result = WebhookService(db, settings).run_automation(dry_run=args.dry_run)
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("status") in {"success", "dry_run"} else 1
+    except DatabaseUnavailable:
+        print("Database error: unable to run automation.", file=sys.stderr)
+        return 3
+    except Exception as exc:
+        print(f"Automation failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+
+
+def cmd_universal_scheduler_run(args: argparse.Namespace) -> int:
+    """Run the lock-protected scheduler worker until stopped."""
+    from .services.scheduler_service import JOBS, SchedulerService
+
+    settings = _settings()
+    db = Database(settings.database)
+    try:
+        service = SchedulerService(db, settings)
+        jobs = [item.strip() for item in (args.jobs or "").split(",") if item.strip()]
+        unknown = set(jobs) - set(JOBS)
+        if unknown:
+            print(f"Unknown scheduler job(s): {', '.join(sorted(unknown))}", file=sys.stderr)
+            return 2
+        if args.once or args.max_iterations == 1:
+            result = service.run_once(jobs=jobs or None, dry_run=args.dry_run)
+            print(json.dumps(result, indent=2, default=str))
+            return 0 if result.get("status") in {"success", "skipped"} else 1
+        result = service.run_forever(
+            interval_seconds=args.interval,
+            jobs=jobs or None,
+            max_iterations=args.max_iterations,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("failures", 0) == 0 else 1
+    except DatabaseUnavailable:
+        print("Database error: unable to start the scheduler.", file=sys.stderr)
+        return 3
+    except Exception as exc:
+        print(f"Scheduler failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+
+
+def cmd_universal_scheduler_status(_args: argparse.Namespace) -> int:
+    from .services.scheduler_service import SchedulerService
+
+    settings = _settings()
+    db = Database(settings.database)
+    try:
+        print(json.dumps(SchedulerService(db, settings).status(), indent=2, default=str))
+        return 0
+    except DatabaseUnavailable:
+        print("Database error: unable to read scheduler status.", file=sys.stderr)
+        return 3
+    finally:
+        db.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m backend.cli",
@@ -376,6 +447,56 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = sub.add_parser("list-admins", help="List administrator accounts.")
     listing.set_defaults(func=cmd_list_admins)
+
+    automation = sub.add_parser(
+        "universal-automation-run",
+        help="Run one bounded universal automation sweep.",
+    )
+    automation.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Count due work without modifying domain data.",
+    )
+    automation.set_defaults(func=cmd_universal_automation_run)
+
+    scheduler = sub.add_parser(
+        "universal-scheduler-run",
+        help="Run the standalone lock-protected scheduler worker.",
+    )
+    scheduler.add_argument(
+        "--once",
+        action="store_true",
+        help="Run one sweep and exit (recommended for cron).",
+    )
+    scheduler.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="Seconds between sweeps in loop mode (default 60).",
+    )
+    scheduler.add_argument(
+        "--jobs",
+        default="",
+        help="Comma-separated subset: automation,project_purge,sessions.",
+    )
+    scheduler.add_argument(
+        "--max-iterations",
+        type=int,
+        default=None,
+        help="Stop after this many sweeps (useful for testing).",
+    )
+    scheduler.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Count due work without modifying domain data.",
+    )
+    scheduler.set_defaults(func=cmd_universal_scheduler_run)
+
+    scheduler_status = sub.add_parser(
+        "universal-scheduler-status",
+        help="Print scheduler lock-independent status and recent runs.",
+    )
+    scheduler_status.set_defaults(func=cmd_universal_scheduler_status)
     return parser
 
 

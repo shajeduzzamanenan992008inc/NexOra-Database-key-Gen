@@ -139,6 +139,9 @@ def reset_database(app):
     # seeded global key types (project_id IS NULL) survive every test.
     app.extensions["db"].execute("DELETE FROM nexora_projects")
     app.extensions["db"].execute("DELETE FROM admin_users")
+    # Custom roles are global configuration. They are removed after accounts so
+    # the platform_role_id RESTRICT foreign key cannot block cleanup.
+    app.extensions["db"].execute("DELETE FROM nexora_roles")
     yield
 
 

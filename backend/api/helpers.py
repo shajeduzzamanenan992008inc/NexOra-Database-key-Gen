@@ -11,6 +11,9 @@ from ..serialization import isoformat
 from ..services.auth_service import AuthService
 from ..services.license_service import LicenseService
 from ..services.project_service import ProjectService
+from ..services.project_transfer_service import ProjectTransferService
+from ..services.role_service import RoleService
+from ..services.scheduler_service import SchedulerService
 from ..services.universal_service import UniversalService
 from ..services.webhook_service import WebhookService
 from ..validation import Payload, client_ip, user_agent
@@ -50,6 +53,30 @@ def webhook_service() -> WebhookService:
             current_app.extensions["db"], current_app.extensions["settings"]
         )
     return current_app.extensions["webhook_service"]
+
+
+def transfer_service() -> ProjectTransferService:
+    if "transfer_service" not in current_app.extensions:
+        current_app.extensions["transfer_service"] = ProjectTransferService(
+            current_app.extensions["db"], current_app.extensions["settings"]
+        )
+    return current_app.extensions["transfer_service"]
+
+
+def role_service() -> RoleService:
+    if "role_service" not in current_app.extensions:
+        current_app.extensions["role_service"] = RoleService(
+            current_app.extensions["db"], current_app.extensions["settings"]
+        )
+    return current_app.extensions["role_service"]
+
+
+def scheduler_service() -> SchedulerService:
+    if "scheduler_service" not in current_app.extensions:
+        current_app.extensions["scheduler_service"] = SchedulerService(
+            current_app.extensions["db"], current_app.extensions["settings"]
+        )
+    return current_app.extensions["scheduler_service"]
 
 
 def request_meta() -> tuple[str, str]:

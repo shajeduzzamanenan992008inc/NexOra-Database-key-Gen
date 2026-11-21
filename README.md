@@ -1,9 +1,13 @@
 <p align="center">
-  <img src="assets/branding/omega_singularity_ultra.svg" alt="OMEGA SINGULARITY ULTRA" width="100%" />
+  <img src="assets/branding/nexora-keygen-logo.svg" alt="Nexora-Keygen" width="100%" />
 </p>
 
 <p align="center">
-  <img src="assets/branding/omega_guardian_nexus_prime_evolution.svg" alt="OMEGA GUARDIAN NEXUS PRIME EVOLUTION" width="100%" />
+  <img src="assets\omega-key-assets\svg\database-key.svg" alt="database-key" width="100%" />
+</p>
+
+<p align="center">
+  <img src="assets\omega-key-assets\svg\readme-icon.svg" alt="readme-icon" width="100%" />
 </p>
 
 <p align="center">

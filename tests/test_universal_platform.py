@@ -156,7 +156,8 @@ def test_webhooks_are_queued_without_secrets(owner, app, db):
         {
             "project_id": project["id"],
             "name": "Test hook",
-            "url": "https://example.invalid/nexora",
+            # A public literal address keeps the test deterministic without DNS.
+            "url": "https://1.1.1.1/nexora",
             "events": ["key.generated"],
         },
     )

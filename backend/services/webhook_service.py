@@ -11,21 +11,25 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import ipaddress
 import json
 import secrets
-import socket
 import time
 from datetime import datetime, timezone
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from ..db import Database
 from ..errors import ApiError, ValidationError
 from ..serialization import utcnow
+from .webhook_security import (
+    DEFAULT_MAX_REQUEST_BYTES,
+    DEFAULT_MAX_RESPONSE_BYTES,
+    DEFAULT_TIMEOUT_SECONDS,
+    WebhookSecurityError,
+    open_pinned_request,
+    resolve_webhook_target,
+    safe_error,
+)
 
 WEBHOOK_EVENTS = (
     "project.created",
@@ -91,56 +95,35 @@ def sanitize_payload(value: Any, depth: int = 0) -> Any:
 
 
 class WebhookService:
-    def __init__(self, db: Database, settings: Any) -> None:
+    def __init__(
+        self,
+        db: Database,
+        settings: Any,
+        *,
+        resolver: Any = None,
+        connection_factory: Any = None,
+    ) -> None:
         self.db = db
         self.settings = settings
         self.pepper = getattr(settings, "key_pepper", "")
+        # Injection points exist for deterministic tests. Production leaves
+        # them as None and uses the real resolver / pinned HTTP transport.
+        self._resolver = resolver
+        self._connection_factory = connection_factory
 
     # ------------------------------------------------------------------ URLs
-    @staticmethod
-    def _parse_url(url: str) -> tuple[str, str, int, str]:
-        try:
-            parsed = urlparse(url)
-        except ValueError:
-            raise ValidationError({"url": "The webhook URL is malformed."}) from None
-        if parsed.scheme not in {"http", "https"}:
-            raise ValidationError({"url": "Webhook URLs must use http:// or https://."})
-        if not parsed.hostname:
-            raise ValidationError({"url": "Webhook URLs must include a host."})
-        if parsed.username or parsed.password:
-            raise ValidationError({"url": "Webhook URLs cannot contain credentials."})
-        if len(url) > 2048:
-            raise ValidationError({"url": "Webhook URLs must be 2048 characters or fewer."})
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        return parsed.scheme, parsed.hostname, port, parsed.path or "/"
+    def _validated_target(self, url: str):
+        return resolve_webhook_target(
+            url,
+            require_https=bool(getattr(self.settings, "is_production", False)),
+            resolver=self._resolver,
+        )
 
     def _validate_public_url(self, url: str) -> None:
-        scheme, host, port, _ = self._parse_url(url)
-        if not getattr(self.settings, "is_production", False):
-            return
         try:
-            literal = ipaddress.ip_address(host)
-            addresses = [literal]
-        except ValueError:
-            try:
-                addresses = [
-                    ipaddress.ip_address(item[4][0])
-                    for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-                ]
-            except (OSError, ValueError):
-                raise ValidationError({"url": "The webhook host could not be resolved."}) from None
-        for address in addresses:
-            if (
-                address.is_private
-                or address.is_loopback
-                or address.is_link_local
-                or address.is_multicast
-                or address.is_reserved
-                or address.is_unspecified
-            ):
-                raise ValidationError(
-                    {"url": "Webhook URLs cannot target private or local network addresses."}
-                )
+            self._validated_target(url)
+        except WebhookSecurityError as exc:
+            raise ValidationError({"url": exc.message}) from None
 
     # --------------------------------------------------------------- secrets
     def _secret_for(self, webhook: dict[str, Any]) -> str:
@@ -497,13 +480,31 @@ class WebhookService:
             (max(1, min(100, limit)),),
         )
         delivered = failed = dead = 0
+        timeout = float(
+            getattr(self.settings, "webhook_timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+        )
+        max_response = int(
+            getattr(
+                self.settings,
+                "webhook_max_response_bytes",
+                DEFAULT_MAX_RESPONSE_BYTES,
+            )
+        )
+        max_request = int(
+            getattr(
+                self.settings,
+                "webhook_max_request_bytes",
+                DEFAULT_MAX_REQUEST_BYTES,
+            )
+        )
         for row in rows:
             attempts = int(row["attempts"]) + 1
             ok = False
             response_code = None
+            response_bytes = None
             error = ""
             try:
-                self._validate_public_url(row["url"])
+                target = self._validated_target(row["url"])
                 secret = self._secret_for(
                     {
                         "id": row["webhook_id"],
@@ -511,13 +512,19 @@ class WebhookService:
                         "secret_version": row["secret_version"],
                     }
                 )
-                body = json.dumps(row["payload"], separators=(",", ":"), default=str)
+                body = json.dumps(
+                    row["payload"], separators=(",", ":"), default=str
+                ).encode("utf-8")
+                if len(body) > max_request:
+                    raise WebhookSecurityError(
+                        "request_too_large",
+                        "The webhook payload exceeds the safe request limit.",
+                    )
                 timestamp = int(time.time())
-                signature = self.signature(secret, timestamp, body)
-                request = Request(
-                    row["url"],
-                    data=body.encode("utf-8"),
-                    method="POST",
+                signature = self.signature(secret, timestamp, body.decode("utf-8"))
+                response_code, _response_body, response_bytes = open_pinned_request(
+                    target,
+                    body=body,
                     headers={
                         "Content-Type": "application/json",
                         "User-Agent": "NexOra-Webhooks/1.0",
@@ -525,52 +532,58 @@ class WebhookService:
                         "X-NexOra-Delivery": str(row["event_id"]),
                         "X-NexOra-Signature": f"t={timestamp},v1={signature}",
                     },
+                    timeout=timeout,
+                    max_response_bytes=max_response,
+                    connection_factory=self._connection_factory,
                 )
-                with urlopen(request, timeout=5) as response:
-                    response_code = int(response.status)
-                    response.read(4096)
+                if 300 <= response_code < 400:
+                    # Redirects are deliberately not followed: the target may
+                    # point at an unvalidated private address.
+                    error = "redirect_rejected"
+                    response_code = response_code
+                else:
                     ok = 200 <= response_code < 300
                     if not ok:
                         error = f"HTTP {response_code}"
-            except HTTPError as exc:
-                response_code = int(exc.code)
-                error = f"HTTP {exc.code}"
-            except (URLError, TimeoutError, OSError) as exc:
-                error = str(exc)[:300]
-            except ValidationError as exc:
-                error = exc.message[:300]
             except Exception as exc:
-                error = str(exc)[:300]
+                code, message = safe_error(exc)
+                error = f"{code}: {message}"[:300]
             if ok:
                 delivered += 1
                 self.db.execute(
                     """
                     UPDATE nexora_webhook_deliveries
                        SET status = 'delivered', attempts = %s, response_code = %s,
-                           error = '', delivered_at = now()
+                           response_bytes = %s, error = '', delivered_at = now(),
+                           last_attempt_at = now()
                      WHERE id = %s
                     """,
-                    (attempts, response_code, row["id"]),
+                    (attempts, response_code, response_bytes, row["id"]),
                 )
             else:
                 dead = attempts >= 6
-                if dead:
-                    status = "dead"
-                else:
-                    status = "failed"
+                status = "dead" if dead else "failed"
                 delay = min(3600, 60 * (2 ** max(0, attempts - 1)))
-                if dead:
-                    failed += 0
-                else:
+                if not dead:
                     failed += 1
                 self.db.execute(
                     """
                     UPDATE nexora_webhook_deliveries
                        SET status = %s, attempts = %s, response_code = %s,
-                           error = %s, next_attempt_at = now() + (%s || ' seconds')::interval
+                           response_bytes = %s, error = %s,
+                           last_attempt_at = now(),
+                           next_attempt_at = now() + (%s || ' seconds')::interval
                      WHERE id = %s
                     """,
-                    (status, attempts, response_code, error, str(delay), row["id"]),
+                    (
+                        status,
+                        attempts,
+                        response_code,
+                        response_bytes,
+                        error,
+                        str(delay),
+                        row["id"],
+                    ),
                 )
                 if dead:
                     try:
@@ -596,7 +609,12 @@ class WebhookService:
                         )
                     except Exception:
                         pass
-        return {"checked": len(rows), "delivered": delivered, "failed": failed, "dead": dead}
+        return {
+            "checked": len(rows),
+            "delivered": delivered,
+            "failed": failed,
+            "dead": dead,
+        }
 
     # ---------------------------------------------------------- notifications
     def list_notifications(
@@ -676,12 +694,107 @@ class WebhookService:
     def list_automation_runs(self, *, limit: int = 20) -> dict[str, Any]:
         rows = self.db.fetch_all(
             """
-            SELECT id, job, status, details, error, started_at, finished_at
+            SELECT id, job, status, details, error, worker_id, duration_ms,
+                   dry_run, started_at, finished_at
               FROM nexora_automation_runs ORDER BY started_at DESC LIMIT %s
             """,
             (max(1, min(100, limit)),),
         )
         return {"runs": rows}
+
+    def _automation_preview(self) -> dict[str, Any]:
+        """Count the work a real run would perform without modifying rows."""
+
+        retention = self._setting_int("nexora.expired_key_retention_days", 7, 0, 365)
+        inactive_days = self._setting_int("nexora.inactive_device_days", 30, 0, 3650)
+        return {
+            "dry_run": True,
+            "projects_expired": int(
+                self.db.fetch_value(
+                    """
+                    SELECT COUNT(*)::int FROM nexora_projects
+                     WHERE status = 'active' AND deleted_at IS NULL
+                       AND expires_at IS NOT NULL AND expires_at <= now()
+                    """
+                )
+                or 0
+            ),
+            "keys_expired": int(
+                self.db.fetch_value(
+                    """
+                    SELECT COUNT(*)::int FROM reader_keys
+                     WHERE status IN ('generated','active','deactivated')
+                       AND expires_at IS NOT NULL AND expires_at <= now()
+                       AND revoked_at IS NULL
+                    """
+                )
+                or 0
+            ),
+            "expired_keys_cleaned": int(
+                self.db.fetch_value(
+                    """
+                    SELECT COUNT(*)::int FROM reader_keys
+                     WHERE status = 'expired' AND expires_at IS NOT NULL
+                       AND expires_at <= now() - (%s || ' days')::interval
+                       AND COALESCE(is_permanent, false) = false
+                    """,
+                    (str(retention),),
+                )
+                or 0
+            ),
+            "retention_days": retention,
+            "devices_deactivated": int(
+                self.db.fetch_value(
+                    """
+                    SELECT COUNT(*)::int FROM nexora_devices
+                     WHERE status = 'active'
+                       AND last_seen_at <= now() - (%s || ' days')::interval
+                    """,
+                    (str(inactive_days),),
+                )
+                or 0
+            ),
+            "inactive_device_days": inactive_days,
+            "key_expiry_notifications": int(
+                self.db.fetch_value(
+                    """
+                    SELECT COUNT(*)::int FROM reader_keys
+                     WHERE status IN ('generated','active')
+                       AND expires_at IS NOT NULL
+                       AND expires_at > now()
+                       AND expires_at <= now() + interval '7 days'
+                    """
+                )
+                or 0
+            ),
+            "project_expiry_notifications": int(
+                self.db.fetch_value(
+                    """
+                    SELECT COUNT(*)::int FROM nexora_projects
+                     WHERE status = 'active' AND archived_at IS NULL
+                       AND deleted_at IS NULL
+                       AND expires_at IS NOT NULL AND expires_at > now()
+                       AND expires_at <= now() + interval '7 days'
+                    """
+                )
+                or 0
+            ),
+            "webhooks_due": int(
+                self.db.fetch_value(
+                    """
+                    SELECT COUNT(*)::int
+                      FROM nexora_webhook_deliveries d
+                      JOIN nexora_webhooks w ON w.id = d.webhook_id
+                     WHERE d.status IN ('pending','failed')
+                       AND w.is_active = true
+                       AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= now())
+                       AND d.attempts < 6
+                    """
+                )
+                or 0
+            ),
+            "note": "Dry run only. No projects, keys, devices, notifications or deliveries were changed.",
+        }
 
     # ------------------------------------------------------------- automation
     def _setting_int(self, key: str, default: int, minimum: int, maximum: int) -> int:
@@ -692,12 +805,56 @@ class WebhookService:
         except Exception:
             return default
 
-    def run_automation(self) -> dict[str, Any]:
-        run_id = self.db.fetch_value(
-            "INSERT INTO nexora_automation_runs (job, status) VALUES ('automation.run', 'running') RETURNING id"
-        )
+    def run_automation(
+        self,
+        *,
+        dry_run: bool = False,
+        record_run: bool = True,
+        worker_id: str = "",
+        job: str = "automation.run",
+    ) -> dict[str, Any]:
+        """Run one bounded automation sweep.
+
+        ``record_run`` is false when the standalone scheduler owns the execution
+        ledger. ``dry_run`` performs read-only counts and never mutates domain
+        data.
+        """
+
+        started = time.perf_counter()
+        run_id = None
+        if record_run:
+            run_id = self.db.fetch_value(
+                """
+                INSERT INTO nexora_automation_runs
+                    (job, status, worker_id, dry_run)
+                VALUES (%s, 'running', %s, %s)
+                RETURNING id
+                """,
+                (job, worker_id, dry_run),
+            )
         details: dict[str, Any] = {}
         try:
+            if dry_run:
+                details = self._automation_preview()
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                if record_run:
+                    self.db.execute(
+                        """
+                        UPDATE nexora_automation_runs
+                           SET status = 'dry_run', details = %s::jsonb,
+                               duration_ms = %s, finished_at = now()
+                         WHERE id = %s
+                        """,
+                        (json.dumps(details), duration_ms, run_id),
+                    )
+                return {
+                    "id": run_id,
+                    "status": "dry_run",
+                    "dry_run": True,
+                    "details": details,
+                    "duration_ms": duration_ms,
+                }
+
             expired_projects = self.db.execute(
                 """
                 UPDATE nexora_projects
@@ -853,22 +1010,34 @@ class WebhookService:
 
             delivery = self.process_deliveries(limit=50)
             details["webhooks"] = delivery
-            self.db.execute(
-                """
-                UPDATE nexora_automation_runs
-                   SET status = 'success', details = %s::jsonb, finished_at = now()
-                 WHERE id = %s
-                """,
-                (json.dumps(details), run_id),
-            )
-            return {"id": run_id, "status": "success", "details": details}
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            if record_run:
+                self.db.execute(
+                    """
+                    UPDATE nexora_automation_runs
+                       SET status = 'success', details = %s::jsonb,
+                           duration_ms = %s, finished_at = now()
+                     WHERE id = %s
+                    """,
+                    (json.dumps(details), duration_ms, run_id),
+                )
+            return {
+                "id": run_id,
+                "status": "success",
+                "dry_run": False,
+                "details": details,
+                "duration_ms": duration_ms,
+            }
         except Exception as exc:
-            self.db.execute(
-                """
-                UPDATE nexora_automation_runs
-                   SET status = 'failed', error = %s, finished_at = now()
-                 WHERE id = %s
-                """,
-                (str(exc)[:1000], run_id),
-            )
+            if record_run:
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                self.db.execute(
+                    """
+                    UPDATE nexora_automation_runs
+                       SET status = 'failed', error = %s, duration_ms = %s,
+                           finished_at = now()
+                     WHERE id = %s
+                    """,
+                    (str(exc)[:1000], duration_ms, run_id),
+                )
             raise

@@ -5382,3 +5382,57 @@ html.is-login body.omega-auth {
   html.is-login body.omega-auth { padding: 9px 12px 11px; }
 }
 
+
+/* ---------------------------------------------------------------------------
+   Secure shutdown scene (logout only)
+   Bounded visual transition; session revocation happens before it starts and
+   navigation is guaranteed by a hard timer in shutdown.js.
+--------------------------------------------------------------------------- */
+.shutdown-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.55rem;
+  padding: 2rem;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(46, 132, 255, 0.18), transparent 46%),
+    rgba(2, 4, 10, 0.94);
+  backdrop-filter: blur(14px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 220ms ease, visibility 220ms ease;
+}
+.shutdown-screen.is-active { opacity: 1; visibility: visible; }
+.shutdown-screen.is-finished { opacity: 0; }
+.shutdown-core { position: relative; width: 9rem; height: 9rem; display: grid; place-items: center; }
+.shutdown-core img { position: relative; z-index: 2; width: 5.5rem; height: 5.5rem; object-fit: contain; }
+.shutdown-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(96, 196, 255, 0.45);
+  box-shadow: 0 0 42px rgba(54, 152, 255, 0.22), inset 0 0 42px rgba(54, 152, 255, 0.12);
+}
+.shutdown-ring-b { inset: 0.85rem; border-color: rgba(182, 118, 255, 0.5); }
+.shutdown-screen.is-active .shutdown-ring-a { animation: shutdown-spin 1900ms linear infinite; }
+.shutdown-screen.is-active .shutdown-ring-b { animation: shutdown-spin 2600ms linear infinite reverse; }
+.shutdown-kicker { margin: 0.4rem 0 0; font-size: 0.66rem; letter-spacing: 0.24em; text-transform: uppercase; color: var(--cyan, #63d7ff); }
+.shutdown-title { margin: 0; font-size: clamp(1.4rem, 4vw, 2rem); letter-spacing: 0.04em; }
+.shutdown-status { margin: 0; font-size: 0.68rem; letter-spacing: 0.14em; color: var(--muted, #97a6c2); }
+.shutdown-identity { display: grid; gap: 0.15rem; margin-top: 0.9rem; padding-top: 0.85rem; border-top: 1px solid rgba(126, 170, 255, 0.2); min-width: min(20rem, 84vw); }
+.shutdown-identity .founder-tier { font-size: 0.62rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted, #97a6c2); }
+.shutdown-identity .founder-name { font-size: 0.98rem; letter-spacing: 0.06em; }
+.shutdown-progress { width: min(18rem, 70vw); height: 2px; margin-top: 0.9rem; overflow: hidden; background: rgba(126, 170, 255, 0.18); }
+.shutdown-progress span { display: block; height: 100%; width: 100%; transform-origin: left; background: linear-gradient(90deg, #3ea7ff, #b678ff); animation: shutdown-progress var(--shutdown-duration, 1500ms) linear forwards; }
+@keyframes shutdown-spin { to { transform: rotate(360deg); } }
+@keyframes shutdown-progress { from { transform: scaleX(0.04); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .shutdown-screen.is-active .shutdown-ring-a,
+  .shutdown-screen.is-active .shutdown-ring-b,
+  .shutdown-progress span { animation: none; }
+  .shutdown-progress span { transform: scaleX(1); }
+}

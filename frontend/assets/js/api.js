@@ -135,6 +135,74 @@ async function logoutWithCsrfRecovery() {
   throw lastError || new ApiProblem("Sign-out failed.", 403, "csrf_failed");
 }
 
+async function authorizedFetch(path, options = {}, timeoutMs = 30000) {
+  const headers = { Accept: "application/json", ...(options.headers || {}) };
+  if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  const controller = new AbortController();
+  const timer = window.setTimeout(
+    () => controller.abort(),
+    Math.max(1000, Number(timeoutMs) || 30000)
+  );
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers,
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new ApiProblem(
+        "The server took too long to respond. Try again.",
+        408,
+        "timeout"
+      );
+    }
+    throw new ApiProblem("Network unavailable. Try again.", 0, "network_error");
+  } finally {
+    window.clearTimeout(timer);
+  }
+  if (!response.ok) {
+    let problem = {};
+    try {
+      const payload = await response.json();
+      problem = payload && payload.error ? payload.error : {};
+    } catch {
+      problem = {};
+    }
+    throw new ApiProblem(
+      problem.message || `Request failed with status ${response.status}.`,
+      response.status,
+      problem.code || "request_failed",
+      problem.details || {}
+    );
+  }
+  return response;
+}
+
+async function upload(path, formData, timeoutMs = 60000) {
+  const response = await authorizedFetch(
+    path,
+    { method: "POST", body: formData },
+    timeoutMs
+  );
+  return response.json();
+}
+
+async function postBlob(path, body, timeoutMs = 60000) {
+  const response = await authorizedFetch(
+    path,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    },
+    timeoutMs
+  );
+  return response.blob();
+}
+
 export const api = {
   // Authentication
   session: (options = {}) =>
@@ -243,6 +311,28 @@ export const api = {
     }),
   universalProjectExport: (id) =>
     request(`/api/v1/universal/projects/${encodeURIComponent(id)}/export`),
+  universalProjectExportPreview: (id) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(id)}/export/preview`),
+  universalProjectExportUrl: (id, format = "json") =>
+    `/api/v1/universal/projects/${encodeURIComponent(id)}/export?${query({ format })}`,
+  exportUniversalProjectsBlob: (body) =>
+    postBlob("/api/v1/universal/projects/export", body, 90000),
+  universalProjectImportPreview: (formData) =>
+    upload("/api/v1/universal/projects/import/preview", formData, 90000),
+  universalProjectImport: (formData) =>
+    upload("/api/v1/universal/projects/import", formData, 90000),
+  deleteUniversalProject: (id, confirmProjectName, password) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: { confirm_project_name: confirmProjectName, password },
+      timeoutMs: 30000,
+    }),
+  deleteAllUniversalProjects: (confirmation, password) =>
+    request("/api/v1/universal/projects", {
+      method: "DELETE",
+      body: { confirmation, password },
+      timeoutMs: 60000,
+    }),
   universalKeys: (params) => request(`/api/v1/universal/keys?${query(params)}`),
   universalKey: (id) => request(`/api/v1/universal/keys/${encodeURIComponent(id)}`),
   generateUniversalKeys: (body) =>
@@ -331,7 +421,24 @@ export const api = {
   automationRun: () =>
     request("/api/v1/universal/automation/run", { method: "POST" }),
   automationRuns: () => request("/api/v1/universal/automation/runs"),
+  schedulerStatus: () => request("/api/v1/universal/automation/scheduler"),
   universalRoles: () => request("/api/v1/universal/roles"),
+  createRole: (body) =>
+    request("/api/v1/universal/roles", { method: "POST", body }),
+  updateRole: (id, body) =>
+    request(`/api/v1/universal/roles/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body,
+    }),
+  cloneRole: (id, body) =>
+    request(`/api/v1/universal/roles/${encodeURIComponent(id)}/clone`, {
+      method: "POST",
+      body,
+    }),
+  deleteRole: (id) =>
+    request(`/api/v1/universal/roles/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   universalAdmins: () => request("/api/v1/universal/admins"),
   setAdminRole: (id, body) =>
     request(`/api/v1/universal/admins/${encodeURIComponent(id)}/role`, {
