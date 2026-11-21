@@ -1,6 +1,6 @@
 # Project Backup, Restore, and Permanent Deletion
 
-Status: implemented in the local repository. Migration 010 has been exercised only
+Status: implemented in the local repository. Migration 011 has been exercised only
 on the local test database; it has not been applied to production.
 
 ## Data model
@@ -141,6 +141,7 @@ failure rolls back the complete transaction.
 ```bash
 python -m backend.cli migrate                 # local/test database only
 python -m pytest tests/test_project_transfer_roles_scheduler.py -q
+python -m pytest tests/test_imported_replacements_project_roles.py -q
 ```
 
 Then, as an Owner:
@@ -153,8 +154,16 @@ Then, as an Owner:
 6. Open Delete All and verify the pre-execution counts appear before the phrase
    and password are accepted.
 
+## Imported-key replacement after restore
+
+Restored keys remain regeneration-required metadata. Open Imported key recovery,
+select records, preview eligibility, then confirm generation. Replacements are
+new independent credentials: original plaintext is never restored, and a revoked
+or expired original stays revoked or expired. Replacement history stores only key
+hints, status, warnings, actor, and timestamps.
+
 ## Production gate
 
-Apply `db/migrations/010_project_transfer_roles_scheduler.sql` only after an
+Apply `db/migrations/011_project_roles_imported_replacements.sql` only after an
 approved backup/PITR checkpoint and migration window. No production migration or
 deployment was performed during this work.

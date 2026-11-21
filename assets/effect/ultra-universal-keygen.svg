@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600" font-family="Consolas,'Courier New',monospace">
+<title>OMEGA - Ultra Universal Key Gen</title>
+<defs>
+<linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#00f0ff"/><stop offset=".5" stop-color="#8a5cff"/><stop offset="1" stop-color="#ff2bd6"/></linearGradient>
+<radialGradient id="bg" cx=".5" cy=".35" r=".85"><stop offset="0" stop-color="#14206a"/><stop offset=".55" stop-color="#070b26"/><stop offset="1" stop-color="#010208"/></radialGradient>
+<linearGradient id="car" x1="0" x2="1"><stop offset="0" stop-color="#0ff" stop-opacity="0"/><stop offset="1" stop-color="#fff"/></linearGradient>
+<filter id="glow" filterUnits="userSpaceOnUse" x="0" y="0" width="960" height="600"><feGaussianBlur stdDeviation="3.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="bolt" filterUnits="userSpaceOnUse" x="0" y="0" width="960" height="600"><feTurbulence type="fractalNoise" baseFrequency=".02 .05" numOctaves="2" result="n"><animate attributeName="baseFrequency" dur="1.2s" repeatCount="indefinite" values=".02 .05;.035 .08;.015 .04;.03 .09;.02 .05"/></feTurbulence><feDisplacementMap in="SourceGraphic" in2="n" scale="16" result="d"/><feGaussianBlur in="d" stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="d"/></feMerge></filter>
+<path id="sky" d="M0 520V468h36V440h28V410l7-34 7 34v30h34V452h44V418h30V384l6-58 6 58v34h40V458h52V428h36V400h26V456h46V438h38V404l8-72 8 72v34h50V452h60V424h34V462h46V432h40V398h26V466h56V446h44V420l6-46 6 46v26h40V470h58V440h32V472h36V520Z"/>
+<clipPath id="skc"><use href="#sky"/></clipPath>
+<clipPath id="pc"><rect x="130" y="352" width="700" height="66" rx="10"/></clipPath>
+<path id="b1" d="M150 0L128 70L160 96L118 170L150 196L96 292L128 316L84 420M118 170L74 206L88 238"/>
+<path id="b2" d="M810 0L836 64L802 92L846 168L812 196L868 290L838 318L884 424M846 168L890 204L876 236"/>
+<path id="b3" d="M330 0L352 58L318 98L364 168L330 212L382 296L352 346M364 168L400 190"/>
+<path id="b4" d="M630 0L608 58L642 98L596 168L630 212L578 296L608 346M596 168L560 190"/>
+</defs>
+<style>
+.r{transform-origin:480px 190px}
+@keyframes cw{to{transform:rotate(360deg)}}
+@keyframes cc{to{transform:rotate(-360deg)}}
+@keyframes tw{0%,100%{opacity:.1}50%{opacity:1}}
+@keyframes fly{from{transform:translateX(-240px)}to{transform:translateX(1200px)}}
+@keyframes hit{0%,84%,100%{opacity:0}86%{opacity:1}88%{opacity:.15}90%{opacity:1}94%{opacity:0}}
+@keyframes win{to{stroke-dashoffset:-48}}
+@keyframes gl{0%,90%,100%{transform:translate(0)}92%{transform:translate(-4px,1px)}94%{transform:translate(4px,-1px)}96%{transform:translate(-2px,0)}}
+@keyframes pu{0%,100%{opacity:.5;transform:scale(.9)}50%{opacity:1;transform:scale(1.12)}}
+@keyframes sw{from{transform:scale(.6);opacity:.9}to{transform:scale(3.4);opacity:0}}
+@keyframes sc{from{transform:translateX(-60px)}to{transform:translateX(760px)}}
+@keyframes bl{50%{opacity:.25}}
+.s{animation:tw 3s infinite}
+.chip,.btn{cursor:pointer}
+.chip rect{fill:#0a1236;stroke:#2a4cff;stroke-width:1.2;transition:.2s}
+.chip text{fill:#8fb4ff;font-size:12px;letter-spacing:2px;text-anchor:middle;pointer-events:none}
+.chip.on rect{fill:#0b3a52;stroke:#0ff;filter:url(#glow)}
+.chip.on text{fill:#fff}
+.btn:hover rect{stroke:#fff}
+</style>
+
+<rect width="960" height="600" fill="url(#bg)"/>
+<g fill="#cfe8ff">
+<circle class="s" cx="60" cy="40" r="1.5"/><circle class="s" cx="210" cy="120" r="1.2" style="animation-delay:-1s"/><circle class="s" cx="300" cy="30" r="1.6" style="animation-delay:-2s"/><circle class="s" cx="420" cy="70" r="1" style="animation-delay:-.5s"/><circle class="s" cx="560" cy="26" r="1.4" style="animation-delay:-1.5s"/><circle class="s" cx="690" cy="110" r="1.2" style="animation-delay:-2.5s"/><circle class="s" cx="780" cy="48" r="1.6"/><circle class="s" cx="900" cy="96" r="1.3" style="animation-delay:-1.2s"/><circle class="s" cx="40" cy="190" r="1.2" style="animation-delay:-.7s"/><circle class="s" cx="930" cy="210" r="1.5" style="animation-delay:-2.2s"/><circle class="s" cx="140" cy="260" r="1" style="animation-delay:-1.8s"/><circle class="s" cx="830" cy="280" r="1.1" style="animation-delay:-.3s"/>
+</g>
+<circle class="r" cx="480" cy="190" r="165" fill="none" stroke="#3a5cff" stroke-opacity=".3" stroke-dasharray="2 10" style="animation:cc 60s linear infinite"/>
+
+<use href="#sky" fill="#050a22" stroke="#2a4cff" stroke-opacity=".5"/>
+<g clip-path="url(#skc)" fill="none" stroke-width="3">
+<path d="M0 430H960M0 458H960M0 486H960M0 512H960" stroke="#7ff" stroke-opacity=".6" stroke-dasharray="3 9" style="animation:win 2s linear infinite"/>
+<path d="M0 444H960M0 472H960M0 498H960" stroke="#ff9" stroke-opacity=".5" stroke-dasharray="2 14" style="animation:win 3.4s linear infinite"/>
+</g>
+<g><rect y="292" width="90" height="3" fill="url(#car)" style="animation:fly 7s linear infinite"/><rect y="348" width="70" height="2.5" fill="url(#car)" style="animation:fly 5s linear infinite -2s"/><rect y="404" width="110" height="3" fill="url(#car)" style="animation:fly 9s linear infinite -4s"/></g>
+<g fill="none" stroke="#2a6cff" stroke-opacity=".4">
+<path d="M0 548H960M0 570H960M0 592H960"/>
+<path d="M480 500L-600 600M480 500L-300 600M480 500L0 600M480 500L240 600M480 500L480 600M480 500L720 600M480 500L960 600M480 500L1260 600M480 500L1560 600" stroke-dasharray="8 8" style="animation:win 1.2s linear infinite"/>
+</g>
+
+<rect width="960" height="600" fill="#9cf" fill-opacity=".12" style="animation:hit 5.3s infinite" opacity="0"/>
+<g style="animation:hit 5.3s infinite" opacity="0" filter="url(#bolt)" fill="none" stroke-linejoin="round" stroke-linecap="round"><use href="#b1" stroke="#6af" stroke-width="8"/><use href="#b1" stroke="#fff" stroke-width="2.5"/></g>
+<g style="animation:hit 7.1s infinite 2s" opacity="0" filter="url(#bolt)" fill="none" stroke-linejoin="round" stroke-linecap="round"><use href="#b2" stroke="#d6f" stroke-width="8"/><use href="#b2" stroke="#fff" stroke-width="2.5"/></g>
+
+<g filter="url(#glow)">
+<circle class="r" cx="480" cy="190" r="104" fill="none" stroke="url(#g)" stroke-width="2.5" stroke-dasharray="40 14 6 14" style="animation:cw 18s linear infinite"/>
+<polygon class="r" points="570,190 525,268 435,268 390,190 435,112 525,112" fill="none" stroke="#0ff" stroke-width="2" style="animation:cc 14s linear infinite"/>
+<circle class="r" cx="480" cy="190" r="66" fill="none" stroke="#ff2bd6" stroke-width="3" stroke-dasharray="70 20 10 20" style="animation:cw 5s linear infinite"/>
+<g class="r" style="animation:cc 7s linear infinite"><circle cx="480" cy="86" r="5" fill="#fff"/><circle cx="480" cy="294" r="4" fill="#0ff"/></g>
+<circle class="r" cx="480" cy="190" r="46" fill="#0ff" fill-opacity=".12" stroke="#0ff" stroke-opacity=".6" style="animation:pu 2s ease-in-out infinite"/>
+<circle class="r" cx="480" cy="190" r="50" fill="none" stroke="#0ff" style="animation:sw 3s ease-out infinite"/>
+<circle class="r" cx="480" cy="190" r="50" fill="none" stroke="#ff2bd6" style="animation:sw 3s ease-out infinite 1.5s"/>
+<g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"><circle cx="462" cy="190" r="15"/><path d="M477 190H528M510 190v16M522 190v12"/></g>
+</g>
+
+<g text-anchor="middle" font-weight="700" font-size="32" letter-spacing="6">
+<text x="480" y="56" fill="#0ff" opacity=".7" style="animation:gl 4s infinite">ULTRA UNIVERSAL KEY GEN</text>
+<text x="482" y="58" fill="#ff2bd6" opacity=".6" style="animation:gl 4s infinite .06s">ULTRA UNIVERSAL KEY GEN</text>
+<text x="480" y="56" fill="url(#g)" filter="url(#glow)">ULTRA UNIVERSAL KEY GEN</text>
+</g>
+<text x="480" y="80" text-anchor="middle" font-size="12" letter-spacing="4" fill="#8fb4ff">OMEGA // TYPE: UNIVERSAL // LEVEL: MAXIMUM // CSPRNG</text>
+
+<g>
+<g class="chip on" data-p="OMEGA"><rect x="156" y="308" width="120" height="30" rx="6"/><text x="216" y="328">UNIVERSAL</text></g>
+<g class="chip" data-p="LIC"><rect x="288" y="308" width="120" height="30" rx="6"/><text x="348" y="328">LICENSE</text></g>
+<g class="chip" data-p="RDR"><rect x="420" y="308" width="120" height="30" rx="6"/><text x="480" y="328">READER</text></g>
+<g class="chip" data-p="OTH"><rect x="552" y="308" width="120" height="30" rx="6"/><text x="612" y="328">OTHER</text></g>
+<g class="chip" data-p="DB"><rect x="684" y="308" width="120" height="30" rx="6"/><text x="744" y="328">DATABASE</text></g>
+</g>
+
+<rect x="130" y="352" width="700" height="66" rx="10" fill="#040a22" fill-opacity=".88" stroke="url(#g)" stroke-width="2" filter="url(#glow)"/>
+<path d="M130 372V352h20M810 352h20v20M830 398v20h-20M150 418h-20v-20" fill="none" stroke="#fff" stroke-width="2.5"/>
+<g clip-path="url(#pc)"><rect x="130" y="352" width="60" height="66" fill="#0ff" opacity=".18" style="animation:sc 3s linear infinite"/></g>
+<text id="k" x="480" y="396" text-anchor="middle" font-size="25" font-weight="700" letter-spacing="2" fill="#e8fcff" filter="url(#glow)">OMEGA-7K3QX-M9ZV2-HN4TB-W8RPD-C6YJ5</text>
+
+<g class="btn" id="gb"><rect x="290" y="436" width="220" height="46" rx="8" fill="#0b1a4a" stroke="#0ff" stroke-width="2" filter="url(#glow)"/><path d="M336 447l-11 15h9l-4 15 13-19h-9z" fill="#ff0"/><text x="418" y="466" text-anchor="middle" font-size="18" font-weight="700" letter-spacing="3" fill="#fff" pointer-events="none">GENERATE</text></g>
+<g class="btn" id="cb"><rect x="530" y="436" width="140" height="46" rx="8" fill="#1a0b3a" stroke="#ff2bd6" stroke-width="2" filter="url(#glow)"/><text id="ct" x="600" y="466" text-anchor="middle" font-size="18" font-weight="700" letter-spacing="3" fill="#fff" pointer-events="none">COPY</text></g>
+
+<text x="130" y="534" font-size="11" fill="#7fa8ff" letter-spacing="2">ENTROPY 125-BIT // CSPRNG</text>
+<rect x="130" y="542" width="400" height="6" rx="3" fill="#0a1236"/>
+<rect x="130" y="542" width="400" height="6" rx="3" fill="url(#g)"><animate attributeName="width" values="120;400;260;400" dur="4s" repeatCount="indefinite"/></rect>
+<text x="830" y="534" text-anchor="end" font-size="11" fill="#7fa8ff" letter-spacing="2">KEYS FORGED: <tspan id="n" fill="#0ff">0</tspan></text>
+<text id="st" x="830" y="552" text-anchor="end" font-size="11" fill="#3fffa0" letter-spacing="2" style="animation:bl 1.4s infinite">● SYSTEM ONLINE</text>
+
+<g id="zp" opacity="0" pointer-events="none">
+<rect width="960" height="600" fill="#aef" fill-opacity=".3"/>
+<g filter="url(#bolt)" fill="none" stroke-linejoin="round" stroke-linecap="round"><use href="#b3" stroke="#0ff" stroke-width="9"/><use href="#b3" stroke="#fff" stroke-width="3"/><use href="#b4" stroke="#f4d" stroke-width="9"/><use href="#b4" stroke="#fff" stroke-width="3"/></g>
+<animate id="za" attributeName="opacity" values="0;1;.15;1;.3;0" keyTimes="0;.1;.25;.4;.65;1" dur=".7s" begin="indefinite"/>
+</g>
+
+<script><![CDATA[
+(function(){
+var A='ABCDEFGHJKMNPQRSTVWXYZ0123456789',P='OMEGA',busy=0,cnt=0,
+$=function(i){return document.getElementById(i)},K=$('k'),S=$('st');
+function gen(){var b=new Uint8Array(25),s=P,i;crypto.getRandomValues(b);for(i=0;i<25;i++){if(i%5==0)s+='-';s+=A[b[i]&31]}return s}
+function go(){
+ if(busy)return;busy=1;var f=gen(),n=0;S.textContent='● FORGING...';
+ try{$('za').beginElement()}catch(e){}
+ var t=setInterval(function(){
+  var r=gen();K.textContent=f.slice(0,n)+r.slice(n);n+=2;
+  if(n>f.length){clearInterval(t);K.textContent=f;$('n').textContent=++cnt;S.textContent='● SYSTEM ONLINE';busy=0}
+ },38);
+}
+var C=document.querySelectorAll('.chip'),i;
+for(i=0;i<C.length;i++)C[i].addEventListener('click',function(){
+ for(var j=0;j<C.length;j++)C[j].setAttribute('class','chip');
+ this.setAttribute('class','chip on');P=this.getAttribute('data-p');go();
+});
+$('gb').addEventListener('click',go);
+$('cb').addEventListener('click',function(){
+ var T=$('ct');
+ function m(x){T.textContent=x;setTimeout(function(){T.textContent='COPY'},1400)}
+ try{navigator.clipboard.writeText(K.textContent).then(function(){m('COPIED')},function(){m('BLOCKED')})}catch(e){m('BLOCKED')}
+});
+setTimeout(go,700);
+})();
+]]></script>
+</svg>

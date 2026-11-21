@@ -57,8 +57,34 @@ def _actor() -> dict[str, Any]:
     return g.actor
 
 
-def _authorize(permission: str) -> None:
-    _service().authorize(_actor(), permission)
+def _authorize(permission: str, project_id: str | None = None) -> None:
+    _service().authorize(_actor(), permission, project_id=project_id)
+
+
+def _authorize_scope(permission: str) -> list[str] | None:
+    """Authorize a list endpoint and return project ids, or None for global access."""
+    allowed = _service().project_ids_for_permission(_actor(), permission)
+    if allowed is not None and not allowed:
+        raise ApiError(403, "forbidden", "Your role does not permit this action.")
+    return allowed
+
+
+def _resource_project(kind: str, resource_id: str) -> str | None:
+    tables = {
+        "key": "reader_keys",
+        "device": "nexora_devices",
+        "webhook": "nexora_webhooks",
+        "key_type": "nexora_key_types",
+    }
+    table = tables.get(kind)
+    if not table:
+        raise ValueError("Unknown resource kind")
+    row = _service().db.fetch_one(
+        f"SELECT project_id FROM {table} WHERE id = %s", (resource_id,)
+    )
+    if not row:
+        raise ApiError(404, f"{kind.upper()}_NOT_FOUND", f"{kind.title()} not found.")
+    return str(row["project_id"]) if row.get("project_id") else None
 
 
 def _query(name: str, default: str = "") -> str:
@@ -87,7 +113,7 @@ def universal_overview():
 @bp.get("/universal/projects")
 @require_auth(*MANAGE_ROLES)
 def universal_projects():
-    _authorize("project:read")
+    allowed = _authorize_scope("project:read")
     page, size = pagination_args()
     return _json(
         _service().list_projects(
@@ -98,6 +124,7 @@ def universal_projects():
             project_type=_query("project_type") or None,
             sort=_query("sort", "created_at"),
             order=_query("order", "desc"),
+            allowed_project_ids=allowed,
         )
     )
 
@@ -105,21 +132,21 @@ def universal_projects():
 @bp.get("/universal/projects/<project_id>/statistics")
 @require_auth(*MANAGE_ROLES)
 def universal_project_statistics(project_id: str):
-    _authorize("analytics:read")
+    _authorize("analytics:read", project_id)
     return _json(_service().project_stats(project_id))
 
 
 @bp.get("/universal/projects/<project_id>/timeline")
 @require_auth(*MANAGE_ROLES)
 def universal_project_timeline(project_id: str):
-    _authorize("project:read")
+    _authorize("project:read", project_id)
     return _json(_service().project_timeline(project_id))
 
 
 @bp.patch("/universal/projects/<project_id>")
 @require_auth(*MANAGE_ROLES)
 def universal_project_update(project_id: str):
-    _authorize("project:write")
+    _authorize("project:write", project_id)
     body = require_json(request)
     if "expires_at" in body:
         body["expires_at"] = _parse_datetime(body["expires_at"], "expires_at")
@@ -138,7 +165,7 @@ def universal_project_update(project_id: str):
 @bp.post("/universal/projects/<project_id>/archive")
 @require_auth(*MANAGE_ROLES)
 def universal_project_archive(project_id: str):
-    _authorize("project:write")
+    _authorize("project:write", project_id)
     ip, agent = request_meta()
     project = _service().archive_project(
         project_id,
@@ -153,7 +180,7 @@ def universal_project_archive(project_id: str):
 @bp.post("/universal/projects/<project_id>/clone")
 @require_auth(*MANAGE_ROLES)
 def universal_project_clone(project_id: str):
-    _authorize("project:write")
+    _authorize("project:write", project_id)
     body = require_json(request)
     payload = Payload(body)
     name = payload.string("project_name", required=True, min_length=1, max_length=200)
@@ -197,14 +224,14 @@ def _form_value(name: str, default: str = "") -> str:
 @bp.get("/universal/projects/<project_id>/export/preview")
 @require_auth(*MANAGE_ROLES)
 def universal_project_export_preview(project_id: str):
-    _authorize("project:export")
+    _authorize("project:export", project_id)
     return _json(transfer_service().export_preview(project_id))
 
 
 @bp.get("/universal/projects/<project_id>/export")
 @require_auth(*MANAGE_ROLES)
 def universal_project_export(project_id: str):
-    _authorize("project:export")
+    _authorize("project:export", project_id)
     service = transfer_service()
     export_format = _query("format", "json").lower()
     if export_format == "zip":
@@ -326,7 +353,7 @@ def universal_project_import():
 @bp.delete("/universal/projects/<project_id>")
 @require_auth(*MANAGE_ROLES)
 def universal_project_delete(project_id: str):
-    _authorize("project:delete")
+    _authorize("project:delete", project_id)
     payload = Payload(require_json(request))
     confirm_name = payload.string(
         "confirm_project_name", required=True, min_length=1, max_length=200
@@ -412,16 +439,20 @@ def universal_projects_delete_all():
 @bp.get("/universal/api-usage")
 @require_auth(*MANAGE_ROLES)
 def universal_api_usage():
-    _authorize("analytics:read")
+    allowed = _authorize_scope("analytics:read")
+    requested_project = _query("project_id") or None
+    if allowed is not None and requested_project and requested_project not in allowed:
+        raise ApiError(403, "forbidden", "Your role does not permit this project.")
     page, size = pagination_args()
     return _json(
         _service().list_api_usage(
             page=page,
             page_size=size,
-            project_id=_query("project_id") or None,
+            project_id=requested_project,
             key_id=_query("key_id") or None,
             status=_query("status") or None,
             endpoint=_query("endpoint") or None,
+            allowed_project_ids=allowed,
         )
     )
 
@@ -429,11 +460,15 @@ def universal_api_usage():
 @bp.get("/universal/key-types")
 @require_auth(*MANAGE_ROLES)
 def universal_key_types():
-    _authorize("key:read")
+    allowed = _authorize_scope("key:read")
+    requested_project = _query("project_id") or None
+    if allowed is not None and requested_project and requested_project not in allowed:
+        raise ApiError(403, "forbidden", "Your role does not permit this project.")
     return _json(
         _service().list_key_types(
-            project_id=_query("project_id") or None,
+            project_id=requested_project,
             include_inactive=_query("include_inactive").lower() == "true",
+            allowed_project_ids=allowed,
         )
     )
 
@@ -441,10 +476,12 @@ def universal_key_types():
 @bp.post("/universal/key-types")
 @require_auth(*MANAGE_ROLES)
 def universal_key_type_create():
-    _authorize("key:write")
+    body = require_json(request)
+    project_id = str(body.get("project_id") or "").strip() or None
+    _authorize("key:write", project_id)
     ip, agent = request_meta()
     result = _service().create_key_type(
-        require_json(request),
+        body,
         actor=_actor(),
         ip_address=ip,
         user_agent=agent,
@@ -456,7 +493,8 @@ def universal_key_type_create():
 @bp.patch("/universal/key-types/<type_id>")
 @require_auth(*MANAGE_ROLES)
 def universal_key_type_update(type_id: str):
-    _authorize("key:write")
+    project_id = _resource_project("key_type", type_id)
+    _authorize("key:write", project_id)
     ip, agent = request_meta()
     result = _service().update_key_type(
         type_id,
@@ -473,19 +511,23 @@ def universal_key_type_update(type_id: str):
 @bp.get("/universal/keys")
 @require_auth(*MANAGE_ROLES)
 def universal_keys():
-    _authorize("key:read")
+    allowed = _authorize_scope("key:read")
+    requested_project = _query("project_id") or None
+    if allowed is not None and requested_project and requested_project not in allowed:
+        raise ApiError(403, "forbidden", "Your role does not permit this project.")
     page, size = pagination_args()
     return _json(
         _service().list_keys(
             page=page,
             page_size=size,
-            project_id=_query("project_id") or None,
+            project_id=requested_project,
             key_type_id=_query("key_type_id") or None,
             status=_query("status") or None,
             search=_query("search") or None,
             expiring=_query("expiring") or None,
             sort=_query("sort", "created_at"),
             order=_query("order", "desc"),
+            allowed_project_ids=allowed,
         )
     )
 
@@ -493,8 +535,8 @@ def universal_keys():
 @bp.post("/universal/keys")
 @require_auth(*MANAGE_ROLES)
 def universal_key_generate():
-    _authorize("key:write")
     body = require_json(request)
+    _authorize("key:write", str(body.get("project_id") or "") or None)
     payload = Payload(body)
     project_id = payload.string("project_id", required=True, min_length=1, max_length=64)
     key_type_id = payload.string("key_type_id", required=True, min_length=1, max_length=50)
@@ -567,8 +609,8 @@ def universal_key_export():
 @bp.post("/universal/keys/import/preview")
 @require_auth(*MANAGE_ROLES)
 def universal_key_import_preview():
-    _authorize("import:write")
     body = require_json(request)
+    _authorize("import:write", str(body.get("project_id") or "") or None)
     return _json(
         _service().import_preview(
             project_id=str(body.get("project_id") or ""),
@@ -581,8 +623,8 @@ def universal_key_import_preview():
 @bp.post("/universal/keys/import")
 @require_auth(*MANAGE_ROLES)
 def universal_key_import():
-    _authorize("import:write")
     body = require_json(request)
+    _authorize("import:write", str(body.get("project_id") or "") or None)
     ip, agent = request_meta()
     return _json(
         _service().import_keys(
@@ -601,14 +643,14 @@ def universal_key_import():
 @bp.get("/universal/keys/<key_id>")
 @require_auth(*MANAGE_ROLES)
 def universal_key_detail(key_id: str):
-    _authorize("key:read")
+    _authorize("key:read", _resource_project("key", key_id))
     return _json(_service().get_key(key_id))
 
 
 @bp.patch("/universal/keys/<key_id>")
 @require_auth(*MANAGE_ROLES)
 def universal_key_update(key_id: str):
-    _authorize("key:write")
+    _authorize("key:write", _resource_project("key", key_id))
     body = require_json(request)
     if "expires_at" in body:
         body["expires_at"] = _parse_datetime(body["expires_at"], "expires_at")
@@ -628,7 +670,7 @@ def universal_key_update(key_id: str):
 @bp.post("/universal/keys/<key_id>/activate")
 @require_auth(*MANAGE_ROLES)
 def universal_key_activate(key_id: str):
-    _authorize("key:write")
+    _authorize("key:write", _resource_project("key", key_id))
     ip, agent = request_meta()
     return _json(
         _service().activate_key(
@@ -644,7 +686,7 @@ def universal_key_activate(key_id: str):
 @bp.post("/universal/keys/<key_id>/deactivate")
 @require_auth(*MANAGE_ROLES)
 def universal_key_deactivate(key_id: str):
-    _authorize("key:write")
+    _authorize("key:write", _resource_project("key", key_id))
     body = require_json(request)
     reason = Payload(body).string("reason", required=False, max_length=500, default="")
     ip, agent = request_meta()
@@ -663,7 +705,7 @@ def universal_key_deactivate(key_id: str):
 @bp.post("/universal/keys/<key_id>/revoke")
 @require_auth(*MANAGE_ROLES)
 def universal_key_revoke(key_id: str):
-    _authorize("key:write")
+    _authorize("key:write", _resource_project("key", key_id))
     payload = Payload(require_json(request))
     reason = payload.string("reason", required=True, min_length=1, max_length=500)
     payload.finish()
@@ -683,7 +725,7 @@ def universal_key_revoke(key_id: str):
 @bp.post("/universal/keys/<key_id>/regenerate")
 @require_auth(*MANAGE_ROLES)
 def universal_key_regenerate(key_id: str):
-    _authorize("key:write")
+    _authorize("key:write", _resource_project("key", key_id))
     ip, agent = request_meta()
     return _json(
         _service().regenerate_key(
@@ -700,16 +742,20 @@ def universal_key_regenerate(key_id: str):
 @bp.get("/universal/devices")
 @require_auth(*MANAGE_ROLES)
 def universal_devices():
-    _authorize("device:read")
+    allowed = _authorize_scope("device:read")
+    requested_project = _query("project_id") or None
+    if allowed is not None and requested_project and requested_project not in allowed:
+        raise ApiError(403, "forbidden", "Your role does not permit this project.")
     page, size = pagination_args()
     return _json(
         _service().list_devices(
             page=page,
             page_size=size,
-            project_id=_query("project_id") or None,
+            project_id=requested_project,
             key_id=_query("key_id") or None,
             status=_query("status") or None,
             search=_query("search") or None,
+            allowed_project_ids=allowed,
         )
     )
 
@@ -717,7 +763,7 @@ def universal_devices():
 @bp.post("/universal/devices/<device_id>/revoke")
 @require_auth(*MANAGE_ROLES)
 def universal_device_revoke(device_id: str):
-    _authorize("device:write")
+    _authorize("device:write", _resource_project("device", device_id))
     payload = Payload(require_json(request))
     reason = payload.string("reason", required=False, max_length=500, default="")
     ip, agent = request_meta()
@@ -736,7 +782,7 @@ def universal_device_revoke(device_id: str):
 @bp.post("/universal/devices/<device_id>/reset")
 @require_auth(*MANAGE_ROLES)
 def universal_device_reset(device_id: str):
-    _authorize("device:write")
+    _authorize("device:write", _resource_project("device", device_id))
     ip, agent = request_meta()
     return _json(
         _service().reset_device(
@@ -753,15 +799,22 @@ def universal_device_reset(device_id: str):
 @bp.get("/universal/webhooks")
 @require_auth(*MANAGE_ROLES)
 def universal_webhooks():
-    _authorize("webhook:read")
-    return _json(_hooks().list_webhooks(_query("project_id") or None))
+    allowed = _authorize_scope("webhook:read")
+    requested_project = _query("project_id") or None
+    if allowed is not None and requested_project and requested_project not in allowed:
+        raise ApiError(403, "forbidden", "Your role does not permit this project.")
+    return _json(
+        _hooks().list_webhooks(
+            requested_project, allowed_project_ids=allowed
+        )
+    )
 
 
 @bp.post("/universal/webhooks")
 @require_auth(*MANAGE_ROLES)
 def universal_webhook_create():
-    _authorize("webhook:write")
     body = require_json(request)
+    _authorize("webhook:write", str(body.get("project_id") or "") or None)
     ip, agent = request_meta()
     result = _hooks().create_webhook(
         project_id=str(body.get("project_id") or ""),
@@ -779,7 +832,7 @@ def universal_webhook_create():
 @bp.patch("/universal/webhooks/<webhook_id>")
 @require_auth(*MANAGE_ROLES)
 def universal_webhook_update(webhook_id: str):
-    _authorize("webhook:write")
+    _authorize("webhook:write", _resource_project("webhook", webhook_id))
     ip, agent = request_meta()
     result = _hooks().update_webhook(
         webhook_id,
@@ -795,7 +848,7 @@ def universal_webhook_update(webhook_id: str):
 @bp.delete("/universal/webhooks/<webhook_id>")
 @require_auth(*MANAGE_ROLES)
 def universal_webhook_delete(webhook_id: str):
-    _authorize("webhook:write")
+    _authorize("webhook:write", _resource_project("webhook", webhook_id))
     ip, agent = request_meta()
     return _json(
         _hooks().delete_webhook(
@@ -811,7 +864,7 @@ def universal_webhook_delete(webhook_id: str):
 @bp.post("/universal/webhooks/<webhook_id>/rotate-secret")
 @require_auth(*MANAGE_ROLES)
 def universal_webhook_rotate(webhook_id: str):
-    _authorize("webhook:write")
+    _authorize("webhook:write", _resource_project("webhook", webhook_id))
     ip, agent = request_meta()
     return _json(
         _hooks().rotate_secret(
@@ -827,7 +880,7 @@ def universal_webhook_rotate(webhook_id: str):
 @bp.post("/universal/webhooks/<webhook_id>/test")
 @require_auth(*MANAGE_ROLES)
 def universal_webhook_test(webhook_id: str):
-    _authorize("webhook:write")
+    _authorize("webhook:write", _resource_project("webhook", webhook_id))
     ip, agent = request_meta()
     return _json(
         _hooks().test_webhook(
@@ -844,7 +897,7 @@ def universal_webhook_test(webhook_id: str):
 @bp.get("/universal/webhooks/<webhook_id>/deliveries")
 @require_auth(*MANAGE_ROLES)
 def universal_webhook_deliveries(webhook_id: str):
-    _authorize("webhook:read")
+    _authorize("webhook:read", _resource_project("webhook", webhook_id))
     return _json(_hooks().list_deliveries(webhook_id))
 
 
@@ -925,7 +978,120 @@ def universal_automation_scheduler():
     return _json(scheduler_service().status())
 
 
+# ------------------------------------------------- imported key replacement
+@bp.get("/universal/imported-keys")
+@require_auth(*MANAGE_ROLES)
+def universal_imported_keys():
+    allowed = _authorize_scope("key:read")
+    requested_project = _query("project_id") or None
+    if allowed is not None and requested_project and requested_project not in allowed:
+        raise ApiError(403, "forbidden", "Your role does not permit this project.")
+    page, size = pagination_args()
+    return _json(
+        _service().list_imported_keys(
+            page=page,
+            page_size=size,
+            project_id=requested_project,
+            status=_query("status") or None,
+            search=_query("search") or None,
+            allowed_project_ids=allowed,
+        )
+    )
+
+
+@bp.post("/universal/imported-keys/replacement-preview")
+@require_auth(*MANAGE_ROLES)
+def universal_imported_keys_replacement_preview():
+    body = require_json(request)
+    return _json(
+        _service().replacement_preview(
+            body.get("record_ids"),
+            allow_duplicate=bool(body.get("allow_duplicate")),
+            actor=_actor(),
+        )
+    )
+
+
+@bp.post("/universal/imported-keys/replacements")
+@require_auth(*MANAGE_ROLES)
+def universal_imported_keys_replacements():
+    body = require_json(request)
+    if body.get("confirm") is not True:
+        raise ValidationError({"confirm": "Set confirm to true after reviewing the preview."})
+    ip, agent = request_meta()
+    return _json(
+        _service().generate_replacements(
+            body.get("record_ids"),
+            allow_duplicate=bool(body.get("allow_duplicate")),
+            actor=_actor(),
+            ip_address=ip,
+            user_agent=agent,
+            request_id=_request_id(),
+        ),
+        201,
+    )
+
+
+@bp.get("/universal/imported-keys/<record_id>/history")
+@require_auth(*MANAGE_ROLES)
+def universal_imported_key_history(record_id: str):
+    return _json(_service().replacement_history(record_id, actor=_actor()))
+
+
 # ------------------------------------------------------------ roles/admins
+@bp.get("/universal/projects/<project_id>/roles")
+@require_auth(*MANAGE_ROLES)
+def universal_project_roles(project_id: str):
+    _authorize("admin:read", project_id)
+    data = role_service().list_roles()
+    roles = [
+        role for role in data["roles"] if role.get("project_id") == project_id
+    ]
+    return _json({"project_id": project_id, "roles": roles})
+
+
+@bp.get("/universal/projects/<project_id>/role-assignments")
+@require_auth(*MANAGE_ROLES)
+def universal_project_role_assignments(project_id: str):
+    _authorize("admin:read", project_id)
+    return _json(role_service().list_project_assignments(project_id))
+
+
+@bp.post("/universal/projects/<project_id>/role-assignments")
+@require_auth(*MANAGE_ROLES)
+def universal_project_role_assignment_create(project_id: str):
+    _authorize("admin:roles", project_id)
+    ip, agent = request_meta()
+    return _json(
+        role_service().assign_project_role(
+            project_id,
+            require_json(request),
+            actor=_actor(),
+            ip_address=ip,
+            user_agent=agent,
+            request_id=_request_id(),
+        ),
+        201,
+    )
+
+
+@bp.delete("/universal/projects/<project_id>/role-assignments/<assignment_id>")
+@require_auth(*MANAGE_ROLES)
+def universal_project_role_assignment_delete(project_id: str, assignment_id: str):
+    _authorize("admin:roles", project_id)
+    ip, agent = request_meta()
+    return _json(
+        role_service().remove_project_assignment(
+            project_id,
+            assignment_id,
+            actor=_actor(),
+            ip_address=ip,
+            user_agent=agent,
+            request_id=_request_id(),
+        )
+    )
+
+
 @bp.get("/universal/roles")
 @require_auth(*MANAGE_ROLES)
 def universal_roles():

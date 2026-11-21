@@ -15,7 +15,7 @@ import json
 import secrets
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Sequence
 from uuid import uuid4
 
 from ..db import Database
@@ -145,12 +145,25 @@ class WebhookService:
         ).hexdigest()
 
     # --------------------------------------------------------------- webhook
-    def list_webhooks(self, project_id: str | None = None) -> dict[str, Any]:
-        params: tuple[Any, ...] = ()
-        clause = ""
+    def list_webhooks(
+        self,
+        project_id: str | None = None,
+        *,
+        allowed_project_ids: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        if allowed_project_ids is not None and not allowed_project_ids:
+            return {"webhooks": [], "events": list(WEBHOOK_EVENTS)}
+        clauses: list[str] = []
+        params_list: list[Any] = []
+        if allowed_project_ids is not None:
+            placeholders = ", ".join(["%s"] * len(allowed_project_ids))
+            clauses.append(f"w.project_id IN ({placeholders})")
+            params_list.extend(allowed_project_ids)
         if project_id:
-            clause = "WHERE w.project_id = %s"
-            params = (project_id,)
+            clauses.append("w.project_id = %s")
+            params_list.append(project_id)
+        clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params = tuple(params_list)
         rows = self.db.fetch_all(
             f"""
             SELECT w.id, w.project_id, w.name, w.url, w.events, w.is_active,

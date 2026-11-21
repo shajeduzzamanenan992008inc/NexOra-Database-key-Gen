@@ -135,7 +135,7 @@ serialize them.
 
 ## Production checklist
 
-1. Apply migration 010 through the approved migration process.
+1. Apply migration 011 through the approved migration process.
 2. Configure the worker environment with the same `DATABASE_URL` and secret
    settings as the web service, using a secret manager.
 3. Run `universal-scheduler-status` and one `--dry-run` sweep.

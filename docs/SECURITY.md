@@ -109,6 +109,13 @@ Roles are checked on every request in the decorator, not in the UI:
 markup is not served publicly. The UI hides actions a role cannot perform, but the server rejects
 them regardless.
 
+The universal platform uses permission-based checks in addition to these legacy roles.
+Project-scoped roles are additional grants limited to the project permission catalogue;
+they cannot escalate a global role or grant Owner authority. Every project, key, device,
+webhook, role, and replacement operation is authorized server-side against the requested
+project. Imported replacement plaintext is returned once in the generation response and is
+never stored, logged, or included in previews, history, or backups.
+
 ## 5. Request integrity
 
 - **CSRF:** cookie-authenticated non-`GET` requests must send `X-CSRF-Token`; the digest is compared

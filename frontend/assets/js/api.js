@@ -457,6 +457,39 @@ export const api = {
     request("/api/v1/universal/keys/import", { method: "POST", body }),
   universalKeysExportUrl: (params) =>
     `/api/v1/universal/keys/export?${query(params)}`,
+  importedKeys: (params) =>
+    request(`/api/v1/universal/imported-keys?${query(params)}`),
+  importedKeyReplacementPreview: (body) =>
+    request("/api/v1/universal/imported-keys/replacement-preview", {
+      method: "POST",
+      body,
+    }),
+  generateImportedKeyReplacements: (body) =>
+    request("/api/v1/universal/imported-keys/replacements", {
+      method: "POST",
+      body,
+      timeoutMs: 90000,
+    }),
+  importedKeyHistory: (id) =>
+    request(
+      `/api/v1/universal/imported-keys/${encodeURIComponent(id)}/history`
+    ),
+  projectRoles: (projectId) =>
+    request(`/api/v1/universal/projects/${encodeURIComponent(projectId)}/roles`),
+  projectRoleAssignments: (projectId) =>
+    request(
+      `/api/v1/universal/projects/${encodeURIComponent(projectId)}/role-assignments`
+    ),
+  assignProjectRole: (projectId, body) =>
+    request(
+      `/api/v1/universal/projects/${encodeURIComponent(projectId)}/role-assignments`,
+      { method: "POST", body }
+    ),
+  removeProjectRoleAssignment: (projectId, assignmentId) =>
+    request(
+      `/api/v1/universal/projects/${encodeURIComponent(projectId)}/role-assignments/${encodeURIComponent(assignmentId)}`,
+      { method: "DELETE" }
+    ),
   universalOpenapi: () => request("/api/v1/universal/openapi.json"),
 
   // Legacy API mappings for backward compatibility

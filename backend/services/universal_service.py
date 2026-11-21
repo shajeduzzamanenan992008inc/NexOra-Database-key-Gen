@@ -172,7 +172,9 @@ def _json_list(value: Any) -> list[Any]:
     return parsed if isinstance(parsed, list) else []
 
 
-def _string_list(value: Any, field: str, *, max_items: int = 50) -> list[str]:
+def _string_list(
+    value: Any, field: str, *, max_items: int = 50, maximum: int = 80
+) -> list[str]:
     if value is None:
         return []
     if not isinstance(value, list):
@@ -184,8 +186,10 @@ def _string_list(value: Any, field: str, *, max_items: int = 50) -> list[str]:
         if not isinstance(item, str) or not item.strip():
             raise ValidationError({field: "Every entry must be a non-empty string."})
         item = item.strip()
-        if len(item) > 80:
-            raise ValidationError({field: "Every entry must be 80 characters or fewer."})
+        if len(item) > maximum:
+            raise ValidationError(
+                {field: f"Every entry must be {maximum} characters or fewer."}
+            )
         if item not in result:
             result.append(item)
     return result
@@ -587,8 +591,15 @@ class UniversalService:
         return row
 
     # ---------------------------------------------------------------- roles
-    def _effective_permissions(self, actor: dict[str, Any]) -> frozenset[str]:
-        """Resolve the actor's current platform permissions from the database."""
+    def _effective_permissions(
+        self, actor: dict[str, Any], *, project_id: str | None = None
+    ) -> frozenset[str]:
+        """Resolve current permissions, including project role assignments.
+
+        Global permissions are always evaluated from the database. Project
+        permissions are added only when a concrete project is supplied, which
+        prevents a project role from leaking into global API surfaces.
+        """
         if actor.get("role") == "owner":
             return frozenset({"*"})
         row = self.db.fetch_one(
@@ -600,26 +611,50 @@ class UniversalService:
         )
         if not row:
             raise ApiError(401, "not_authenticated", "Sign in to continue.")
+        permissions: set[str] = set()
         role_id = row.get("platform_role_id")
         if role_id:
             role = self.db.fetch_one(
                 "SELECT permissions FROM nexora_roles WHERE id = %s", (role_id,)
             )
             if role:
-                return frozenset(
+                permissions.update(
                     str(item) for item in _json_list(role.get("permissions"))
                 )
-        platform_role = str(row.get("platform_role") or "read_only")
-        if platform_role == "custom":
-            return frozenset(
-                str(item) for item in _json_list(row.get("platform_permissions"))
+        if not permissions:
+            platform_role = str(row.get("platform_role") or "read_only")
+            if platform_role == "custom":
+                permissions.update(
+                    str(item) for item in _json_list(row.get("platform_permissions"))
+                )
+            else:
+                permissions.update(ROLE_PERMISSIONS.get(platform_role, frozenset()))
+        if project_id:
+            rows = self.db.fetch_all(
+                """
+                SELECT r.permissions
+                  FROM nexora_project_role_assignments a
+                  JOIN nexora_roles r ON r.id = a.role_id
+                 WHERE a.admin_id = %s AND a.project_id = %s
+                """,
+                (actor.get("id"), project_id),
             )
-        return ROLE_PERMISSIONS.get(platform_role, frozenset())
+            for role in rows:
+                permissions.update(
+                    str(item) for item in _json_list(role.get("permissions"))
+                )
+        return frozenset(permissions)
 
-    def authorize(self, actor: dict[str, Any], permission: str) -> None:
+    def authorize(
+        self,
+        actor: dict[str, Any],
+        permission: str,
+        *,
+        project_id: str | None = None,
+    ) -> None:
         if not actor or not actor.get("id"):
             raise ApiError(401, "not_authenticated", "Sign in to continue.")
-        allowed = self._effective_permissions(actor)
+        allowed = self._effective_permissions(actor, project_id=project_id)
         if "*" in allowed or permission in allowed:
             return
         raise ApiError(
@@ -627,6 +662,42 @@ class UniversalService:
             "forbidden",
             "Your platform role does not permit this action.",
         )
+
+    def accessible_project_ids(self, actor: dict[str, Any]) -> list[str] | None:
+        """Return project ids for a project-scoped actor, or None for global access."""
+        global_permissions = self._effective_permissions(actor)
+        if "*" in global_permissions or "project:read" in global_permissions:
+            return None
+        rows = self.db.fetch_all(
+            """
+            SELECT DISTINCT a.project_id
+              FROM nexora_project_role_assignments a
+              JOIN nexora_roles r ON r.id = a.role_id
+             WHERE a.admin_id = %s
+               AND r.permissions ? 'project:read'
+            """,
+            (actor.get("id"),),
+        )
+        return [str(row["project_id"]) for row in rows]
+
+    def project_ids_for_permission(
+        self, actor: dict[str, Any], permission: str
+    ) -> list[str] | None:
+        """Return accessible project ids for a permission, or None for global access."""
+        global_permissions = self._effective_permissions(actor)
+        if "*" in global_permissions or permission in global_permissions:
+            return None
+        rows = self.db.fetch_all(
+            """
+            SELECT DISTINCT a.project_id
+              FROM nexora_project_role_assignments a
+              JOIN nexora_roles r ON r.id = a.role_id
+             WHERE a.admin_id = %s
+               AND r.permissions ? %s
+            """,
+            (actor.get("id"), permission),
+        )
+        return [str(row["project_id"]) for row in rows]
 
     def list_roles(self) -> dict[str, Any]:
         definitions = []
@@ -717,10 +788,17 @@ class UniversalService:
         role_id = (platform_role_id or "").strip() or None
         if role_id:
             role = self.db.fetch_one(
-                "SELECT id, permissions FROM nexora_roles WHERE id = %s", (role_id,)
+                "SELECT id, permissions, project_id FROM nexora_roles WHERE id = %s",
+                (role_id,),
             )
             if not role:
                 raise ValidationError({"platform_role_id": "Unknown custom role."})
+            if role.get("project_id"):
+                raise ApiError(
+                    409,
+                    "PROJECT_ROLE_REQUIRES_PROJECT",
+                    "Project roles are assigned inside their project, not as global platform roles.",
+                )
             platform_role = "custom"
             permissions = _string_list(
                 _json_list(role.get("permissions")), "platform_permissions"
@@ -845,11 +923,18 @@ class UniversalService:
         project_type: str | None = None,
         sort: str = "created_at",
         order: str = "desc",
+        allowed_project_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         page = max(1, page)
         page_size = max(1, min(100, page_size))
+        if allowed_project_ids is not None and not allowed_project_ids:
+            return {"items": [], "pagination": pagination(page, page_size, 0)}
         clauses = ["p.deleted_at IS NULL"]
         params: list[Any] = []
+        if allowed_project_ids is not None:
+            placeholders = ", ".join(["%s"] * len(allowed_project_ids))
+            clauses.append(f"p.id IN ({placeholders})")
+            params.extend(allowed_project_ids)
         if search and search.strip():
             term = _like_term(search)
             clauses.append(
@@ -1231,9 +1316,24 @@ class UniversalService:
         *,
         project_id: str | None = None,
         include_inactive: bool = False,
+        allowed_project_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
+        if allowed_project_ids is not None and not allowed_project_ids:
+            return {
+                "key_types": [],
+                "events": list(WEBHOOK_EVENTS),
+                "permissions": self.db.fetch_all(
+                    "SELECT * FROM nexora_permission_definitions ORDER BY id"
+                ),
+            }
         clauses = ["1=1"]
         params: list[Any] = []
+        if allowed_project_ids is not None:
+            placeholders = ", ".join(["%s"] * len(allowed_project_ids))
+            clauses.append(
+                f"(t.project_id IS NULL OR t.project_id IN ({placeholders}))"
+            )
+            params.extend(allowed_project_ids)
         if not include_inactive:
             clauses.append("t.is_active = true")
         if project_id:
@@ -1521,6 +1621,569 @@ class UniversalService:
             )
         return self._type_row(type_id)
 
+    # ------------------------------------------------- imported replacements
+    def _imported_record(self, record_id: str, *, for_update: bool = False) -> dict[str, Any]:
+        row = self.db.fetch_one(
+            f"""
+            SELECT r.*, p.project_name, p.status AS project_status,
+                   p.deleted_at AS project_deleted_at, t.name AS key_type_name,
+                   (SELECT COUNT(*)::int FROM nexora_imported_key_replacements h
+                     WHERE h.imported_record_id = r.id) AS history_count
+              FROM nexora_imported_key_records r
+              JOIN nexora_projects p ON p.id = r.project_id
+              LEFT JOIN nexora_key_types t ON t.id = r.key_type_id
+             WHERE r.id = %s
+             {"FOR UPDATE OF r" if for_update else ""}
+            """,
+            (record_id,),
+        )
+        if not row:
+            raise ApiError(404, "IMPORTED_RECORD_NOT_FOUND", "Imported record not found.")
+        return row
+
+    @staticmethod
+    def _parse_imported_expiry(value: Any) -> datetime | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _replacement_plan(self, record: dict[str, Any]) -> dict[str, Any]:
+        warnings: list[str] = []
+        base = {
+            "record_id": str(record["id"]),
+            "project_id": str(record["project_id"]),
+            "project_name": record.get("project_name"),
+            "key_type_id": record.get("key_type_id"),
+            "key_type_name": record.get("key_type_name"),
+            "label": record.get("label") or "",
+            "original_status": record.get("status") or "imported",
+            "existing_replacements": int(record.get("replacement_count") or 0),
+            "warnings": warnings,
+            "eligible": False,
+            "reason": "",
+        }
+        try:
+            if record.get("record_type") != "key":
+                raise ApiError(
+                    409,
+                    "NOT_A_KEY_RECORD",
+                    "Only imported key records can generate replacements.",
+                )
+            project = self._project_row(str(record["project_id"]))
+            self._assert_project_live(project)
+            if record.get("project_deleted_at"):
+                raise ApiError(409, "PROJECT_DELETED", "The project is deleted.")
+            type_row = self._type_row(str(record.get("key_type_id") or ""))
+            if not type_row.get("is_active"):
+                raise ApiError(403, "KEY_TYPE_INACTIVE", "This key type is inactive.")
+            if type_row.get("project_id") and str(type_row["project_id"]) != str(
+                record["project_id"]
+            ):
+                raise ApiError(
+                    409,
+                    "KEY_TYPE_PROJECT_MISMATCH",
+                    "The key type does not belong to this project.",
+                )
+            data = _json_obj(record.get("data"))
+            permissions = self._validate_permissions(data.get("permissions"), type_row)
+            scopes = self._validate_scopes(data.get("scopes"), type_row)
+            metadata = self._validate_metadata(data.get("metadata"), type_row)
+            tags = _string_list(data.get("tags") or [], "tags", max_items=20)
+            max_usage_value = data.get("max_usage")
+            max_usage = None
+            if max_usage_value not in (None, ""):
+                try:
+                    max_usage = int(max_usage_value)
+                except (TypeError, ValueError):
+                    raise ApiError(
+                        422, "INVALID_MAX_USAGE", "The imported usage limit is invalid."
+                    ) from None
+                if max_usage <= 0:
+                    raise ApiError(
+                        422, "INVALID_MAX_USAGE", "The imported usage limit must be positive."
+                    )
+            original_status = str(data.get("original_status") or record.get("status") or "")
+            base["original_status"] = original_status or "imported"
+            if original_status in {"revoked", "expired"}:
+                warnings.append(
+                    "The original credential was revoked or expired. The replacement is a new independent credential and does not reactivate the original."
+                )
+            policy = _json_obj(type_row.get("expiration_policy"))
+            presets = policy.get("presets")
+            allowed_presets = (
+                [str(item) for item in presets]
+                if isinstance(presets, list) and presets
+                else list(EXPIRATION_DELTAS) + ["custom", "never"]
+            )
+            expires_at = self._parse_imported_expiry(data.get("expires_at"))
+            permanent = bool(data.get("is_permanent"))
+            now = utcnow()
+            if permanent:
+                preset, resolved_expiry = "never", None
+            elif expires_at and expires_at > now:
+                preset, resolved_expiry = "custom", expires_at
+            else:
+                preset, resolved_expiry = "never", None
+                if expires_at:
+                    warnings.append(
+                        "The original key had already expired. A non-expiring replacement policy was used unless the key type forbids it."
+                    )
+                else:
+                    warnings.append(
+                        "No original expiration timestamp was present. The key type policy is applied to the replacement."
+                    )
+            if preset != "never" and preset not in allowed_presets:
+                fallback = (
+                    str(policy.get("default"))
+                    if str(policy.get("default")) in allowed_presets
+                    else ("never" if "never" in allowed_presets else allowed_presets[0])
+                )
+                warnings.append(
+                    f"The original expiration policy ({preset}) is not allowed by this key type; using {fallback}."
+                )
+                preset = fallback
+                resolved_expiry = None
+            if preset == "never" and "never" not in allowed_presets:
+                preset = allowed_presets[0]
+                resolved_expiry = None
+                warnings.append(
+                    "This key type does not allow non-expiring keys; its default expiration policy was used."
+                )
+            if original_status == "used":
+                warnings.append(
+                    "The original activation state cannot be restored. The replacement starts fresh and must be activated normally."
+                )
+            device_policy = _json_obj(type_row.get("device_policy"))
+            if device_policy.get("binds") or device_policy.get("required"):
+                warnings.append(
+                    "Device bindings are not restored from imported metadata; the replacement follows the current key type device policy."
+                )
+            if int(record.get("replacement_count") or 0) > 0:
+                warnings.append(
+                    "This imported record already has a replacement. Generating another requires explicit duplicate authorization."
+                )
+            base.update(
+                {
+                    "eligible": True,
+                    "permissions": permissions,
+                    "scopes": scopes,
+                    "tags": tags,
+                    "metadata": metadata,
+                    "max_usage": max_usage,
+                    "expiration_preset": preset,
+                    "expires_at": resolved_expiry.isoformat() if resolved_expiry else None,
+                }
+            )
+        except ApiError as exc:
+            base["reason"] = exc.message
+            base["code"] = exc.code
+        return base
+
+    def _claim_imported_replacement(
+        self,
+        cursor: Any,
+        record_id: str,
+        *,
+        project_id: str,
+        key_type_id: str,
+        allow_duplicate: bool,
+    ) -> dict[str, Any]:
+        cursor.execute(
+            """
+            SELECT id, project_id, record_type, key_type_id, replacement_count,
+                   COALESCE(label, '') AS label
+              FROM nexora_imported_key_records
+             WHERE id = %s
+             FOR UPDATE
+            """,
+            (record_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise ApiError(404, "IMPORTED_RECORD_NOT_FOUND", "Imported record not found.")
+        if row[2] != "key":
+            raise ApiError(409, "NOT_A_KEY_RECORD", "Only imported key records can be replaced.")
+        if str(row[1]) != str(project_id) or str(row[3]) != str(key_type_id):
+            raise ApiError(
+                409,
+                "IMPORTED_RECORD_MISMATCH",
+                "The imported record does not match the requested project or key type.",
+            )
+        if int(row[4] or 0) > 0 and not allow_duplicate:
+            raise ApiError(
+                409,
+                "REPLACEMENT_ALREADY_EXISTS",
+                "A replacement already exists for this imported record; explicit duplicate authorization is required.",
+            )
+        return {
+            "record_id": str(row[0]),
+            "project_id": str(row[1]),
+            "key_type_id": str(row[3]),
+            "existing_replacements": int(row[4] or 0),
+        }
+
+    def _complete_imported_replacement(
+        self,
+        cursor: Any,
+        record_id: str,
+        *,
+        key_id: str,
+        project_id: str,
+        batch_id: str,
+        warnings: Any,
+        actor: dict[str, Any],
+    ) -> None:
+        warning_list = _string_list(
+            warnings or [], "warnings", max_items=50, maximum=500
+        )
+        cursor.execute(
+            """
+            INSERT INTO nexora_imported_key_replacements
+                (imported_record_id, project_id, key_id, batch_id, warnings, generated_by)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s)
+            """,
+            (
+                record_id,
+                project_id,
+                key_id,
+                batch_id,
+                json.dumps(warning_list),
+                actor.get("id"),
+            ),
+        )
+        cursor.execute(
+            """
+            UPDATE nexora_imported_key_records
+               SET replacement_key_id = %s, replaced_at = now(),
+                   replacement_count = replacement_count + 1,
+                   status = 'replaced', requires_regeneration = false
+             WHERE id = %s
+            """,
+            (key_id, record_id),
+        )
+
+    def list_imported_keys(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 25,
+        project_id: str | None = None,
+        status: str | None = None,
+        search: str | None = None,
+        allowed_project_ids: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        page = max(1, int(page))
+        page_size = max(1, min(100, int(page_size)))
+        if allowed_project_ids is not None and not allowed_project_ids:
+            return {"items": [], "pagination": pagination(page, page_size, 0)}
+        clauses = ["r.record_type = 'key'", "p.deleted_at IS NULL"]
+        params: list[Any] = []
+        if project_id:
+            clauses.append("r.project_id = %s")
+            params.append(project_id)
+        if allowed_project_ids is not None:
+            placeholders = ", ".join(["%s"] * len(allowed_project_ids))
+            clauses.append(f"r.project_id IN ({placeholders})")
+            params.extend(allowed_project_ids)
+        if status:
+            clauses.append("r.status = %s")
+            params.append(status.strip())
+        if search and search.strip():
+            term = _like_term(search)
+            clauses.append(
+                "(LOWER(r.label) LIKE %s OR LOWER(r.key_hint) LIKE %s "
+                "OR LOWER(r.source_id) LIKE %s OR LOWER(p.project_name) LIKE %s "
+                "OR LOWER(COALESCE(t.name, r.key_type_id)) LIKE %s)"
+            )
+            params.extend([term, term, term, term, term])
+        where = " AND ".join(clauses)
+        total = self.db.fetch_value(
+            f"""
+            SELECT COUNT(*)::int
+              FROM nexora_imported_key_records r
+              JOIN nexora_projects p ON p.id = r.project_id
+              LEFT JOIN nexora_key_types t ON t.id = r.key_type_id
+             WHERE {where}
+            """,
+            tuple(params),
+        ) or 0
+        rows = self.db.fetch_all(
+            f"""
+            SELECT r.id, r.project_id, r.record_type, r.source_id, r.key_type_id,
+                   r.label, r.key_hint, r.status, r.requires_regeneration,
+                   r.replacement_key_id, r.replaced_at, r.replacement_count,
+                   r.imported_at, p.project_name, t.name AS key_type_name,
+                   (SELECT COUNT(*)::int FROM nexora_imported_key_replacements h
+                     WHERE h.imported_record_id = r.id) AS replacement_history_count
+              FROM nexora_imported_key_records r
+              JOIN nexora_projects p ON p.id = r.project_id
+              LEFT JOIN nexora_key_types t ON t.id = r.key_type_id
+             WHERE {where}
+             ORDER BY r.imported_at DESC
+             LIMIT %s OFFSET %s
+            """,
+            tuple(params + [page_size, (page - 1) * page_size]),
+        )
+        return {
+            "items": rows,
+            "pagination": pagination(page, page_size, total),
+            "secrets_exposed": False,
+        }
+
+    def replacement_preview(
+        self,
+        record_ids: Any,
+        *,
+        allow_duplicate: bool = False,
+        actor: dict[str, Any],
+    ) -> dict[str, Any]:
+        ids = self._replacement_ids(record_ids)
+        rows = self._imported_records_by_ids(ids)
+        for record in rows.values():
+            self.authorize(actor, "key:read", project_id=str(record["project_id"]))
+        plans: list[dict[str, Any]] = []
+        for record_id in ids:
+            record = rows.get(record_id)
+            if not record:
+                plans.append(
+                    {
+                        "record_id": record_id,
+                        "eligible": False,
+                        "reason": "Imported record not found.",
+                        "code": "IMPORTED_RECORD_NOT_FOUND",
+                        "warnings": [],
+                    }
+                )
+                continue
+            plan = self._replacement_plan(record)
+            if plan["eligible"] and plan["existing_replacements"] and not allow_duplicate:
+                plan["eligible"] = False
+                plan["code"] = "REPLACEMENT_ALREADY_EXISTS"
+                plan["reason"] = (
+                    "A replacement already exists; explicit duplicate authorization is required."
+                )
+            plans.append(plan)
+        eligible = sum(1 for item in plans if item.get("eligible"))
+        return {
+            "batch": {
+                "requested": len(ids),
+                "eligible": eligible,
+                "ineligible": len(plans) - eligible,
+                "allow_duplicate": allow_duplicate,
+            },
+            "records": plans,
+            "secrets_echoed": False,
+        }
+
+    def _replacement_ids(self, record_ids: Any) -> list[str]:
+        if not isinstance(record_ids, list) or not record_ids:
+            raise ValidationError({"record_ids": "Select at least one imported key."})
+        limit = int(getattr(self.settings, "max_bulk_keys", 500))
+        if len(record_ids) > limit:
+            raise ValidationError({"record_ids": f"Select at most {limit} records."})
+        ids: list[str] = []
+        for value in record_ids:
+            text = str(value or "").strip()
+            try:
+                UUID(text)
+            except (ValueError, TypeError):
+                raise ValidationError({"record_ids": "Every record id must be a UUID."}) from None
+            if text not in ids:
+                ids.append(text)
+        return ids
+
+    def _imported_records_by_ids(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        placeholders = ", ".join(["%s"] * len(ids))
+        rows = self.db.fetch_all(
+            f"""
+            SELECT r.*, p.project_name, p.status AS project_status,
+                   p.deleted_at AS project_deleted_at, t.name AS key_type_name
+              FROM nexora_imported_key_records r
+              JOIN nexora_projects p ON p.id = r.project_id
+              LEFT JOIN nexora_key_types t ON t.id = r.key_type_id
+             WHERE r.id IN ({placeholders})
+            """,
+            tuple(ids),
+        )
+        return {str(row["id"]): row for row in rows}
+
+    def generate_replacements(
+        self,
+        record_ids: Any,
+        *,
+        allow_duplicate: bool,
+        actor: dict[str, Any],
+        ip_address: str | None,
+        user_agent: str | None,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        ids = self._replacement_ids(record_ids)
+        rows = self._imported_records_by_ids(ids)
+        for record in rows.values():
+            self.authorize(
+                actor, "key:generate", project_id=str(record["project_id"])
+            )
+        batch_id = str(uuid4())
+        generated: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
+        for record_id in ids:
+            record = rows.get(record_id)
+            if not record:
+                failures.append(
+                    {
+                        "record_id": record_id,
+                        "code": "IMPORTED_RECORD_NOT_FOUND",
+                        "message": "Imported record not found.",
+                    }
+                )
+                continue
+            try:
+                plan = self._replacement_plan(record)
+                if not plan.get("eligible"):
+                    raise ApiError(
+                        409,
+                        str(plan.get("code") or "REPLACEMENT_NOT_ELIGIBLE"),
+                        str(plan.get("reason") or "The imported record cannot be replaced."),
+                    )
+                if plan["existing_replacements"] and not allow_duplicate:
+                    raise ApiError(
+                        409,
+                        "REPLACEMENT_ALREADY_EXISTS",
+                        "A replacement already exists for this imported record.",
+                    )
+                self.authorize(
+                    actor, "key:generate", project_id=str(record["project_id"])
+                )
+                result = self.generate_keys(
+                    project_id=str(record["project_id"]),
+                    key_type_id=str(record["key_type_id"]),
+                    quantity=1,
+                    label=str(record.get("label") or ""),
+                    expiration_preset=str(plan["expiration_preset"]),
+                    expires_at=self._parse_imported_expiry(plan.get("expires_at")),
+                    permissions=plan.get("permissions"),
+                    scopes=plan.get("scopes"),
+                    tags=plan.get("tags"),
+                    notes="",
+                    metadata=plan.get("metadata"),
+                    max_usage=plan.get("max_usage"),
+                    actor=actor,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    request_id=request_id,
+                    source_imported_key_id=record_id,
+                    allow_duplicate_replacement=allow_duplicate,
+                    replacement_warnings=plan.get("warnings"),
+                    replacement_batch_id=batch_id,
+                )
+                key = dict(result["keys"][0])
+                key["imported_record_id"] = record_id
+                key["label"] = record.get("label") or ""
+                key["original_status"] = plan.get("original_status")
+                key["warnings"] = plan.get("warnings") or []
+                generated.append(key)
+            except ApiError as exc:
+                message = exc.message
+                fields = (exc.details or {}).get("fields")
+                if isinstance(fields, dict) and fields:
+                    message = f"{message} " + "; ".join(
+                        f"{key}: {value}" for key, value in sorted(fields.items())
+                    )
+                failures.append(
+                    {
+                        "record_id": record_id,
+                        "code": exc.code,
+                        "message": message[:500],
+                    }
+                )
+            except Exception:
+                failures.append(
+                    {
+                        "record_id": record_id,
+                        "code": "REPLACEMENT_FAILED",
+                        "message": "Replacement generation failed for this record.",
+                    }
+                )
+        try:
+            with self.db.cursor() as cursor:
+                self._audit(
+                    cursor,
+                    actor=actor,
+                    action="imported_key.replace_batch",
+                    target_type="imported_key_batch",
+                    target_id=batch_id,
+                    outcome="success" if not failures else "partial_failure",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    request_id=request_id,
+                    details={
+                        "batch_id": batch_id,
+                        "requested": len(ids),
+                        "generated": len(generated),
+                        "failed": len(failures),
+                        "record_ids": [item["imported_record_id"] for item in generated],
+                        "failed_record_ids": [item["record_id"] for item in failures],
+                    },
+                )
+        except Exception:
+            pass
+        return {
+            "batch_id": batch_id,
+            "requested": len(ids),
+            "generated_count": len(generated),
+            "failed_count": len(failures),
+            "keys": generated,
+            "failures": failures,
+            "warnings": sorted(
+                {
+                    warning
+                    for item in generated
+                    for warning in (item.get("warnings") or [])
+                }
+            ),
+            "secrets_exposed": True,
+        }
+
+    def replacement_history(
+        self, record_id: str, *, actor: dict[str, Any]
+    ) -> dict[str, Any]:
+        record = self._imported_record(record_id)
+        self.authorize(actor, "key:read", project_id=str(record["project_id"]))
+        history = self.db.fetch_all(
+            """
+            SELECT h.id, h.key_id, h.batch_id, h.warnings, h.created_at,
+                   k.key_hint, k.status AS key_status, k.created_at AS key_created_at,
+                   u.email AS generated_by_email
+              FROM nexora_imported_key_replacements h
+              LEFT JOIN reader_keys k ON k.id = h.key_id
+              LEFT JOIN admin_users u ON u.id = h.generated_by
+             WHERE h.imported_record_id = %s
+             ORDER BY h.created_at DESC
+            """,
+            (record_id,),
+        )
+        return {
+            "record": {
+                "id": str(record["id"]),
+                "project_id": str(record["project_id"]),
+                "label": record.get("label") or "",
+                "key_hint": record.get("key_hint") or "",
+                "status": record.get("status") or "",
+                "requires_regeneration": bool(record.get("requires_regeneration")),
+            },
+            "history": history,
+            "secrets_exposed": False,
+        }
+
     # ------------------------------------------------------------------ keys
     def generate_keys(
         self,
@@ -1541,6 +2204,10 @@ class UniversalService:
         ip_address: str | None,
         user_agent: str | None,
         request_id: str | None,
+        source_imported_key_id: str | None = None,
+        allow_duplicate_replacement: bool = False,
+        replacement_warnings: Any = None,
+        replacement_batch_id: str | None = None,
     ) -> dict[str, Any]:
         try:
             quantity = int(quantity)
@@ -1549,6 +2216,10 @@ class UniversalService:
         limit = int(getattr(self.settings, "max_bulk_keys", 500))
         if not 1 <= quantity <= limit:
             raise ValidationError({"quantity": f"Must be between 1 and {limit}."})
+        if source_imported_key_id and quantity != 1:
+            raise ValidationError(
+                {"quantity": "Replacement generation requires exactly one key."}
+            )
         project = self._project_row(project_id)
         self._assert_project_live(project)
         key_type = self._type_row(key_type_id)
@@ -1587,8 +2258,17 @@ class UniversalService:
         status = "generated" if key_type_id == "reader" else "active"
         batch_id = str(uuid4())
         generated: list[dict[str, Any]] = []
+        replacement: dict[str, Any] | None = None
         try:
             with self.db.cursor() as cursor:
+                if source_imported_key_id:
+                    replacement = self._claim_imported_replacement(
+                        cursor,
+                        source_imported_key_id,
+                        project_id=project_id,
+                        key_type_id=key_type_id,
+                        allow_duplicate=allow_duplicate_replacement,
+                    )
                 for _ in range(quantity):
                     plaintext = ""
                     inserted = None
@@ -1644,14 +2324,31 @@ class UniversalService:
                             "A unique key could not be generated. Retry the request.",
                         )
                     key_id = str(inserted[0])
+                    event_metadata: dict[str, Any] = {
+                        "key_type_id": key_type_id,
+                        "batch_id": batch_id,
+                    }
+                    if source_imported_key_id:
+                        event_metadata["source_imported_key_id"] = source_imported_key_id
+                        self._complete_imported_replacement(
+                            cursor,
+                            source_imported_key_id,
+                            key_id=key_id,
+                            project_id=project_id,
+                            batch_id=replacement_batch_id or batch_id,
+                            warnings=replacement_warnings,
+                            actor=actor,
+                        )
                     self._event(
                         cursor,
                         key_id=key_id,
                         project_id=project_id,
                         fingerprint=self._fingerprint(plaintext, key_type_id),
-                        event="key.generated",
+                        event="key.replacement_generated"
+                        if source_imported_key_id
+                        else "key.generated",
                         actor=actor,
-                        metadata={"key_type_id": key_type_id, "batch_id": batch_id},
+                        metadata=event_metadata,
                     )
                     generated.append(
                         {
@@ -1681,6 +2378,7 @@ class UniversalService:
                         "batch_id": batch_id,
                         "key_ids": [item["id"] for item in generated],
                         "fingerprints": [item["fingerprint"] for item in generated],
+                        "source_imported_key_id": source_imported_key_id,
                     },
                     strict=True,
                 )
@@ -1702,12 +2400,15 @@ class UniversalService:
                 "batch_id": batch_id,
             },
         )
-        return {
+        result = {
             "batch_id": batch_id,
             "keys": generated,
             "project_id": project_id,
             "key_type": key_type,
         }
+        if replacement:
+            result["replacement"] = replacement
+        return result
 
     def list_keys(
         self,
@@ -1721,12 +2422,19 @@ class UniversalService:
         expiring: str | None = None,
         sort: str = "created_at",
         order: str = "desc",
+        allowed_project_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         self._expire_overdue()
         page = max(1, page)
         page_size = max(1, min(100, page_size))
+        if allowed_project_ids is not None and not allowed_project_ids:
+            return {"items": [], "pagination": pagination(page, page_size, 0)}
         clauses = ["k.status <> 'deleted'", "p.deleted_at IS NULL"]
         params: list[Any] = []
+        if allowed_project_ids is not None:
+            placeholders = ", ".join(["%s"] * len(allowed_project_ids))
+            clauses.append(f"k.project_id IN ({placeholders})")
+            params.extend(allowed_project_ids)
         if project_id:
             clauses.append("k.project_id = %s")
             params.append(project_id)
@@ -2277,9 +2985,16 @@ class UniversalService:
         key_id: str | None = None,
         status: str | None = None,
         search: str | None = None,
+        allowed_project_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
+        if allowed_project_ids is not None and not allowed_project_ids:
+            return {"items": [], "pagination": pagination(page, page_size, 0)}
         clauses = ["1=1"]
         params: list[Any] = []
+        if allowed_project_ids is not None:
+            placeholders = ", ".join(["%s"] * len(allowed_project_ids))
+            clauses.append(f"d.project_id IN ({placeholders})")
+            params.extend(allowed_project_ids)
         if project_id:
             clauses.append("d.project_id = %s")
             params.append(project_id)
@@ -2749,11 +3464,18 @@ class UniversalService:
         key_id: str | None = None,
         status: str | None = None,
         endpoint: str | None = None,
+        allowed_project_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         page = max(1, int(page))
         page_size = max(1, min(100, int(page_size)))
+        if allowed_project_ids is not None and not allowed_project_ids:
+            return {"items": [], "pagination": pagination(page, page_size, 0)}
         clauses = ["1=1"]
         params: list[Any] = []
+        if allowed_project_ids is not None:
+            placeholders = ", ".join(["%s"] * len(allowed_project_ids))
+            clauses.append(f"u.project_id IN ({placeholders})")
+            params.extend(allowed_project_ids)
         if project_id:
             clauses.append("u.project_id = %s")
             params.append(project_id)

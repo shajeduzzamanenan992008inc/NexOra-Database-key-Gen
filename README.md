@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/branding/nexora-keygen-banner.svg" alt="NexOra Database Key Generator banner" width="100%" />
+  <img src="assets\effect\ultra-universal-keygen-logo-v3.svg" alt="NexOra Key Generator logo" width="176" />
+</p>
+<p align="center">
+  <img src="assets\effect\ultra-universal-keygen.svg" alt="NexOra Database Key Generator banner" width="100%" />
 </p>
 
 <h1 align="center">OMEGA NEX-ORA</h1>
@@ -10,7 +13,9 @@
 </p>
 
 <p align="center">
-  <img src="assets/branding/nexora-keygen-logo.svg" alt="NexOra Key Generator logo" width="176" />
+  <img src="assets/branding/nexora-keygen-logo.svg" alt="NexOra Key Generator logo" width="64" />
+  &nbsp;&nbsp;
+  <img src="assets\effect\ultra-universal-keygen-logo-v3.svg" alt="NexOra Key Generator logo" width="176" />
   &nbsp;&nbsp;
   <img src="assets/branding/nexora-keygen-favicon.svg" alt="NexOra favicon" width="64" />
 </p>
@@ -149,6 +154,7 @@ The supplied documentation says the PostgreSQL schema is managed through `db/mig
 | `008_multi_key_expiration.sql` | Adds multi-key expiration support without changing the one-key-per-project Reader contract. |
 | `009_universal_key_platform.sql` | Adds universal project metadata, permission catalogue, 20 built-in key types, extended keys, devices, API usage, webhooks, notifications, automation, platform roles, audit request IDs, indexes, and RLS. |
 | `010_project_transfer_roles_scheduler.sql` | Adds custom platform roles, imported key/device metadata, scheduler ledger fields, and project-transfer support indexes. |
+| `011_project_roles_imported_replacements.sql` | Adds project-scoped roles, project role assignments, and imported-key replacement history. |
 
 The documented migration command is:
 
@@ -156,7 +162,7 @@ The documented migration command is:
 python -m backend.cli migrate
 ```
 
-> **Production migration gate:** migrations 005–010 require an approved backup/PITR checkpoint and migration window. Do not apply them to production until that approval is complete. Migrations 009 and 010 were applied only to a dedicated local test database during this work.
+> **Production migration gate:** migrations 005–011 require an approved backup/PITR checkpoint and migration window. Do not apply them to production until that approval is complete. Migrations 009–011 were applied only to a dedicated local test database during this work.
 
 ## Project and Reader-Key Lifecycle
 
@@ -247,6 +253,12 @@ operational notes are in [`docs/UNIVERSAL_PLATFORM_GUIDE.md`](docs/UNIVERSAL_PLA
 | `DELETE` | `/universal/projects` | Owner-only delete-all with exact phrase and password. |
 | `GET/POST` | `/universal/roles` | List or create custom platform roles. |
 | `PATCH/DELETE` | `/universal/roles/<id>` | Update, clone, or delete a custom role. |
+| `GET` | `/universal/imported-keys` | List imported key metadata. |
+| `POST` | `/universal/imported-keys/replacement-preview` | Validate imported-key replacement eligibility. |
+| `POST` | `/universal/imported-keys/replacements` | Generate independent replacement credentials with one-time reveal. |
+| `GET` | `/universal/imported-keys/<id>/history` | Replacement history without plaintext. |
+| `GET/POST` | `/universal/projects/<id>/role-assignments` | List or assign project-scoped roles. |
+| `DELETE` | `/universal/projects/<id>/role-assignments/<assignment_id>` | Remove a project role assignment. |
 | `GET` | `/universal/openapi.json` | OpenAPI document for the v1 surface. |
 | `POST` | `/access/authenticate` | Authenticate a universal project key (no browser session). |
 
@@ -300,7 +312,7 @@ Run the test suite from the full source repository:
 python -m pytest -v
 ```
 
-Current local result after the universal transfer, roles, scheduler, and deletion-preview work: **277 passed, 26 skipped, exit 0** plus the separate Playwright browser checks. The 26 skips belong to the optional SMS Reader suite. The real-Chrome responsive audit passed **282 checks across 11 viewports**, covering login, dashboard, one-time key reveal, modal containment, mobile navigation, reduced motion, and lite mode. A separate authenticated platform smoke passed **33 checks**: login, all 20 views, project creation, export preview, delete-all pre-execution totals, mobile navigation, and the bounded shutdown animation. It is reproducible with `python scripts/platform_browser_smoke.py` against the local test database.
+Current local result after the universal transfer, project roles, imported replacement, scheduler, and deletion-preview work: **282 passed, 26 skipped, exit 0** plus the separate Playwright browser checks. The 26 skips belong to the optional SMS Reader suite. The real-Chrome responsive audit of the legacy dashboard passed **282 checks across 11 viewports**, covering login, dashboard, one-time key reveal, modal containment, mobile navigation, reduced motion, and lite mode. A separate authenticated platform smoke passed **35 checks**: login, all 22 views, project creation, export preview, delete-all pre-execution totals, mobile navigation, and the bounded shutdown animation. It is reproducible with `python scripts/platform_browser_smoke.py` against the local test database.
 
 Test areas:
 
@@ -311,7 +323,9 @@ Test areas:
 - Project export/import validation, conflict modes, and transaction rollback.
 - Permanent project deletion, delete-all blast-radius preview, owner checks, and audit events.
 - Custom role CRUD, assignment, escalation guards, and last-owner protection.
-- Scheduler idempotency, dry-run/status, and advisory locking.
+- Project-scoped roles, assignment isolation, anti-escalation, and server-side filtering.
+- Imported-key replacement preview, duplicate protection, partial failures, one-time reveal, and history.
+- Scheduler idempotency, dry-run/status, advisory locking, worker state, and per-job health.
 - Webhook SSRF, DNS pinning, redirect rejection, timeouts, and response bounds.
 - Frontend CSP and XSS hardening.
 

@@ -513,12 +513,38 @@ Create body: `{"id":"ops_reader","name":"Ops Reader","description":"...","permis
 Custom ids match `^[a-z][a-z0-9_]{2,49}$`. Non-owners cannot grant permissions
 they do not hold or any critical permission; only an Owner assigns Owner; the
 last Owner cannot be demoted; assigned roles cannot be deleted. Every mutation
-is audited.
-
-### Scheduler
+is audited.### Scheduler
 
 `GET /api/v1/universal/automation/scheduler` (`automation:read`) returns the job
-list, advisory lock key, interval, batch size, queue/due counts, recent runs, and
-the last successful run. The CLI commands `universal-scheduler-run`,
+list, advisory lock key, interval, batch size, queue/due counts, worker status,
+lock holder, last run, last success/failure, last failure reason, per-job health,
+and recent runs. The CLI commands `universal-scheduler-run`,
 `universal-scheduler-status`, and `universal-automation-run` are documented in
 [`SCHEDULER.md`](SCHEDULER.md).
+
+### Imported key replacement
+
+| Method | Path | Permission | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/universal/imported-keys` | `key:read` | List imported key records; scope-filtered for project roles |
+| `POST` | `/api/v1/universal/imported-keys/replacement-preview` | `key:read` | Validate selected records and return eligibility, warnings, and metadata plan |
+| `POST` | `/api/v1/universal/imported-keys/replacements` | `key:generate` | Generate new independent credentials after preview confirmation |
+| `GET` | `/api/v1/universal/imported-keys/{record_id}/history` | `key:read` | Replacement history containing hints and metadata only |
+
+Replacement generation requires `confirm: true`, emits one-time plaintext only in
+the response, never restores original plaintext or reactivates revoked/expired
+records, and rejects duplicate active replacements unless `allow_duplicate` is
+true. Partial failures are reported per record.
+
+### Project-scoped role assignments
+
+| Method | Path | Permission | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/universal/projects/{id}/roles` | `admin:read` | List project-scoped custom roles |
+| `GET` | `/api/v1/universal/projects/{id}/role-assignments` | `admin:read` | List project role assignments |
+| `POST` | `/api/v1/universal/projects/{id}/role-assignments` | `admin:roles` | Assign a project role to an administrator |
+| `DELETE` | `/api/v1/universal/projects/{id}/role-assignments/{assignment_id}` | `admin:roles` | Remove a project role assignment |
+
+Project roles are additional grants. They do not change `admin_users.platform_role`,
+ cannot grant global-only or Owner permissions, and are enforced server-side in
+addition to the platform role.

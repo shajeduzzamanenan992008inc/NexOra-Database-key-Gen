@@ -1818,6 +1818,21 @@ html.is-lite .key-pill .key-founder-mark {
 
 /* --------------------------------------------------------------- toolbars */
 
+.field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 42px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.field-inline input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
 .toolbar {
   display: flex;
   align-items: center;

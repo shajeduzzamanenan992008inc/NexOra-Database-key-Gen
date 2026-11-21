@@ -303,13 +303,45 @@ class SchedulerService:
         }
 
     # ---------------------------------------------------------------- status
+    @staticmethod
+    def _run_metrics(run: dict[str, Any]) -> dict[str, int]:
+        """Extract bounded, non-secret processed/failed counters from run details."""
+        details = run.get("details") or {}
+        if not isinstance(details, dict):
+            return {"processed": 0, "failed": 0}
+        automation = details.get("automation")
+        project_purge = details.get("project_purge") or {}
+        sessions = details.get("sessions") or {}
+        processed = 0
+        failed = 0
+        if isinstance(automation, dict):
+            for key in (
+                "projects_expired",
+                "keys_expired",
+                "expired_keys_cleaned",
+                "devices_deactivated",
+                "key_expiry_notifications",
+                "project_expiry_notifications",
+            ):
+                processed += int(automation.get(key) or 0)
+            webhooks = automation.get("webhooks") or {}
+            if isinstance(webhooks, dict):
+                processed += sum(
+                    int(webhooks.get(key) or 0)
+                    for key in ("delivered", "failed", "retried")
+                )
+                failed += int(webhooks.get("failed") or 0)
+        processed += int(project_purge.get("projects_deleted") or 0)
+        processed += int(sessions.get("sessions_pruned") or 0)
+        return {"processed": processed, "failed": failed}
+
     def status(self) -> dict[str, Any]:
         runs = self.db.fetch_all(
             """
             SELECT id, job, status, details, error, worker_id, duration_ms,
                    dry_run, started_at, finished_at
               FROM nexora_automation_runs
-             ORDER BY started_at DESC LIMIT 10
+             ORDER BY started_at DESC LIMIT 50
             """
         )
         counts = self.db.fetch_one(
@@ -323,20 +355,79 @@ class SchedulerService:
                 WHERE deleted_at IS NULL AND auto_delete_at IS NOT NULL
                   AND auto_delete_at <= now()) AS projects_due,
               (SELECT COUNT(*)::int FROM nexora_notifications
-                WHERE read_at IS NULL) AS unread_notifications
+                WHERE read_at IS NULL) AS unread_notifications,
+              (SELECT COUNT(*)::int FROM nexora_webhook_deliveries
+                WHERE status = 'dead') AS webhook_dead
             """
         ) or {}
+        interval = int(getattr(self.settings, "scheduler_interval_seconds", 60) or 60)
         last_success = next(
             (row for row in runs if row.get("status") == "success"), None
         )
+        last_failure = next(
+            (row for row in runs if row.get("status") == "failed"), None
+        )
+        last_run = runs[0] if runs else None
+        lock_held = int(
+            self.db.fetch_value(
+                """
+                SELECT COUNT(*)::int FROM pg_locks
+                 WHERE locktype = 'advisory' AND granted = true
+                   AND classid = 0 AND objid = %s
+                """,
+                (SCHEDULER_LOCK_KEY,),
+            )
+            or 0
+        ) > 0
+        if not last_run:
+            worker_status = "unknown"
+        elif last_run.get("finished_at") is None:
+            worker_status = "running"
+        else:
+            finished = last_run.get("finished_at")
+            age = time.time() - finished.timestamp() if finished else None
+            worker_status = (
+                "stale"
+                if age is not None and age > max(120, interval * 3)
+                else "idle"
+            )
+        per_job: list[dict[str, Any]] = []
+        seen_jobs: set[str] = set()
+        for run in runs:
+            job = str(run.get("job") or "")
+            if not job or job in seen_jobs:
+                continue
+            seen_jobs.add(job)
+            metrics = self._run_metrics(run)
+            per_job.append(
+                {
+                    "job": job,
+                    "status": run.get("status"),
+                    "last_run": run.get("started_at"),
+                    "last_finished": run.get("finished_at"),
+                    "duration_ms": int(run.get("duration_ms") or 0),
+                    "processed": metrics["processed"],
+                    "failed": metrics["failed"],
+                    "worker_id": run.get("worker_id") or "",
+                    "dry_run": bool(run.get("dry_run")),
+                    "error": run.get("error") or "",
+                }
+            )
         return {
             "jobs": list(JOBS),
             "lock_key": SCHEDULER_LOCK_KEY,
-            "interval_seconds": int(
-                getattr(self.settings, "scheduler_interval_seconds", 60) or 60
-            ),
+            "lock_held": lock_held,
+            "worker_status": worker_status,
+            "interval_seconds": interval,
             "batch_size": self._batch_size(),
             "counts": {key: int(value or 0) for key, value in counts.items()},
             "last_success": last_success.get("started_at") if last_success else None,
-            "runs": runs,
+            "last_failure": last_failure.get("started_at") if last_failure else None,
+            "last_failure_reason": (last_failure.get("error") or "")
+            if last_failure
+            else "",
+            "last_run": last_run.get("started_at") if last_run else None,
+            "worker_id": last_run.get("worker_id") if last_run else "",
+            "per_job": per_job,
+            "runs": runs[:10],
         }

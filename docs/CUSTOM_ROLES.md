@@ -1,7 +1,7 @@
 # Custom Platform Roles
 
 Status: implemented and tested against the local PostgreSQL test database.
-Migration 010 has not been applied to production.
+Migration 011 has not been applied to production.
 
 ## Model
 
@@ -10,9 +10,11 @@ Owner, Administrator, Project manager, Key manager, and Read only. Custom roles
 are named permission sets stored in `nexora_roles`. An administrator can be
 assigned a custom role through `admin_users.platform_role_id`.
 
-The role assignment changes the named permission set, not the account's base
-`admin_users.role`. Authorization is evaluated server-side on every request from
-the database; hiding a button in the browser is never an authorization control.
+Platform roles remain the base authority. Project-scoped roles are additional
+grants stored in `nexora_project_role_assignments`; they never change
+`admin_users.platform_role`. Authorization is evaluated server-side on every
+request from the database; hiding a button in the browser is never an
+authorization control.
 
 ## API
 
@@ -23,6 +25,10 @@ the database; hiding a button in the browser is never an authorization control.
 | `PATCH` | `/api/v1/universal/roles/<id>` | `admin:roles` |
 | `POST` | `/api/v1/universal/roles/<id>/clone` | `admin:roles` |
 | `DELETE` | `/api/v1/universal/roles/<id>` | `admin:roles` |
+| `GET` | `/api/v1/universal/projects/<id>/roles` | `admin:read` |
+| `GET` | `/api/v1/universal/projects/<id>/role-assignments` | `admin:read` |
+| `POST` | `/api/v1/universal/projects/<id>/role-assignments` | `admin:roles` |
+| `DELETE` | `/api/v1/universal/projects/<id>/role-assignments/<assignment_id>` | `admin:roles` |
 | `PATCH` | `/api/v1/universal/admins/<id>/role` | `admin:roles` |
 | `POST` | `/api/v1/universal/admins/<id>/sessions/revoke` | `admin:sessions` |
 
@@ -96,8 +102,19 @@ The automated cases cover custom role creation, listing, update, clone,
 assignment, server-side enforcement after a fresh login, escalation refusal,
 last-owner protection, and role deletion guards.
 
+## Project-scoped roles
+
+Project roles are created with `project_id` set and use only the
+`PROJECT_ROLE_PERMISSIONS` subset. They cannot grant global-only permissions or
+Owner authority. Because `admin:roles` is not in that subset, creating and
+assigning roles remains a global capability: the actor needs the global
+`admin:roles` permission, and assignment/removal is scoped to the target
+project. A project role cannot be deleted while assigned. Project roles never
+change `admin_users.platform_role`, so the global last-Owner protection still
+applies and a project-role removal cannot demote or delete the global Owner.
+
 ## Production notes
 
-Apply migration 010 through the approved migration process. Existing built-in
+Apply migration 011 through the approved migration process. Existing built-in
 roles are unaffected. Review custom assignments after restore/import, since
 project bundles do not contain administrator accounts or role assignments.

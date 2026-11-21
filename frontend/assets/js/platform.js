@@ -36,7 +36,9 @@ const VIEWS = {
   search: ["Global Search", "Search projects, key hints, fingerprints, types, devices, and audit events.", "COMMAND / SEARCH"],
   audit: ["Audit Trail", "Server-side administrative and security history.", "GOVERNANCE / AUDIT"],
   "import-export": ["Import / Export", "Bulk key metadata export and validated one-time key import.", "GOVERNANCE / DATA"],
+  "imported-keys": ["Imported Keys", "Imported metadata inventory and independent replacement-key generation.", "KEY ENGINE / RECOVERY"],
   automation: ["Automation", "Expiry sweeps, retention cleanup, notifications, and webhook retries.", "GOVERNANCE / SCHEDULER"],
+  scheduler: ["Scheduler", "Worker health, lock state, job durations, queue depth, and recent failures.", "GOVERNANCE / WORKER"],
   roles: ["Roles", "Platform permission matrix. Authorization remains server-side.", "GOVERNANCE / RBAC"],
   admins: ["Administrators", "Platform role assignment and session revocation.", "GOVERNANCE / ADMINS"],
   health: ["Health", "Database, API, and security readiness.", "SYSTEM / HEALTH"],
@@ -1461,6 +1463,231 @@ async function renderImportExport(root) {
   );
 }
 
+async function renderImportedKeys(root) {
+  let projectData = state.projects;
+  if (!projectData.length) {
+    projectData = (await api.universalProjects({ page_size: 100 })).items || [];
+    state.projects = projectData;
+  }
+  const selected = new Set();
+  const projectFilter = select([["", "All projects"]].concat(projectData.map((p) => [p.id, p.project_name])));
+  const statusFilter = select([["", "All imported records"], ["imported", "Imported"], ["replaced", "Replaced"]]);
+  const search = input({ placeholder: "Search label, hint, source id or type" });
+  const allowDuplicate = el("input", { type: "checkbox" });
+  const selectAll = el("input", { type: "checkbox", "aria-label": "Select all filtered imported keys" });
+  const countLabel = node("span", "muted", "0 selected");
+  const host = el("div", { class: "stack" });
+  let rows = [];
+
+  const selectedIds = () => Array.from(selected);
+  const updateCount = () => {
+    countLabel.textContent = `${selected.size} selected`;
+    previewBtn.disabled = selected.size === 0;
+  };
+
+  const load = async () => {
+    const data = await api.importedKeys({
+      page_size: 100,
+      project_id: projectFilter.value || undefined,
+      status: statusFilter.value || undefined,
+      search: search.value.trim() || undefined,
+    });
+    rows = data.items || [];
+    for (const id of Array.from(selected)) {
+      if (!rows.some((row) => row.id === id)) selected.delete(id);
+    }
+    selectAll.checked = false;
+    renderRows();
+    updateCount();
+  };
+
+  const preview = async () => {
+    if (!selected.size) return toast("Select at least one imported key.", { type: "error" });
+    setButtonBusy(previewBtn, true, "Validating…");
+    try {
+      const result = await api.importedKeyReplacementPreview({
+        record_ids: selectedIds(),
+        allow_duplicate: allowDuplicate.checked,
+      });
+      const plans = result.records || [];
+      const batch = result.batch || {};
+      const generate = button("Confirm and generate", async () => {
+        const confirmation = await confirmAction({
+          title: `Generate ${batch.eligible || 0} replacement key(s)?`,
+          message: "Each replacement is a new credential. Original plaintext keys are never restored, and revoked or expired credentials are not reactivated.",
+          confirmLabel: "Generate replacements",
+          tone: "primary",
+        });
+        if (!confirmation.confirmed) return;
+        setButtonBusy(generate, true, "Generating…");
+        try {
+          const generated = await api.generateImportedKeyReplacements({
+            record_ids: selectedIds(),
+            allow_duplicate: allowDuplicate.checked,
+            confirm: true,
+          });
+          showReplacementResult(generated);
+        } catch (error) {
+          fail(error, "Replacement generation failed.");
+          setButtonBusy(generate, false);
+        }
+      }, "btn btn-primary btn-sm");
+      generate.disabled = !batch.eligible;
+      showPanel("Replacement preview", el("div", { class: "stack" }, [
+        el("p", { class: "muted", text: `${batch.requested || 0} requested · ${batch.eligible || 0} eligible · ${batch.ineligible || 0} blocked. Plaintext is not shown in preview.` }),
+        table(
+          ["Record", "Project", "Eligibility", "Warnings"],
+          plans.map((plan) => el("tr", {}, [
+            cell(el("div", {}, [el("strong", { text: plan.label || plan.record_id }), el("div", { class: "mono", text: plan.record_id })])),
+            cell(plan.project_name || "—"),
+            cell(plan.eligible ? pill("eligible", "good") : el("div", {}, [pill("blocked", "warn"), el("div", { class: "muted", text: plan.reason || "" })])),
+            cell((plan.warnings || []).join(" ") || "—"),
+          ])),
+          "No records in preview"
+        ),
+        el("div", { class: "card-actions" }, [generate]),
+      ]));
+    } catch (error) { fail(error, "Replacement preview failed."); }
+    finally { setButtonBusy(previewBtn, false); updateCount(); }
+  };
+
+  const showReplacementResult = (result) => {
+    const keys = result.keys || [];
+    const failures = result.failures || [];
+    const reveal = keys.length ? button("Reveal one-time keys", () => {
+      showSecretReveal("Replacement keys — one-time reveal", keys, `${keys.length} new credential(s). Copy or download them now.`);
+    }, "btn btn-primary btn-sm") : null;
+    showPanel("Replacement result", el("div", { class: "stack" }, [
+      el("div", { class: "stat-strip" }, [
+        stat("Generated", result.generated_count || 0, "is-good"),
+        stat("Failed", result.failed_count || 0, result.failed_count ? "is-bad" : ""),
+      ]),
+      el("p", { class: "secret-warning", text: "Plaintext is available only in this result view. It is never stored or logged. Reveal it before closing." }),
+      keys.length ? table(
+        ["Record", "Project", "Key hint", "Warnings"],
+        keys.map((key) => el("tr", {}, [
+          cell(key.imported_record_id || "—"),
+          cell(key.project_id || "—"),
+          cell(el("span", { class: "mono", text: key.key_hint || "" })),
+          cell((key.warnings || []).join(" ") || "—"),
+        ])),
+        "No successful replacements"
+      ) : null,
+      failures.length ? table(
+        ["Record", "Code", "Failure"],
+        failures.map((item) => el("tr", {}, [
+          cell(item.record_id || "—"),
+          cell(el("span", { class: "mono", text: item.code || "" })),
+          cell(item.message || ""),
+        ])),
+        "No failures"
+      ) : null,
+      el("div", { class: "card-actions" }, [
+        reveal,
+        button("Reload inventory", async () => { closeSecretDialog(); selected.clear(); await load(); }, "btn btn-ghost btn-sm"),
+      ].filter(Boolean)),
+    ]));
+  };
+
+  const history = async (row) => {
+    try {
+      const data = await api.importedKeyHistory(row.id);
+      showPanel(`Replacement history — ${row.label || row.key_hint || row.id}`, el("div", { class: "stack" }, [
+        el("p", { class: "muted", text: "History contains key hints and metadata only. Plaintext is never stored." }),
+        table(
+          ["Generated", "Key hint", "Status", "By", "Warnings"],
+          (data.history || []).map((item) => el("tr", {}, [
+            cell(formatDate(item.created_at)),
+            cell(el("span", { class: "mono", text: item.key_hint || "—" })),
+            cell(pill(item.key_status || "unknown", statusTone(item.key_status))),
+            cell(item.generated_by_email || "—"),
+            cell((item.warnings || []).join(" ") || "—"),
+          ])),
+          "No replacements yet"
+        ),
+      ]));
+    } catch (error) { fail(error, "Replacement history failed to load."); }
+  };
+
+  function renderRows() {
+    clearNode(host);
+    host.append(table(
+      ["", "Imported record", "Project", "Original status", "Replacements", "Imported", ""],
+      rows.map((row) => {
+        const box = el("input", { type: "checkbox", "aria-label": `Select ${row.label || row.id}` });
+        box.checked = selected.has(row.id);
+        box.addEventListener("change", () => {
+          if (box.checked) selected.add(row.id); else selected.delete(row.id);
+          updateCount();
+        });
+        return el("tr", {}, [
+          cell(box),
+          cell(el("div", {}, [el("strong", { text: row.label || "Imported key" }), el("div", { class: "mono", text: `${row.key_hint || ""} · ${row.id}` })])),
+          cell(row.project_name || "—"),
+          cell(pill(row.status || "imported", statusTone(row.status))),
+          cell(String(row.replacement_count || 0)),
+          cell(formatDate(row.imported_at)),
+          cell(button("History", () => history(row)), "align-right"),
+        ]);
+      }),
+      "No imported key metadata"
+    ));
+  }
+
+  selectAll.addEventListener("change", async () => {
+    if (!selectAll.checked) {
+      selected.clear();
+      renderRows();
+      updateCount();
+      return;
+    }
+    selectAll.disabled = true;
+    try {
+      let page = 1;
+      let total = rows.length;
+      while (page <= 100) {
+        const data = await api.importedKeys({
+          page,
+          page_size: 100,
+          project_id: projectFilter.value || undefined,
+          status: statusFilter.value || undefined,
+          search: search.value.trim() || undefined,
+        });
+        for (const row of data.items || []) selected.add(row.id);
+        total = data.pagination?.total || 0;
+        if (page * 100 >= total) break;
+        page += 1;
+      }
+      renderRows();
+      updateCount();
+    } catch (error) {
+      fail(error, "Could not select all filtered records.");
+    } finally {
+      selectAll.disabled = false;
+    }
+  });
+  projectFilter.addEventListener("change", () => load().catch((error) => fail(error)));
+  statusFilter.addEventListener("change", () => load().catch((error) => fail(error)));
+  search.addEventListener("keydown", (event) => { if (event.key === "Enter") load().catch((error) => fail(error)); });
+  const previewBtn = button("Preview selected", preview, "btn btn-primary btn-sm");
+  previewBtn.disabled = true;
+
+  root.append(
+    pageHeader("Imported key recovery", "Generate independent replacement credentials from imported metadata. Original plaintext and revoked credentials are never restored.", []),
+    el("div", { class: "toolbar" }, [
+      field("Project", projectFilter),
+      field("Status", statusFilter),
+      field("Search", search),
+      el("label", { class: "field-inline" }, [allowDuplicate, node("span", "", "Allow duplicate replacement")]),
+      el("label", { class: "field-inline" }, [selectAll, node("span", "", "Select all filtered")]),
+      countLabel,
+      previewBtn,
+    ]),
+    host
+  );
+  await load();
+}
+
 async function renderAutomation(root) {
   const [data, scheduler] = await Promise.all([api.automationRuns(), api.schedulerStatus()]);
   const runButton = button("Run automation now", async () => {
@@ -1510,7 +1737,75 @@ async function renderAutomation(root) {
   );
 }
 
-function roleEditor(role, templates) {
+async function renderScheduler(root) {
+  const [scheduler, runs] = await Promise.all([api.schedulerStatus(), api.automationRuns()]);
+  const counts = scheduler.counts || {};
+  const runNow = button("Run automation now", async () => {
+    setButtonBusy(runNow, true, "Running…");
+    try {
+      const result = await api.automationRun();
+      toast(`Automation ${result.status}.`, { type: "success" });
+      showView("scheduler", { reload: true });
+    } catch (error) { fail(error, "Automation run failed."); }
+    finally { setButtonBusy(runNow, false); }
+  }, "btn btn-primary btn-sm");
+  const workerTone = scheduler.worker_status === "running" ? "good" : scheduler.worker_status === "stale" ? "warn" : scheduler.worker_status === "unknown" ? "bad" : "info";
+  root.append(
+    pageHeader("Scheduler worker", "One advisory-locked worker executes bounded, idempotent jobs. No infinite loop runs inside the Flask web process.", [runNow]),
+    el("div", { class: "stat-strip" }, [
+      stat("Worker", scheduler.worker_status || "unknown", workerTone === "good" ? "is-good" : workerTone === "warn" ? "is-warn" : ""),
+      stat("Webhook queue", counts.webhook_queue || 0),
+      stat("Dead deliveries", counts.webhook_dead || 0),
+      stat("Projects due", counts.projects_due || 0),
+    ]),
+    el("div", { class: "platform-grid" }, [
+      card("Worker state", el("dl", { class: "record-grid" }, [
+        el("div", { class: "record-item" }, [node("dt", "", "Status"), el("dd", {}, [pill(scheduler.worker_status || "unknown", workerTone)])]),
+        el("div", { class: "record-item" }, [node("dt", "", "Worker id"), el("dd", { class: "mono", text: scheduler.worker_id || "—" })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Advisory lock"), el("dd", {}, [pill(scheduler.lock_held ? "held" : "available", scheduler.lock_held ? "warn" : "good")])]),
+        el("div", { class: "record-item" }, [node("dt", "", "Interval"), el("dd", { text: `${scheduler.interval_seconds}s` })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Batch size"), el("dd", { text: String(scheduler.batch_size) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Last run"), el("dd", { text: scheduler.last_run ? formatDate(scheduler.last_run) : "Never" })]),
+      ])),
+      card("Success and failure", el("div", { class: "stack" }, [
+        el("dl", { class: "record-grid" }, [
+          el("div", { class: "record-item" }, [node("dt", "", "Last success"), el("dd", { text: scheduler.last_success ? formatDate(scheduler.last_success) : "Never" })]),
+          el("div", { class: "record-item" }, [node("dt", "", "Last failure"), el("dd", { text: scheduler.last_failure ? formatDate(scheduler.last_failure) : "None" })]),
+        ]),
+        scheduler.last_failure_reason ? el("p", { class: "secret-warning", text: scheduler.last_failure_reason }) : el("p", { class: "muted", text: "No recorded failure in the current run history." }),
+      ])),
+    ]),
+    card("Per-job health", table(
+      ["Job", "Last run", "Status", "Duration", "Processed", "Failed", "Worker", "Error"],
+      (scheduler.per_job || []).map((job) => el("tr", {}, [
+        cell(el("span", { class: "mono", text: job.job })),
+        cell(job.last_run ? formatDate(job.last_run) : "Never"),
+        cell(statusBadge(job.status)),
+        cell(`${job.duration_ms || 0} ms`),
+        cell(String(job.processed || 0)),
+        cell(String(job.failed || 0)),
+        cell(job.worker_id || "—"),
+        cell(job.error || "—"),
+      ])),
+      "No scheduler runs"
+    )),
+    card("Recent runs", table(
+      ["Started", "Job", "Status", "Finished", "Details", "Error"],
+      (runs.runs || []).slice(0, 10).map((run) => el("tr", {}, [
+        cell(formatDate(run.started_at)),
+        cell(el("span", { class: "mono", text: run.job })),
+        cell(statusBadge(run.status)),
+        cell(run.finished_at ? formatDate(run.finished_at) : "—"),
+        cell(el("span", { class: "mono truncate", text: JSON.stringify(run.details || {}) })),
+        cell(run.error || "—"),
+      ])),
+      "No runs"
+    )),
+    el("p", { class: "muted", text: "CLI: python -m backend.cli universal-scheduler-status · dry-run: universal-scheduler-run --once --dry-run" })
+  );
+}
+
+function roleEditor(role, templates, projects = []) {
   const editing = Boolean(role && role.custom);
   const selected = new Set(role?.permissions || []);
   const name = input({ value: role?.name || "", placeholder: "Role name", maxlength: "80" });
@@ -1518,28 +1813,39 @@ function roleEditor(role, templates) {
   if (editing) roleId.disabled = true;
   const description = el("textarea", { rows: "2", placeholder: "What is this role for?" });
   description.value = role?.description || "";
+  const scope = select([["", "Global role"]].concat(projects.map((project) => [project.id, `Project: ${project.project_name}`])), { value: role?.project_id || "" });
+  if (editing) scope.disabled = true;
   const template = select([["", "Start blank"], ...(templates || []).map((item) => [item.id, item.name])]);
-  const boxes = [];
   const grid = el("div", { class: "form-grid span-2" });
-  (state.rolePermissions || []).forEach((permission) => {
-    const box = el("input", { type: "checkbox", checked: selected.has(permission.id) });
-    box.addEventListener("change", () => {
-      if (box.checked) selected.add(permission.id);
-      else selected.delete(permission.id);
+  const allowedPermissions = () => (state.rolePermissions || []).filter((permission) => !scope.value || permission.project_allowed);
+  const drawPermissions = () => {
+    clearNode(grid);
+    const allowed = new Set(allowedPermissions().map((permission) => permission.id));
+    for (const permissionId of Array.from(selected)) {
+      if (!allowed.has(permissionId)) selected.delete(permissionId);
+    }
+    allowedPermissions().forEach((permission) => {
+      const box = el("input", { type: "checkbox", checked: selected.has(permission.id) });
+      box.addEventListener("change", () => {
+        if (box.checked) selected.add(permission.id);
+        else selected.delete(permission.id);
+      });
+      grid.append(el("label", { class: "field" }, [
+        box,
+        el("span", { text: ` ${permission.id} — ${permission.description || ""}` }),
+        el("small", { text: `risk: ${permission.risk || "standard"}${permission.project_allowed ? " · project-safe" : " · global only"}` }),
+      ]));
     });
-    boxes.push([permission.id, box, permission]);
-    grid.append(el("label", { class: "field" }, [
-      box,
-      el("span", { text: ` ${permission.id} — ${permission.description || ""}` }),
-      el("small", { text: `risk: ${permission.risk || "standard"}` }),
-    ]));
-  });
+  };
+  drawPermissions();
+  scope.addEventListener("change", drawPermissions);
   template.addEventListener("change", () => {
     const item = (templates || []).find((candidate) => candidate.id === template.value);
     if (!item) return;
+    const allowed = new Set(allowedPermissions().map((permission) => permission.id));
     selected.clear();
-    (item.permissions || []).forEach((permission) => selected.add(permission));
-    boxes.forEach(([permissionId, box]) => { box.checked = selected.has(permissionId); });
+    (item.permissions || []).forEach((permission) => { if (allowed.has(permission)) selected.add(permission); });
+    drawPermissions();
     if (!name.value.trim()) name.value = item.name;
     if (!description.value.trim()) description.value = item.description || "";
   });
@@ -1551,7 +1857,10 @@ function roleEditor(role, templates) {
       description: description.value.trim(),
       permissions: Array.from(selected),
     };
-    if (!editing) body.id = roleId.value.trim() || undefined;
+    if (!editing) {
+      body.id = roleId.value.trim() || undefined;
+      if (scope.value) body.project_id = scope.value;
+    }
     setButtonBusy(submit, true, editing ? "Saving…" : "Creating…");
     try {
       if (editing) await api.updateRole(role.id, body);
@@ -1563,11 +1872,12 @@ function roleEditor(role, templates) {
     finally { setButtonBusy(submit, false); }
   }, "btn btn-primary btn-sm");
   showPanel(editing ? `Edit role '${role.name}'` : "Create a custom role", el("div", { class: "stack" }, [
-    el("p", { class: "muted", text: "Authorization is always evaluated server-side. A non-owner cannot grant permissions beyond their own authority or any critical permission." }),
+    el("p", { class: "muted", text: "Global roles use the full platform catalogue. Project roles may only use project-scoped capabilities and can never grant global administration or delete-all authority." }),
     el("div", { class: "form-grid" }, [
       field("Role name", name),
       field("Role id", roleId, editing ? "Role ids are immutable." : "3-50 lowercase letters, digits or underscores."),
       field("Description", description),
+      field("Scope", scope, editing ? "Role scope is immutable." : "Select a project for a project-scoped role."),
       field("Template (new roles)", template),
     ]),
     grid,
@@ -1575,26 +1885,79 @@ function roleEditor(role, templates) {
   ]));
 }
 
+async function manageProjectRole(role, projects) {
+  const [adminData, assignmentData] = await Promise.all([
+    api.universalAdmins(),
+    api.projectRoleAssignments(role.project_id),
+  ]);
+  const admins = (adminData.admins || []).filter((admin) => admin.is_active);
+  const assignments = (assignmentData.assignments || []).filter(
+    (item) => item.role_id === role.id
+  );
+  const assignedIds = new Set(assignments.map((item) => item.admin_id));
+  const available = admins.filter((admin) => !assignedIds.has(admin.id));
+  const adminSelect = select(available.map((admin) => [admin.id, `${admin.full_name || admin.email} · ${admin.email}`]));
+  const assign = button("Assign project role", async () => {
+    if (!adminSelect.value) return toast("Select an administrator.", { type: "error" });
+    setButtonBusy(assign, true, "Assigning…");
+    try {
+      await api.assignProjectRole(role.project_id, { admin_id: adminSelect.value, role_id: role.id });
+      toast("Project role assigned.", { type: "success" });
+      await manageProjectRole(role, projects);
+    } catch (error) { fail(error, "Project role assignment failed."); }
+    finally { setButtonBusy(assign, false); }
+  }, "btn btn-primary btn-sm");
+  assign.disabled = !available.length;
+  showPanel(`Project role — ${role.name}`, el("div", { class: "stack" }, [
+    el("p", { class: "muted", text: "Project roles add permissions only inside this project. They never change the administrator's global platform role." }),
+    available.length ? el("div", { class: "form-grid" }, [field("Administrator", adminSelect)]) : el("p", { class: "muted", text: "Every active administrator already has this role." }),
+    el("div", { class: "card-actions" }, [assign]),
+    table(
+      ["Administrator", "Permissions", "Assigned", ""],
+      assignments.map((item) => el("tr", {}, [
+        cell(el("div", {}, [el("strong", { text: item.admin_name || item.admin_email }), el("div", { class: "mono", text: item.admin_email })])),
+        cell(String((item.permissions || []).length)),
+        cell(formatDate(item.created_at)),
+        cell(button("Remove", async () => {
+          const confirmed = await confirmAction({ title: "Remove project role?", message: `${item.admin_email} will lose this project role immediately.`, confirmLabel: "Remove role", tone: "danger" });
+          if (!confirmed.confirmed) return;
+          try {
+            await api.removeProjectRoleAssignment(role.project_id, item.id);
+            toast("Project role removed.", { type: "success" });
+            await manageProjectRole(role, projects);
+          } catch (error) { fail(error, "Project role removal failed."); }
+        }, "btn btn-danger btn-sm"), "align-right"),
+      ])),
+      "No assignments"
+    ),
+  ]));
+}
+
 async function renderRoles(root) {
-  const data = await api.universalRoles();
+  const [data, projectData] = await Promise.all([
+    api.universalRoles(),
+    api.universalProjects({ page_size: 100 }),
+  ]);
   const roles = data.roles || [];
+  const projects = projectData.items || [];
   const perms = data.permissions || [];
   state.rolePermissions = perms;
   const roleNames = roles.map((role) => role.id);
   root.append(
-    pageHeader("Platform roles", "Built-in roles are immutable. Custom roles are named permission sets evaluated on every request.", [
-      button("New custom role", () => roleEditor(null, data.templates || []), "btn btn-primary btn-sm"),
+    pageHeader("Platform roles", "Built-in roles are immutable. Global and project-scoped custom roles are evaluated server-side on every request.", [
+      button("New custom role", () => roleEditor(null, data.templates || [], projects), "btn btn-primary btn-sm"),
     ]),
     table(
-      ["Role", "Id", "Kind", "Permissions", "Assigned", "Actions"],
+      ["Role", "Id", "Scope", "Permissions", "Assigned", "Actions"],
       roles.map((role) => el("tr", {}, [
         cell(el("div", {}, [el("strong", { text: role.name }), el("div", { class: "muted", text: role.description || "" })])),
         cell(el("span", { class: "mono", text: role.id })),
-        cell(pill(role.built_in ? "built-in" : "custom", role.built_in ? "info" : "good")),
+        cell(el("div", {}, [pill(role.built_in ? "built-in" : role.scope || "global", role.project_id ? "info" : "good"), role.project_name ? el("div", { class: "muted", text: role.project_name }) : null])),
         cell(String((role.permissions || []).length)),
-        cell(role.assigned_count === null || role.assigned_count === undefined ? "—" : String(role.assigned_count)),
+        cell(role.built_in ? "—" : role.project_id ? `${role.project_assigned_count || 0} project` : String(role.assigned_count || 0)),
         cell(el("div", { class: "row-actions" }, [
-          role.custom ? button("Edit", () => roleEditor(role, data.templates || [])) : null,
+          role.custom ? button("Edit", () => roleEditor(role, data.templates || [], projects)) : null,
+          role.custom && role.project_id ? button("Assign", () => manageProjectRole(role, projects)) : null,
           button("Clone", () => {
             const name = input({ placeholder: `Copy of ${role.name}`, maxlength: "80" });
             showPanel(`Clone '${role.name}'`, el("div", { class: "stack" }, [
@@ -1642,7 +2005,7 @@ async function renderAdmins(root) {
   const admins = data.admins || [];
   const roles = roleData.roles || [];
   const builtins = roles.filter((role) => role.built_in && role.id !== "custom");
-  const customs = roles.filter((role) => role.custom);
+  const customs = roles.filter((role) => role.custom && !role.project_id);
   root.append(
     pageHeader("Administrators", "Only an Owner can assign the Owner role. A non-owner cannot grant permissions beyond their own authority. Every change is audited."),
     table(
@@ -1811,7 +2174,9 @@ const LOADERS = {
   search: renderSearch,
   audit: renderAudit,
   "import-export": renderImportExport,
+  "imported-keys": renderImportedKeys,
   automation: renderAutomation,
+  scheduler: renderScheduler,
   roles: renderRoles,
   admins: renderAdmins,
   health: renderHealth,

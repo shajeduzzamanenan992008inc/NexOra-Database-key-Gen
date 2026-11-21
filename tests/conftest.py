@@ -135,12 +135,14 @@ def reset_database(app):
         RESTART IDENTITY CASCADE
         """
     )
+    # Accounts first: platform_role_id RESTRICTs role deletion and project
+    # activity logs reference the acting account.
+    app.extensions["db"].execute("DELETE FROM admin_users")
     # Projects own custom key types. Delete rather than TRUNCATE so the
     # seeded global key types (project_id IS NULL) survive every test.
     app.extensions["db"].execute("DELETE FROM nexora_projects")
-    app.extensions["db"].execute("DELETE FROM admin_users")
-    # Custom roles are global configuration. They are removed after accounts so
-    # the platform_role_id RESTRICT foreign key cannot block cleanup.
+    # Custom global roles are configuration. Project roles were removed by the
+    # project cascade above; this clears global custom roles.
     app.extensions["db"].execute("DELETE FROM nexora_roles")
     yield
 
