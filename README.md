@@ -154,19 +154,18 @@ The repository also contains the **OMEGA NEX-ORA Universal Key Platform** (`/pla
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 flowchart TB
-    N["NEXORA"] nx01e01@--> U["UNIVERSAL KEY MANAGEMENT"]
-    U nx01e02@--> P["PROJECT SYSTEM"]
-    U nx01e03@--> K["KEY SYSTEM"]
-    U nx01e04@--> A["ADMIN SYSTEM"]
+    N["NEXORA"] --> U["UNIVERSAL KEY MANAGEMENT"]
+    U --> P["PROJECT SYSTEM"]
+    U --> K["KEY SYSTEM"]
+    U --> A["ADMIN SYSTEM"]
     P --> P1["PROJECT CONTROL<br/>PROJECT POLICY<br/>PROJECT EXPIRY<br/>PROJECT STATUS"]
     K --> K1["KEY GENERATION<br/>KEY VALIDATION<br/>KEY EXPIRATION<br/>KEY REVOCATION"]
     A --> A1["DASHBOARD<br/>SETTINGS<br/>MONITORING<br/>DATABASE"]
     P1 --> D[("DATABASE ENGINE")]
     K1 --> D
     A1 --> D
-    D nx01e05@--> E["EXTERNAL APPLICATIONS"]
+    D --> E["EXTERNAL APPLICATIONS"]
 
-    %% OMEGA NEX-ORA visual classes
     %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
     classDef nxProcess fill:#102b45,stroke:#3dbcf5,stroke-width:1.5px,color:#e9f6ff;
@@ -177,13 +176,13 @@ flowchart TB
     classDef nxExternal fill:#2b2149,stroke:#c4a5ff,stroke-width:2px,color:#f3ecff;
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
-    %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
     class N,U nxCore;
     class P,K,A,P1,K1,A1 nxProcess;
     class D nxData;
     class E nxExternal;
-    class nx01e01,nx01e02,nx01e03,nx01e04,nx01e05 nxAnimated;
+
+    %% Animated primary paths using Mermaid linkStyle (no edge-ID parser required)
+    linkStyle default stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
 ```
 
 ### Vision and Mission
@@ -459,16 +458,15 @@ flowchart TB
         R3["Status Handling"]
         R4["Application Logic"]
     end
-    A1 nx02e01@--> A4
-    A2 nx02e02@--> A4
-    A3 nx02e03@--> A4
+    A1 --> A4
+    A2 --> A4
+    A3 --> A4
     A5 --> A4
-    R2 nx02e05@-->|"HTTPS · activate · heartbeat · status"| A5
-    R1 nx02e04@--> R2
-    R2 nx02e06@--> R3
-    R3 nx02e07@--> R4
+    R2 -->|"HTTPS · activate · heartbeat · status"| A5
+    R1 --> R2
+    R2 --> R3
+    R3 --> R4
 
-    %% OMEGA NEX-ORA visual classes
     %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
     classDef nxProcess fill:#102b45,stroke:#3dbcf5,stroke-width:1.5px,color:#e9f6ff;
@@ -479,13 +477,13 @@ flowchart TB
     classDef nxExternal fill:#2b2149,stroke:#c4a5ff,stroke-width:2px,color:#f3ecff;
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
-    %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
     class A1,A2,A3 nxProcess;
     class A4 nxData;
     class A5 nxCore;
     class R1,R2,R3,R4 nxExternal;
-    class nx02e01,nx02e02,nx02e03,nx02e04,nx02e05,nx02e06,nx02e07 nxAnimated;
+
+    %% Animated primary paths using Mermaid linkStyle (no edge-ID parser required)
+    linkStyle default stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
 ```
 
 ### System Architecture
@@ -497,17 +495,16 @@ flowchart TB
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 flowchart TD
-    A["Admin Dashboard<br/>HTML5 · Vanilla JS · CSS"] nx03e01@-->|"HTTPS · HttpOnly cookie · CSRF"| B["Flask Backend"]
-    B nx03e02@nx03e04@--> C["Environment validation"]
-    B nx03e03@--> D["Super Admin authentication<br/>Argon2id · hashed sessions · rate limits"]
+    A["Admin Dashboard<br/>HTML5 · Vanilla JS · CSS"] -->|"HTTPS · HttpOnly cookie · CSRF"| B["Flask Backend"]
+    B --> C["Environment validation"]
+    B --> D["Super Admin authentication<br/>Argon2id · hashed sessions · rate limits"]
     B --> E["Project and Reader Key lifecycle"]
-    B nx03e05@--> F["Device credential minting<br/>and verification"]
-    B nx03e06@--> G["Versioned REST API<br/>/api/v1/"]
-    G nx03e07@-->|"TLS connection pool · pg8000"| H[("Supabase PostgreSQL")]
+    B --> F["Device credential minting<br/>and verification"]
+    B --> G["Versioned REST API<br/>/api/v1/"]
+    G -->|"TLS connection pool · pg8000"| H[("Supabase PostgreSQL")]
     I["Separate Android Reader App"] -->|"HTTPS · one-time activation"| G
     I -->|"Bearer device credential"| G
 
-    %% OMEGA NEX-ORA visual classes
     %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
     classDef nxProcess fill:#102b45,stroke:#3dbcf5,stroke-width:1.5px,color:#e9f6ff;
@@ -518,14 +515,14 @@ flowchart TD
     classDef nxExternal fill:#2b2149,stroke:#c4a5ff,stroke-width:2px,color:#f3ecff;
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
-    %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
     class A,B,G nxCore;
     class C,E,F nxProcess;
     class D nxDecision;
     class H nxData;
     class I nxExternal;
-    class nx03e01,nx03e02,nx03e03,nx03e04,nx03e05,nx03e06,nx03e07 nxAnimated;
+
+    %% Animated primary paths using Mermaid linkStyle (no edge-ID parser required)
+    linkStyle default stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
 ```
 
 #### Flowchart 04: High-Level Architecture
@@ -535,30 +532,29 @@ flowchart TD
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 flowchart TD
-    A["Administrator"] nx04e01@--> B["Web Interface"]
-    B nx04e02@--> C["Application Backend"]
+    A["Administrator"] --> B["Web Interface"]
+    B --> C["Application Backend"]
 
     C --> D["Authentication"]
     C --> E["Authorization"]
-    C nx04e03@--> F["Project Manager"]
-    C nx04e04@--> G["Key Manager"]
+    C --> F["Project Manager"]
+    C --> G["Key Manager"]
 
-    F nx04e05@--> H["Project Policy Engine"]
-    G nx04e06@--> I["Key Generation Engine"]
-    G nx04e07@--> J["Key Lifecycle Engine"]
+    F --> H["Project Policy Engine"]
+    G --> I["Key Generation Engine"]
+    G --> J["Key Lifecycle Engine"]
 
     H --> K["Validation Engine"]
     I --> K
     J --> K
 
-    K nx04e08@--> L["Database Layer"]
+    K --> L["Database Layer"]
 
-    M["External Application"] nx04e10@--> N["API"]
+    M["External Application"] --> N["API"]
     N --> C
 
-    L nx04e09@--> O[("PostgreSQL")]
+    L --> O[("PostgreSQL")]
 
-    %% OMEGA NEX-ORA visual classes
     %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
     classDef nxProcess fill:#102b45,stroke:#3dbcf5,stroke-width:1.5px,color:#e9f6ff;
@@ -569,13 +565,13 @@ flowchart TD
     classDef nxExternal fill:#2b2149,stroke:#c4a5ff,stroke-width:2px,color:#f3ecff;
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
-    %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
     class A,B,C,K,N nxCore;
     class D,E,F,G,H,I,J nxProcess;
     class L,O nxData;
     class M nxExternal;
-    class nx04e01,nx04e02,nx04e03,nx04e04,nx04e05,nx04e06,nx04e07,nx04e08,nx04e09,nx04e10 nxAnimated;
+
+    %% Animated primary paths using Mermaid linkStyle (no edge-ID parser required)
+    linkStyle default stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
 ```
 
 ### System Layers
@@ -629,24 +625,24 @@ All management operations are reachable through one administrative interface.
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 flowchart LR
-    NX["NEXORA"] nx05e01@--> N1["Dashboard"]
-    NX nx05e02@--> N2["Projects"]
-    NX nx05e03@--> N3["Key Management"]
-    NX nx05e04@--> N4["Validation"]
-    NX nx05e05@--> N5["API"]
-    NX nx05e06@--> N6["Database"]
-    NX nx05e07@--> N7["Activity"]
-    NX nx05e08@--> N8["Settings"]
-    NX nx05e09@--> N9["Administration"]
+    NX["NEXORA"] --> N1["Dashboard"]
+    NX --> N2["Projects"]
+    NX --> N3["Key Management"]
+    NX --> N4["Validation"]
+    NX --> N5["API"]
+    NX --> N6["Database"]
+    NX --> N7["Activity"]
+    NX --> N8["Settings"]
+    NX --> N9["Administration"]
 
-    N2 nx05e10@--> P1["Create Project"]
+    N2 --> P1["Create Project"]
     N2 --> P2["Project List"]
     N2 --> P3["Project Details"]
     N2 --> P4["Project Configuration"]
     N2 --> P5["Project Expiration"]
     N2 --> P6["Project Status"]
 
-    N3 nx05e11@--> K1["Generate Key"]
+    N3 --> K1["Generate Key"]
     N3 --> K2["All Keys"]
     N3 --> K3["License Keys"]
     N3 --> K4["Reader Keys"]
@@ -655,7 +651,6 @@ flowchart LR
     N3 --> K7["Key Expiration"]
     N3 --> K8["Key Revocation"]
 
-    %% OMEGA NEX-ORA visual classes
     %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
     classDef nxProcess fill:#102b45,stroke:#3dbcf5,stroke-width:1.5px,color:#e9f6ff;
@@ -666,13 +661,13 @@ flowchart LR
     classDef nxExternal fill:#2b2149,stroke:#c4a5ff,stroke-width:2px,color:#f3ecff;
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
-    %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
     class NX nxCore;
     class N1,N2,N3,N4,N5,N6,N7,N8,N9 nxProcess;
     class P1,P2,P3,P4,P5,P6 nxInfo;
     class K1,K2,K3,K4,K5,K6,K7,K8 nxExternal;
-    class nx05e01,nx05e02,nx05e03,nx05e04,nx05e05,nx05e06,nx05e07,nx05e08,nx05e09,nx05e10,nx05e11 nxAnimated;
+
+    %% Animated primary paths using Mermaid linkStyle (no edge-ID parser required)
+    linkStyle default stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
 ```
 
 <p align="center"><img src="./assets/omega-key-assets/svg/divider.svg" alt="" width="100%" /></p>
@@ -694,23 +689,23 @@ Create unlimited projects · configure projects independently · generate projec
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 flowchart LR
-    PJ["PROJECT"] nx06e01@--> ID["Identity"]
-    PJ nx06e02@--> ST["Status"]
-    PJ nx06e03@--> EX["Expiration"]
-    PJ nx06e04@--> KC["Key Configuration"]
-    PJ nx06e05@--> PO["Policies"]
+    PJ["PROJECT"] --> ID["Identity"]
+    PJ --> ST["Status"]
+    PJ --> EX["Expiration"]
+    PJ --> KC["Key Configuration"]
+    PJ --> PO["Policies"]
 
-    ID nx06e06@--> ID1["Project ID"]
+    ID --> ID1["Project ID"]
     ID --> ID2["Project Name"]
     ID --> ID3["Description"]
 
-    ST nx06e07@--> ST1["Active"]
+    ST --> ST1["Active"]
     ST --> ST2["Suspended"]
     ST --> ST3["Archived"]
     ST --> ST4["Expired"]
 
     EX --> EX1["Temporary"]
-    EX nx06e08@--> EX2["Never Expires"]
+    EX --> EX2["Never Expires"]
 
     KC --> KC1["License"]
     KC --> KC2["Reader"]
@@ -720,7 +715,6 @@ flowchart LR
     PO --> PO2["Permissions"]
     PO --> PO3["Configuration"]
 
-    %% OMEGA NEX-ORA visual classes
     %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
     classDef nxProcess fill:#102b45,stroke:#3dbcf5,stroke-width:1.5px,color:#e9f6ff;
@@ -731,15 +725,15 @@ flowchart LR
     classDef nxExternal fill:#2b2149,stroke:#c4a5ff,stroke-width:2px,color:#f3ecff;
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
-    %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
     class PJ nxCore;
     class ID,EX,KC,PO,ID1,ID2,ID3,EX1,KC1,KC2,KC3,PO1,PO2,PO3 nxProcess;
     class ST nxDecision;
     class ST1,EX2 nxSuccess;
     class ST2,ST3 nxWarning;
     class ST4 nxDanger;
-    class nx06e01,nx06e02,nx06e03,nx06e04,nx06e05,nx06e06,nx06e07,nx06e08 nxAnimated;
+
+    %% Animated primary paths using Mermaid linkStyle (no edge-ID parser required)
+    linkStyle default stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
 ```
 
 ### Project Lifecycle
@@ -751,6 +745,7 @@ Projects follow a controlled lifecycle, and **project state must be enforced by 
 *State machine for a project from creation to permanent deletion.*
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif"}}}%%
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 stateDiagram-v2
     [*] --> Created
@@ -764,6 +759,14 @@ stateDiagram-v2
     Archived --> Active : Restore
     Archived --> Deleted
     Deleted --> [*]
+
+    %% OMEGA NEX-ORA state palette
+    classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
+    classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
+    classDef nxDanger fill:#451d30,stroke:#ff6688,stroke-width:2px,color:#fff0f3;
+    class Created,Active nxCore;
+    class Suspended,Archived nxWarning;
+    class Expired,Deleted nxDanger;
 ```
 
 > [!NOTE]
@@ -792,22 +795,21 @@ All key types share one management foundation while keeping independent capabili
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 flowchart TD
-    A["Universal Key System"] nx07e01@--> B["Key Registry"]
-    B nx07e02@--> C["License Key"]
-    B nx07e03@--> D["Reader Key"]
-    B nx07e04@--> E["Custom Key"]
+    A["Universal Key System"] --> B["Key Registry"]
+    B --> C["License Key"]
+    B --> D["Reader Key"]
+    B --> E["Custom Key"]
 
-    C nx07e05@--> F["License Policy"]
-    D nx07e06@--> G["Reader Policy"]
-    E nx07e07@--> H["Custom Policy"]
+    C --> F["License Policy"]
+    D --> G["Reader Policy"]
+    E --> H["Custom Policy"]
 
-    F nx07e08@--> I["Validation Engine"]
-    G nx07e09@--> I
-    H nx07e10@--> I
+    F --> I["Validation Engine"]
+    G --> I
+    H --> I
 
-    I nx07e11@--> J["Authorization Result"]
+    I --> J["Authorization Result"]
 
-    %% OMEGA NEX-ORA visual classes
     %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
     classDef nxProcess fill:#102b45,stroke:#3dbcf5,stroke-width:1.5px,color:#e9f6ff;
@@ -818,13 +820,13 @@ flowchart TD
     classDef nxExternal fill:#2b2149,stroke:#c4a5ff,stroke-width:2px,color:#f3ecff;
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
-    %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
     class A,B,I nxCore;
     class C,D,E nxExternal;
     class F,G,H nxProcess;
     class J nxSuccess;
-    class nx07e01,nx07e02,nx07e03,nx07e04,nx07e05,nx07e06,nx07e07,nx07e08,nx07e09,nx07e10,nx07e11 nxAnimated;
+
+    %% Animated primary paths using Mermaid linkStyle (no edge-ID parser required)
+    linkStyle default stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
 ```
 
 ### Key Types
