@@ -412,3 +412,4 @@ The project identity supplied for this documentation names **Shajeduzzaman Enan*
   <strong>OMEGA NEX-ORA</strong><br />
   <sub>Secure Keys · Controlled Access · Auditable Operations</sub>
 </p>
+# NexOra-Database-key-Gen
