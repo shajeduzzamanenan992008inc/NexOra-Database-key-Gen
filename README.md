@@ -63,12 +63,6 @@
 
 <p align="center"><sub>* Unlimited by design: the platform imposes no arbitrary project or key limits, so capacity is bounded only by infrastructure, policy, and configuration.</sub></p>
 
-<p align="center">
-  <strong>CONTROL PLANE</strong> &nbsp;·&nbsp; <strong>KEY FORGE</strong> &nbsp;·&nbsp; <strong>POLICY ENGINE</strong> &nbsp;·&nbsp; <strong>SECURE API</strong> &nbsp;·&nbsp; <strong>AUDIT TRAIL</strong>
-</p>
-
-<p align="center"><sub>Documentation-first project overview · GitHub-native diagrams · Security-conscious integration boundaries</sub></p>
-
 <table align="center">
   <tr>
     <td align="center"><h3>11</h3><sub>SQL migrations<br />(001–011)</sub></td>
@@ -151,20 +145,26 @@ The repository also contains the **OMEGA NEX-ORA Universal Key Platform** (`/pla
 | **Builder / rights holder** | Shajeduzzaman Enan |
 | **License** | OMEGA NEX-ORA Proprietary Software and Content License |
 
-> [!NOTE]
-> This README describes the repository's documented design and recorded verification results. It is not a substitute for inspecting the current source tree, running the test suite, validating migrations, or reviewing the deployed environment.
-
 ### The NexOra Concept
 
 #### Flowchart 01: The NexOra Concept
 
 *Three systems (Project, Key, Admin) share one database engine that serves external applications.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-01.svg" alt="OMEGA NEX-ORA diagram 01: The NexOra Concept" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-01.mmd ](./assets/readme-diagrams/source/diagram-01.mmd)</sub>
+```mermaid
+flowchart TB
+    N["NEXORA"] --> U["UNIVERSAL KEY MANAGEMENT"]
+    U --> P["PROJECT SYSTEM"]
+    U --> K["KEY SYSTEM"]
+    U --> A["ADMIN SYSTEM"]
+    P --> P1["PROJECT CONTROL<br/>PROJECT POLICY<br/>PROJECT EXPIRY<br/>PROJECT STATUS"]
+    K --> K1["KEY GENERATION<br/>KEY VALIDATION<br/>KEY EXPIRATION<br/>KEY REVOCATION"]
+    A --> A1["DASHBOARD<br/>SETTINGS<br/>MONITORING<br/>DATABASE"]
+    P1 --> D[("DATABASE ENGINE")]
+    K1 --> D
+    A1 --> D
+    D --> E["EXTERNAL APPLICATIONS"]
+```
 
 ### Vision and Mission
 
@@ -323,7 +323,7 @@ The repository also contains the **OMEGA NEX-ORA Universal Key Platform** (`/pla
 **1. Clone and enter the repository**
 
 ```bash
-git clone https://github.com/shajeduzzamanenan992008inc/NexOra-Database-key-Gen.git
+git clone [https://github.com/shajeduzzamanenan992008inc/NexOra-Database-key-Gen.git](https://github.com/shajeduzzamanenan992008inc/NexOra-Database-key-Gen.git)
 cd NexOra-Database-key-Gen
 ```
 
@@ -365,7 +365,7 @@ python -m pytest -v             # run the test suite
 
 ## Flowchart Atlas
 
-Every flowchart, state diagram, sequence diagram, and ER diagram in this README is listed below. Each one lives next to the topic it explains. For reliable GitHub display, the diagrams are embedded as repository-local SVG assets rather than relying on the GitHub Mermaid rich-display viewer. The editable Mermaid source for each diagram is linked below its SVG.
+Every flowchart, state diagram, sequence diagram, and ER diagram in this README is listed below. Each one lives next to the topic it explains.
 
 | # | Diagram | Type | Section | Origin |
 |---|---|---|---|---|
@@ -393,22 +393,7 @@ Every flowchart, state diagram, sequence diagram, and ER diagram in this README 
 | **22** | [Core Management Workflow](#flowchart-22-core-management-workflow) | Flowchart | [Admin Dashboard and UX](#admin-dashboard-and-ux) | 12.md · redrawn from the text flow |
 | **23** | [Deployment Workflow](#flowchart-23-deployment-workflow) | Flowchart | [Deployment and Operations](#deployment-and-operations) | 12.md + the README migration gate |
 
-**23 diagrams in total:** architecture maps, project and key lifecycles, authorization decisions, Reader activation, deletion safety, API guards, automation, import/export, webhook validation, a conceptual ER model, and deployment workflow.
-
-### GitHub Mermaid rendering standard
-
-All diagrams use GitHub's native `mermaid` fenced-code renderer. They are intentionally kept as standalone Markdown code fences (not nested inside HTML tables, `<p>`, or layout containers) so GitHub can detect and render them.
-
-- Use a fenced code block whose language identifier is `mermaid`; close it with the matching fence.
-- Keep Mermaid source at the left margin; do not indent the fence inside lists or blockquotes.
-- Prefer standard Mermaid declarations (`flowchart`, `stateDiagram-v2`, `sequenceDiagram`, and `erDiagram`) and quoted node labels.
-- Avoid embedding Markdown tables or raw HTML around a Mermaid fence.
-- When editing a diagram, validate the Mermaid source and preview the README on GitHub before merging.
-- If a diagram appears as code after a commit, verify that the file is rendered as Markdown, that the fence language is exactly `mermaid`, and that the source has no unmatched quotes, brackets, or subgraph boundaries.
-
-> [!TIP]
-> GitHub renders Mermaid diagrams natively. No external image host, JavaScript embed, or generated screenshot is required. The diagrams remain text-based, reviewable, accessible to source-control diffs, and theme-adaptive in GitHub.
-
+**23 diagrams in total:** every Mermaid diagram from the original README and 12.md, every text-art diagram redrawn as a real flowchart, and new flowcharts for the documented lifecycle, security, and operations flows.
 
 <p align="center"><a href="#readme-top">↑ Back to top</a></p>
 
@@ -434,11 +419,30 @@ OMEGA NEX-ORA is a layered platform in which the **Flask backend is the only tru
 
 *The Reader Application is an independent project and must not be implemented inside the NexOra Admin repository.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-02.svg" alt="OMEGA NEX-ORA diagram 02: Repository Boundary (Admin and Reader)" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-02.mmd ](./assets/readme-diagrams/source/diagram-02.mmd)</sub>
+```mermaid
+flowchart TB
+    subgraph ADMIN["NEXORA ADMIN · this repository"]
+        A1["Project Management"]
+        A2["Key Generation"]
+        A3["Key Administration"]
+        A4[("Database")]
+        A5["Authorization API"]
+    end
+    subgraph READER["READER APPLICATION · separate repository"]
+        R1["Client Interface"]
+        R2["Authorization Integration"]
+        R3["Status Handling"]
+        R4["Application Logic"]
+    end
+    A1 --> A4
+    A2 --> A4
+    A3 --> A4
+    A5 --> A4
+    R2 -->|"HTTPS · activate · heartbeat · status"| A5
+    R1 --> R2
+    R2 --> R3
+    R3 --> R4
+```
 
 ### System Architecture
 
@@ -446,21 +450,48 @@ OMEGA NEX-ORA is a layered platform in which the **Flask backend is the only tru
 
 *The documented control path from the Admin dashboard and the Reader App to Supabase PostgreSQL.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-03.svg" alt="OMEGA NEX-ORA diagram 03: System Architecture (Admin, Backend and Reader)" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-03.mmd ](./assets/readme-diagrams/source/diagram-03.mmd)</sub>
+```mermaid
+flowchart TD
+    A["Admin Dashboard<br/>HTML5 · Vanilla JS · CSS"] -->|"HTTPS · HttpOnly cookie · CSRF"| B["Flask Backend"]
+    B --> C["Environment validation"]
+    B --> D["Super Admin authentication<br/>Argon2id · hashed sessions · rate limits"]
+    B --> E["Project and Reader Key lifecycle"]
+    B --> F["Device credential minting<br/>and verification"]
+    B --> G["Versioned REST API<br/>/api/v1/"]
+    G -->|"TLS connection pool · pg8000"| H[("Supabase PostgreSQL")]
+    I["Separate Android Reader App"] -->|"HTTPS · one-time activation"| G
+    I -->|"Bearer device credential"| G
+```
 
 #### Flowchart 04: High-Level Architecture
 
 *The logical engine layout: managers, policy and lifecycle engines, validation, and the database layer.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-04.svg" alt="OMEGA NEX-ORA diagram 04: High-Level Architecture" width="100%" />
-</p>
+```mermaid
+flowchart TD
+    A["Administrator"] --> B["Web Interface"]
+    B --> C["Application Backend"]
 
-<sub>Editable Mermaid source: [ diagram-04.mmd ](./assets/readme-diagrams/source/diagram-04.mmd)</sub>
+    C --> D["Authentication"]
+    C --> E["Authorization"]
+    C --> F["Project Manager"]
+    C --> G["Key Manager"]
+
+    F --> H["Project Policy Engine"]
+    G --> I["Key Generation Engine"]
+    G --> J["Key Lifecycle Engine"]
+
+    H --> K["Validation Engine"]
+    I --> K
+    J --> K
+
+    K --> L["Database Layer"]
+
+    M["External Application"] --> N["API"]
+    N --> C
+
+    L --> O[("PostgreSQL")]
+```
 
 ### System Layers
 
@@ -510,11 +541,34 @@ All management operations are reachable through one administrative interface.
 
 *The conceptual navigation tree of the universal console.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-05.svg" alt="OMEGA NEX-ORA diagram 05: Universal Navigation Map" width="100%" />
-</p>
+```mermaid
+flowchart LR
+    NX["NEXORA"] --> N1["Dashboard"]
+    NX --> N2["Projects"]
+    NX --> N3["Key Management"]
+    NX --> N4["Validation"]
+    NX --> N5["API"]
+    NX --> N6["Database"]
+    NX --> N7["Activity"]
+    NX --> N8["Settings"]
+    NX --> N9["Administration"]
 
-<sub>Editable Mermaid source: [ diagram-05.mmd ](./assets/readme-diagrams/source/diagram-05.mmd)</sub>
+    N2 --> P1["Create Project"]
+    N2 --> P2["Project List"]
+    N2 --> P3["Project Details"]
+    N2 --> P4["Project Configuration"]
+    N2 --> P5["Project Expiration"]
+    N2 --> P6["Project Status"]
+
+    N3 --> K1["Generate Key"]
+    N3 --> K2["All Keys"]
+    N3 --> K3["License Keys"]
+    N3 --> K4["Reader Keys"]
+    N3 --> K5["Custom Keys"]
+    N3 --> K6["Key Details"]
+    N3 --> K7["Key Expiration"]
+    N3 --> K8["Key Revocation"]
+```
 
 <p align="center"><img src="./assets/omega-key-assets/svg/divider.svg" alt="" width="100%" /></p>
 
@@ -532,11 +586,34 @@ Create unlimited projects · configure projects independently · generate projec
 
 *Identity, status, expiration, key configuration, and policies of a project.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-06.svg" alt="OMEGA NEX-ORA diagram 06: Project Configuration Model" width="100%" />
-</p>
+```mermaid
+flowchart LR
+    PJ["PROJECT"] --> ID["Identity"]
+    PJ --> ST["Status"]
+    PJ --> EX["Expiration"]
+    PJ --> KC["Key Configuration"]
+    PJ --> PO["Policies"]
 
-<sub>Editable Mermaid source: [ diagram-06.mmd ](./assets/readme-diagrams/source/diagram-06.mmd)</sub>
+    ID --> ID1["Project ID"]
+    ID --> ID2["Project Name"]
+    ID --> ID3["Description"]
+
+    ST --> ST1["Active"]
+    ST --> ST2["Suspended"]
+    ST --> ST3["Archived"]
+    ST --> ST4["Expired"]
+
+    EX --> EX1["Temporary"]
+    EX --> EX2["Never Expires"]
+
+    KC --> KC1["License"]
+    KC --> KC2["Reader"]
+    KC --> KC3["Custom"]
+
+    PO --> PO1["Authorization"]
+    PO --> PO2["Permissions"]
+    PO --> PO3["Configuration"]
+```
 
 ### Project Lifecycle
 
@@ -546,11 +623,20 @@ Projects follow a controlled lifecycle, and **project state must be enforced by 
 
 *State machine for a project from creation to permanent deletion.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-07.svg" alt="OMEGA NEX-ORA diagram 07: Project Lifecycle" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-07.mmd ](./assets/readme-diagrams/source/diagram-07.mmd)</sub>
+```mermaid
+stateDiagram-v2
+    [*] --> Created
+    Created --> Active
+    Active --> Suspended
+    Active --> Expired
+    Active --> Archived
+    Suspended --> Active
+    Suspended --> Archived
+    Expired --> Active : Authorized renewal
+    Archived --> Active : Restore
+    Archived --> Deleted
+    Deleted --> [*]
+```
 
 > [!NOTE]
 > The legacy dashboard API sets a project to `active` or `inactive` (`PATCH /projects/<id>/status`). Deactivating a project blocks new activations and existing device credentials. The universal platform adds archiving, which also blocks the project's keys. Project-level auto-delete is a timezone-aware deletion timestamp and stays disabled until a retention period or project schedule is configured.
@@ -575,11 +661,23 @@ All key types share one management foundation while keeping independent capabili
 
 *Every key type is governed by its own policy before the shared validation engine returns a result.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-08.svg" alt="OMEGA NEX-ORA diagram 08: Universal Key Architecture" width="100%" />
-</p>
+```mermaid
+flowchart TD
+    A["Universal Key System"] --> B["Key Registry"]
+    B --> C["License Key"]
+    B --> D["Reader Key"]
+    B --> E["Custom Key"]
 
-<sub>Editable Mermaid source: [ diagram-08.mmd ](./assets/readme-diagrams/source/diagram-08.mmd)</sub>
+    C --> F["License Policy"]
+    D --> G["Reader Policy"]
+    E --> H["Custom Policy"]
+
+    F --> I["Validation Engine"]
+    G --> I
+    H --> I
+
+    I --> J["Authorization Result"]
+```
 
 ### Key Types
 
@@ -668,11 +766,18 @@ New types are introduced through a defined architecture (`POST /universal/key-ty
 
 *A generation request must pass project, key-type, and policy validation before a key is created and stored.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-09.svg" alt="OMEGA NEX-ORA diagram 09: Key Generation Workflow" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-09.mmd ](./assets/readme-diagrams/source/diagram-09.mmd)</sub>
+```mermaid
+flowchart TD
+    G0["GENERATION REQUEST"] --> G1["VALIDATE PROJECT"]
+    G1 --> G2["VALIDATE KEY TYPE"]
+    G2 --> G3["VALIDATE POLICY"]
+    G3 --> G4["GENERATE KEY<br/>CSPRNG · key-type aware"]
+    G4 --> G5["DATABASE INSERT<br/>HMAC digest stored"]
+    G5 --> G6["RETURN RESULT<br/>plaintext revealed once"]
+    G1 -.->|"invalid project"| GX["REJECT with a safe error"]
+    G2 -.->|"unsupported type"| GX
+    G3 -.->|"policy violation"| GX
+```
 
 <table align="center">
   <tr>
@@ -688,11 +793,17 @@ New types are introduced through a defined architecture (`POST /universal/key-ty
 
 *Invalid, expired, revoked, and deleted keys are never authorized.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-10.svg" alt="OMEGA NEX-ORA diagram 10: Key Lifecycle" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-10.mmd ](./assets/readme-diagrams/source/diagram-10.mmd)</sub>
+```mermaid
+stateDiagram-v2
+    [*] --> Created
+    Created --> Active
+    Active --> Expired
+    Active --> Revoked
+    Expired --> Revoked
+    Revoked --> Deleted
+    Active --> Deleted
+    Deleted --> [*]
+```
 
 **Lifecycle requirements**
 
@@ -729,11 +840,18 @@ The validation engine decides whether a key is authorized. It checks: **key exis
 
 *The ordered checks applied to every validation request.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-11.svg" alt="OMEGA NEX-ORA diagram 11: Validation Workflow" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-11.mmd ](./assets/readme-diagrams/source/diagram-11.mmd)</sub>
+```mermaid
+flowchart TD
+    A["Validation Request"] --> B["Identify Project"]
+    B --> C["Identify Key"]
+    C --> D["Check Key Type"]
+    D --> E["Check Project Status"]
+    E --> F["Check Project Expiration"]
+    F --> G["Check Key Status"]
+    G --> H["Check Key Expiration"]
+    H --> I["Check Permissions"]
+    I --> J["Authorization Result"]
+```
 
 ### Authorization Engine
 
@@ -743,11 +861,28 @@ Authorization is based on the **authoritative server-side state**. A key is auth
 
 *All nine conditions must pass. If any one fails, the key is not authorized.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-12.svg" alt="OMEGA NEX-ORA diagram 12: Authorization Decision" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-12.mmd ](./assets/readme-diagrams/source/diagram-12.mmd)</sub>
+```mermaid
+flowchart TD
+    R(["Authorization request"]) --> Q1{"Key exists?"}
+    Q1 -->|Yes| Q2{"Project exists?"}
+    Q2 -->|Yes| Q3{"Project active?"}
+    Q3 -->|Yes| Q4{"Project not expired?"}
+    Q4 -->|Yes| Q5{"Key active?"}
+    Q5 -->|Yes| Q6{"Key not expired?"}
+    Q6 -->|Yes| Q7{"Key type supported?"}
+    Q7 -->|Yes| Q8{"Required permissions present?"}
+    Q8 -->|Yes| Q9{"Applicable policies permit?"}
+    Q9 -->|Yes| OK(["AUTHORIZED"])
+    Q1 -->|No| NO(["UNAUTHORIZED"])
+    Q2 -->|No| NO
+    Q3 -->|No| NO
+    Q4 -->|No| NO
+    Q5 -->|No| NO
+    Q6 -->|No| NO
+    Q7 -->|No| NO
+    Q8 -->|No| NO
+    Q9 -->|No| NO
+```
 
 ### Permission System
 
@@ -789,21 +924,36 @@ The Reader App is an **independent client** that uses only the public Reader API
 
 *From key generation to redemption, deactivation, and deletion.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-13.svg" alt="OMEGA NEX-ORA diagram 13: Project and Reader-Key Lifecycle" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-13.mmd ](./assets/readme-diagrams/source/diagram-13.mmd)</sub>
+```mermaid
+flowchart TD
+    S1["1 · Admin opens Key Generator"] --> S2["2 · Enter project name<br/>and select Generate Key"]
+    S2 --> S3["3 · Backend normalizes the name<br/>case-insensitively"]
+    S3 --> Q1{"Name already used?<br/>including deleted-name tombstones"}
+    Q1 -->|Yes| R409["5 · 409 with safe metadata<br/>original plaintext key never returned"]
+    Q1 -->|No| T1["Single transaction:<br/>create project and exactly one Reader Key"]
+    T1 --> T2["4 · Store only the HMAC digest<br/>return plaintext once for copying"]
+    T2 --> ST1["Reader Key state: GENERATED"]
+    ST1 --> RA["6 · Reader App redeems the key once<br/>POST /reader/activate"]
+    RA --> ST2["Reader Key state: USED<br/>device credential issued"]
+    T1 --> OPS["Admin project operations<br/>any time after creation"]
+    OPS --> DA["7 · Deactivate project<br/>blocks new activations and existing device credentials"]
+    OPS --> DP["8 · Delete project<br/>one transaction removes project, key,<br/>installations, device tokens and records"]
+    DP --> AU["Audit event survives<br/>normalized name is tombstoned"]
+    OPS --> DAP["9 · DELETE ALL PROJECTS<br/>exact phrase and fresh password check"]
+```
 
 #### Flowchart 14: Reader Key States
 
 *Documented transition `GENERATED` → `USED`; revocation is permanent.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-14.svg" alt="OMEGA NEX-ORA diagram 14: Reader Key States" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-14.mmd ](./assets/readme-diagrams/source/diagram-14.mmd)</sub>
+```mermaid
+stateDiagram-v2
+    [*] --> GENERATED : Project and Reader Key created
+    GENERATED --> USED : POST /reader/activate one-time
+    GENERATED --> REVOKED : Admin revokes the key
+    USED --> REVOKED : Admin revokes the key
+    REVOKED --> [*]
+```
 
 ### Reader Activation Flow
 
@@ -811,11 +961,26 @@ The Reader App is an **independent client** that uses only the public Reader API
 
 *One-time activation followed by authenticated heartbeat and status calls.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-15.svg" alt="OMEGA NEX-ORA diagram 15: Reader Activation Sequence" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-15.mmd ](./assets/readme-diagrams/source/diagram-15.mmd)</sub>
+```mermaid
+sequenceDiagram
+    autonumber
+    participant R as Android Reader App
+    participant API as Flask Backend
+    participant DB as Supabase PostgreSQL
+    R->>API: POST /reader/activate (project_name, reader_key, device_id, supabase_url)
+    API->>API: Fail closed if required configuration is missing
+    API->>DB: Check the key and the project state
+    DB-->>API: Key is GENERATED and project is active
+    API->>DB: Mark key USED, store installation and device token
+    API-->>R: Device credential
+    loop Periodic
+        R->>API: POST /reader/heartbeat (Bearer device credential)
+        API-->>R: Heartbeat accepted
+    end
+    R->>API: GET /reader/status (Bearer device credential)
+    API-->>R: Status response
+    Note over API,DB: A deactivated project or a revoked installation blocks the device credential
+```
 
 ### Reader Integration Contract
 
@@ -831,11 +996,27 @@ The Reader App is an **independent client** that uses only the public Reader API
 
 *Every destructive path demands explicit confirmation and keeps its audit trail.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-16.svg" alt="OMEGA NEX-ORA diagram 16: Deletion Safety" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-16.mmd ](./assets/readme-diagrams/source/diagram-16.mmd)</sub>
+```mermaid
+flowchart TD
+    subgraph ONE["Delete one project"]
+        D1["DELETE /projects/id"] --> D2{"confirm_project_name<br/>matches?"}
+        D2 -->|No| DX["Rejected"]
+        D2 -->|Yes| D3["One transaction removes the project,<br/>Reader Key, installations, device tokens and records"]
+        D3 --> D4["Audit event survives"]
+        D3 --> D5["Normalized name is tombstoned"]
+    end
+    subgraph ALL["DELETE ALL PROJECTS"]
+        A1["DELETE /projects"] --> A2{"Exact phrase DELETE ALL PROJECTS<br/>and fresh password check?"}
+        A2 -->|No| AX["Rejected"]
+        A2 -->|Yes| A3["Transactional delete of all NexOra projects"]
+        A3 --> A4["Preserved: admin accounts, settings,<br/>audit history, legacy SMS data"]
+    end
+    subgraph UNI["Universal platform deletion"]
+        U1["Owner-only delete preview<br/>blast-radius counts"] --> U2{"Name, or exact phrase for delete-all,<br/>and password confirmed?"}
+        U2 -->|No| UX["Rejected"]
+        U2 -->|Yes| U3["Permanent deletion<br/>with audit event"]
+    end
+```
 
 <p align="center"><img src="./assets/omega-key-assets/svg/divider.svg" alt="" width="100%" /></p>
 
@@ -965,11 +1146,21 @@ The API provides controlled access to NexOra functionality.
 
 *Conceptual order of the documented controls on management routes, plus the separate key-authentication path.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-17.svg" alt="OMEGA NEX-ORA diagram 17: Management API Guard" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-17.mmd ](./assets/readme-diagrams/source/diagram-17.mmd)</sub>
+```mermaid
+flowchart LR
+    R["Admin request to a<br/>management API route"] --> T["HTTPS transport"]
+    T --> L{"Within rate limits?"}
+    L -->|No| X["Reject"]
+    L -->|Yes| S{"Human admin session?<br/>HttpOnly cookie"}
+    S -->|No| X
+    S -->|Yes| C{"CSRF valid?<br/>state-changing requests"}
+    C -->|No| X
+    C -->|Yes| P{"Explicit platform<br/>permission, RBAC?"}
+    P -->|No| X
+    P -->|Yes| H["Handler runs<br/>server-side filtering and escalation guards"]
+    H --> A["Audit event<br/>with request ID"]
+    K["Project key client<br/>no browser session"] -->|"POST /access/authenticate"| KA["Key authentication"]
+```
 
 <details>
 <summary><b>Example authorization responses</b> (illustrative)</summary>
@@ -1028,11 +1219,22 @@ The Flask web process never runs an infinite scheduler loop. One worker at a tim
 
 *A lock-protected, bounded sweep that is recorded and audited.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-18.svg" alt="OMEGA NEX-ORA diagram 18: Scheduler Run" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-18.mmd ](./assets/readme-diagrams/source/diagram-18.mmd)</sub>
+```mermaid
+flowchart TD
+    T["Cron · systemd · Windows Task Scheduler"] --> C["python -m backend.cli<br/>universal-scheduler-run --once"]
+    C --> L{"PostgreSQL advisory lock<br/>acquired?"}
+    L -->|No| W["Lock held by another worker<br/>no concurrent sweep"]
+    L -->|Yes| S["Bounded sweep"]
+    S --> J1["Universal automation<br/>expiry · cleanup · retry"]
+    S --> J2["Project purge<br/>only when retention or a schedule is configured"]
+    S --> J3["Expired-session pruning"]
+    J1 --> R["Record run in nexora_automation_runs"]
+    J2 --> R
+    J3 --> R
+    R --> A["Audit event"]
+    D["--dry-run: preview mode"] -.-> C
+    ST["universal-scheduler-status:<br/>scheduler status, queue depth, recent runs"] -.-> R
+```
 
 ### Backup, Import and Replacement
 
@@ -1042,11 +1244,23 @@ Project backup, restore, conflict handling, and permanent deletion are documente
 
 *Export previews, validation-only imports, transactional restore, and one-time reveal of replacement credentials.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-19.svg" alt="OMEGA NEX-ORA diagram 19: Backup, Import and Replacement" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-19.mmd ](./assets/readme-diagrams/source/diagram-19.mmd)</sub>
+```mermaid
+flowchart LR
+    subgraph EXP["Export"]
+        E1["Export preview<br/>counts and security notice"] --> E2["Export JSON or ZIP bundle<br/>one, selected or all projects"]
+    end
+    subgraph IMP["Import and restore"]
+        I1["Import preview<br/>validate the bundle without writing"] --> I2{"Conflict policy<br/>chosen?"}
+        I2 -->|Yes| I3["Transactional restore"]
+        I3 -->|"on failure"| I4["Rollback"]
+    end
+    subgraph REP["Imported-key replacement"]
+        P1["Replacement preview<br/>eligibility and duplicate protection"] --> P2["Generate independent<br/>replacement credentials"]
+        P2 --> P3["One-time reveal"]
+        P2 --> P4["History without plaintext"]
+    end
+    E2 -.->|"bundle"| I1
+```
 
 ### Signed Webhooks
 
@@ -1056,11 +1270,20 @@ Webhooks are signed, and the platform applies SSRF defenses: unsupported schemes
 
 *Documented SSRF and delivery controls for signed webhooks.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-20.svg" alt="OMEGA NEX-ORA diagram 20: Webhook Target Checks" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-20.mmd ](./assets/readme-diagrams/source/diagram-20.mmd)</sub>
+```mermaid
+flowchart TD
+    W1["Webhook target URL"] --> W2{"Supported scheme?"}
+    W2 -->|No| X["Reject"]
+    W2 -->|Yes| W3{"Host resolves?"}
+    W3 -->|No| X
+    W3 -->|Yes| W4{"Private or link-local<br/>address?"}
+    W4 -->|Yes| X
+    W4 -->|No| W5["DNS pinning"]
+    W5 --> W6["Signed delivery<br/>TLS controls · timeouts · bounded responses"]
+    W6 --> W7{"Redirect response?"}
+    W7 -->|Yes| X2["Rejected: redirects are not followed"]
+    W7 -->|No| W8["Delivered"]
+```
 
 <p align="center"><img src="./assets/omega-key-assets/svg/divider.svg" alt="" width="100%" /></p>
 
@@ -1078,11 +1301,28 @@ NexOra uses **PostgreSQL-compatible** infrastructure (Supabase PostgreSQL is the
 
 *Projects own keys, policies, and key metadata. The diagram describes the logical architecture and may not match the exact implemented schema; the migrations below are authoritative.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-21.svg" alt="OMEGA NEX-ORA diagram 21: Logical Data Model" width="100%" />
-</p>
+```mermaid
+erDiagram
+    PROJECTS ||--o{ KEYS : contains
+    PROJECTS ||--o{ PROJECT_POLICIES : has
+    KEYS ||--o{ KEY_METADATA : contains
 
-<sub>Editable Mermaid source: [ diagram-21.mmd ](./assets/readme-diagrams/source/diagram-21.mmd)</sub>
+    PROJECTS {
+        uuid id
+        string name
+        string status
+        timestamp expires_at
+        boolean never_expires
+    }
+
+    KEYS {
+        uuid id
+        uuid project_id
+        string key_type
+        string status
+        timestamp expires_at
+    }
+```
 
 ### Database Integrity
 
@@ -1196,11 +1436,17 @@ The universal interface reduces administrative complexity with one repeatable wo
 
 *From project creation to validating, revoking, or deleting a key.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-22.svg" alt="OMEGA NEX-ORA diagram 22: Core Management Workflow" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-22.mmd ](./assets/readme-diagrams/source/diagram-22.mmd)</sub>
+```mermaid
+flowchart TD
+    C1["CREATE PROJECT"] --> C2["CONFIGURE PROJECT"]
+    C2 --> C3["SELECT KEY TYPE"]
+    C3 --> C4["GENERATE KEY"]
+    C4 --> C5["CONFIGURE EXPIRATION"]
+    C5 --> C6["MANAGE KEY"]
+    C6 --> C7["VALIDATE"]
+    C6 --> C8["REVOKE"]
+    C6 --> C9["DELETE"]
+```
 
 ### Interface and Experience
 
@@ -1667,11 +1913,19 @@ See the full repository's [`docs/PROJECT_KEY_MANAGEMENT_TEST_REPORT.md`](docs/PR
 
 *From source code to production, with the documented backup/PITR gate before migrations.*
 
-<p align="center">
-  <img src="./assets/readme-diagrams/diagram-23.svg" alt="OMEGA NEX-ORA diagram 23: Deployment Workflow" width="100%" />
-</p>
-
-<sub>Editable Mermaid source: [ diagram-23.mmd ](./assets/readme-diagrams/source/diagram-23.mmd)</sub>
+```mermaid
+flowchart TD
+    A["Source Code"] --> B["Prepare Environment"]
+    B --> C["Install Dependencies"]
+    C --> D["Run Tests"]
+    D --> E["Configure Database"]
+    E --> G{"Backup / PITR checkpoint and<br/>migration window approved?"}
+    G -->|No| H["Hold: do not apply migrations 005-011<br/>to production"]
+    G -->|Yes| F["Apply Migrations"]
+    F --> I["Deploy Application"]
+    I --> J["Health Check<br/>GET /api/v1/health"]
+    J --> K["Production"]
+```
 
 ### Production Configuration
 
