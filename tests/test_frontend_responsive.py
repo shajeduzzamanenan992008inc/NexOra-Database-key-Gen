@@ -183,7 +183,7 @@ def test_key_reveal_is_tap_selectable_without_truncation():
 
 def test_project_detail_lists_each_project_key():
     assert "renderProjectKeyList" in DASHBOARD_JS
-    assert "Reader Keys for this Project" in DASHBOARD_JS
+    assert "Keys for this Project" in DASHBOARD_JS
     assert "project_id: project.id" in DASHBOARD_JS
     assert "onDone: () => renderProjectKeyList" in DASHBOARD_JS
 

@@ -21,6 +21,8 @@ from .services import AuthService, LicenseService, ensure_initial_admin
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 ASSETS_DIR = FRONTEND_DIR / "assets"
+EFFECT_ASSETS_DIR = PROJECT_ROOT / "assets" / "effect"
+PRIMARY_LOGO_FILE = "ultra-universal-keygen-logo-v3.svg"
 OMEGA_ASSETS_DIR = PROJECT_ROOT / "assets" / "omega-key-assets"
 
 CSP = (
@@ -170,8 +172,9 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.get("/dashboard")
     def dashboard_page():
-        # The SPA shell is only served to a valid session; the browser-side
-        # guard remains as a second layer for expired sessions.
+        # The Classic console is the primary application shell. The SPA shell
+        # is only served to a valid session; the browser-side guard remains as
+        # a second layer for expired sessions.
         token = request.cookies.get(settings.session_cookie_name)
         if (
             not token
@@ -187,6 +190,8 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.get("/platform")
     def platform_page():
+        # The former Universal Platform is no longer a second interface. Keep
+        # the URL as a compatibility redirect for bookmarks and old links.
         token = request.cookies.get(settings.session_cookie_name)
         if (
             not token
@@ -198,7 +203,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             is None
         ):
             return redirect(url_for("login_page"))
-        return _page("platform.html")
+        return redirect(url_for("dashboard_page"))
 
     @app.get("/omega-assets/<path:filename>")
     def omega_assets(filename: str):
@@ -206,14 +211,33 @@ def create_app(settings: Settings | None = None) -> Flask:
             return jsonify({"error": {"code": "not_found"}}), 404
         return send_from_directory(OMEGA_ASSETS_DIR, filename, max_age=86400)
 
+    @app.get("/effect-assets/<path:filename>")
+    def effect_assets(filename: str):
+        # Approved NexOra effect artwork (primary logo + hero banner).
+        if not EFFECT_ASSETS_DIR.is_dir():
+            return jsonify({"error": {"code": "not_found"}}), 404
+        return send_from_directory(EFFECT_ASSETS_DIR, filename, max_age=86400)
+
     @app.get("/assets/<path:filename>")
     def assets(filename: str):
         # Revalidate on every load (304 via ETag) so a deploy never serves a
         # stale console to an administrator with a warm cache.
         return send_from_directory(ASSETS_DIR, filename, max_age=0)
 
+    @app.get("/favicon.svg")
+    def favicon_svg():
+        # The approved primary logo is the favicon source of truth.
+        return send_from_directory(
+            EFFECT_ASSETS_DIR,
+            PRIMARY_LOGO_FILE,
+            max_age=86400,
+            mimetype="image/svg+xml",
+        )
+
     @app.get("/favicon.ico")
     def favicon():
-        return send_from_directory(ASSETS_DIR, "favicon.svg", max_age=86400)
+        # Legacy browsers request /favicon.ico directly; the SVG is the real
+        # icon, so send them to it instead of a second stale image.
+        return redirect(url_for("favicon_svg"))
 
     return app

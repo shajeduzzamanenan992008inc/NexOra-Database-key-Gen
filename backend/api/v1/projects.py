@@ -68,11 +68,19 @@ def create_project():
     project_name = payload.string(
         "project_name", required=True, min_length=1, max_length=200
     )
+    expiration = payload.string(
+        "expiration", required=False, max_length=20, default="never"
+    )
+    expires_at = payload.datetime_utc(
+        "expires_at", required=False, allow_null=True
+    )
     payload.finish()
 
     ip, agent = request_meta()
     project = project_service().create_project(
         project_name=project_name or "",
+        expiration=expiration or "never",
+        expires_at=expires_at,
         created_by=g.actor["id"],
         ip_address=ip,
         user_agent=agent,

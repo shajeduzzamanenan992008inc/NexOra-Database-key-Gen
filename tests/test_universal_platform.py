@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 from backend.services.webhook_service import WebhookService
 from conftest import ADMIN_EMAIL, OWNER_EMAIL, VIEWER_EMAIL, login
@@ -120,6 +122,173 @@ def test_project_expiry_blocks_authentication(owner, app, db):
     result = authenticate(app, key)
     assert result.status_code == 403
     assert result.get_json()["error"]["code"] == "PROJECT_EXPIRED"
+
+
+def test_project_creation_persists_custom_expiry_and_never(owner, db):
+    future = datetime.now(timezone.utc) + timedelta(days=45)
+    name = f"Custom Expiry {uuid4().hex[:8]}"
+    response = owner.post(
+        "/api/v1/projects",
+        {
+            "project_name": name,
+            "expiration": "custom",
+            "expires_at": future.isoformat(),
+        },
+    )
+    assert response.status_code == 201, response.get_json()
+    project = response.get_json()["project"]
+    assert project["never_expires"] is False
+    assert project["expires_at"] is not None
+
+    stored = db.fetch_one(
+        "SELECT expires_at, never_expires FROM nexora_projects WHERE id = %s",
+        (project["id"],),
+    )
+    assert stored is not None
+    assert stored["expires_at"] is not None
+    assert stored["never_expires"] is False
+
+    cleared = owner.patch(
+        f"/api/v1/universal/projects/{project['id']}",
+        {"expiration_preset": "never"},
+    )
+    assert cleared.status_code == 200, cleared.get_json()
+    stored = db.fetch_one(
+        "SELECT expires_at, never_expires FROM nexora_projects WHERE id = %s",
+        (project["id"],),
+    )
+    assert stored["expires_at"] is None
+    assert stored["never_expires"] is True
+
+
+def test_project_custom_expiry_requires_a_future_date(owner):
+    name = f"Invalid Expiry {uuid4().hex[:8]}"
+    missing = owner.post(
+        "/api/v1/projects", {"project_name": name, "expiration": "custom"}
+    )
+    assert missing.status_code == 422
+    assert "expires_at" in missing.get_json()["error"]["details"]["fields"]
+
+    past = datetime.now(timezone.utc) - timedelta(hours=1)
+    rejected = owner.post(
+        "/api/v1/projects",
+        {
+            "project_name": name,
+            "expiration": "custom",
+            "expires_at": past.isoformat(),
+        },
+    )
+    assert rejected.status_code == 422
+    assert "expires_at" in rejected.get_json()["error"]["details"]["fields"]
+
+
+def test_key_custom_expiry_edit_persists_and_never(owner):
+    project = create_project(owner, f"Key Expiry {uuid4().hex[:8]}")
+    key = generate(owner, project["id"]).get_json()["keys"][0]
+    future = datetime.now(timezone.utc) + timedelta(days=14)
+
+    edited = owner.patch(
+        f"/api/v1/universal/keys/{key['id']}",
+        {"expiration_preset": "custom", "expires_at": future.isoformat()},
+    )
+    assert edited.status_code == 200, edited.get_json()
+    detail = owner.get(f"/api/v1/universal/keys/{key['id']}").get_json()["key"]
+    assert detail["expiration_preset"] == "custom"
+    assert detail["expires_at"] is not None
+    assert detail["expires_at"].startswith(future.strftime("%Y-%m-%d"))
+
+    never = owner.patch(
+        f"/api/v1/universal/keys/{key['id']}", {"expiration_preset": "never"}
+    )
+    assert never.status_code == 200, never.get_json()
+    detail = owner.get(f"/api/v1/universal/keys/{key['id']}").get_json()["key"]
+    assert detail["expiration_preset"] == "never"
+    assert detail["expires_at"] is None
+
+    past = owner.patch(
+        f"/api/v1/universal/keys/{key['id']}",
+        {
+            "expiration_preset": "custom",
+            "expires_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert past.status_code == 422
+
+
+def test_project_expiry_edit_preserves_key_expiry(owner, db):
+    project = create_project(owner, f"Preserve Keys {uuid4().hex[:8]}")
+    key = generate(
+        owner, project["id"], expiration_preset="30_days"
+    ).get_json()["keys"][0]
+    before = db.fetch_one(
+        "SELECT expires_at, expiration_preset FROM reader_keys WHERE id = %s",
+        (key["id"],),
+    )
+
+    changed = owner.patch(
+        f"/api/v1/universal/projects/{project['id']}",
+        {"expiration_preset": "7_days"},
+    )
+    assert changed.status_code == 200, changed.get_json()
+    after = db.fetch_one(
+        "SELECT expires_at, expiration_preset FROM reader_keys WHERE id = %s",
+        (key["id"],),
+    )
+    assert after["expires_at"] == before["expires_at"]
+    assert after["expiration_preset"] == "30_days"
+
+
+def test_expired_key_reactivates_when_expiry_moves_forward(owner, app, db):
+    project = create_project(owner, f"Reactivate Key {uuid4().hex[:8]}")
+    key = generate(owner, project["id"]).get_json()["keys"][0]
+    db.execute(
+        """
+        UPDATE reader_keys
+           SET status = 'expired', expires_at = now() - interval '1 hour',
+               is_permanent = false, expiration_preset = 'custom'
+         WHERE id = %s
+        """,
+        (key["id"],),
+    )
+    assert authenticate(app, key["key"]).status_code == 410
+
+    future = datetime.now(timezone.utc) + timedelta(days=10)
+    edited = owner.patch(
+        f"/api/v1/universal/keys/{key['id']}",
+        {"expiration_preset": "custom", "expires_at": future.isoformat()},
+    )
+    assert edited.status_code == 200, edited.get_json()
+    detail = owner.get(f"/api/v1/universal/keys/{key['id']}").get_json()["key"]
+    assert detail["status"] in {"active", "generated"}
+    assert authenticate(app, key["key"]).status_code == 200
+
+
+def test_expired_project_reactivates_when_expiry_moves_forward(owner, app, db):
+    project = create_project(owner, f"Reactivate Project {uuid4().hex[:8]}")
+    key = generate(owner, project["id"]).get_json()["keys"][0]
+    db.execute(
+        """
+        UPDATE nexora_projects
+           SET status = 'expired', expires_at = now() - interval '1 hour',
+               never_expires = false
+         WHERE id = %s
+        """,
+        (project["id"],),
+    )
+
+    edited = owner.patch(
+        f"/api/v1/universal/projects/{project['id']}",
+        {"expiration_preset": "30_days"},
+    )
+    assert edited.status_code == 200, edited.get_json()
+    refreshed = db.fetch_one(
+        "SELECT status, expires_at, never_expires FROM nexora_projects WHERE id = %s",
+        (project["id"],),
+    )
+    assert refreshed["status"] == "active"
+    assert refreshed["expires_at"] is not None
+    assert refreshed["never_expires"] is False
+    assert authenticate(app, key["key"]).status_code == 200
 
 
 def test_viewer_and_platform_role_authorization(owner, admin, viewer, app):
@@ -274,3 +443,131 @@ def test_custom_key_type_permissions_are_a_ceiling(owner, app):
     assert allowed.status_code == 201, allowed.get_json()
     key = allowed.get_json()["keys"][0]["key"]
     assert authenticate(app, key, permission="read").status_code == 200
+
+
+def test_key_type_policy_builder_and_safe_delete(owner, app, db):
+    project = create_project(owner, f"Builder Project {uuid4().hex[:8]}")
+    payload = {
+        "id": f"builder_{uuid4().hex[:8]}",
+        "name": "Builder Custom",
+        "description": "Declarative type created from the Classic builder.",
+        "project_id": project["id"],
+        "key_prefix": "BLD",
+        "key_format": {"groups": 3, "group_length": 4, "separator": "-"},
+        "permissions": ["read"],
+        "scopes": ["reports.read"],
+        "expiration_policy": {
+            "presets": ["7_days", "custom", "never"],
+            "default": "7_days",
+        },
+        "metadata_schema": {
+            "fields": {"tenant": {"type": "string", "required": True, "max_length": 40}}
+        },
+        "validation_rules": {"required_metadata": ["tenant"]},
+    }
+    created = owner.post("/api/v1/universal/key-types", payload)
+    assert created.status_code == 201, created.get_json()
+    type_id = created.get_json()["key_type"]["id"]
+
+    invalid_default = owner.post(
+        "/api/v1/universal/key-types",
+        {**payload, "id": f"bad_{uuid4().hex[:8]}", "expiration_policy": {"presets": ["never"], "default": "custom"}},
+    )
+    assert invalid_default.status_code == 422
+
+    missing_metadata = generate(
+        owner,
+        project["id"],
+        key_type_id=type_id,
+        expiration_preset="7_days",
+    )
+    assert missing_metadata.status_code == 422
+
+    future = datetime.now(timezone.utc) + timedelta(days=10)
+    generated = generate(
+        owner,
+        project["id"],
+        key_type_id=type_id,
+        expiration_preset="custom",
+        expires_at=future.isoformat(),
+        metadata={"tenant": "classic-ui"},
+    )
+    assert generated.status_code == 201, generated.get_json()
+
+    in_use = owner.delete(f"/api/v1/universal/key-types/{type_id}")
+    assert in_use.status_code == 409
+    assert in_use.get_json()["error"]["code"] == "KEY_TYPE_IN_USE"
+
+    built_in = owner.delete("/api/v1/universal/key-types/reader")
+    assert built_in.status_code == 403
+
+    unused_id = f"unused_{uuid4().hex[:8]}"
+    unused = owner.post(
+        "/api/v1/universal/key-types",
+        {
+            "id": unused_id,
+            "name": "Unused Custom",
+            "project_id": project["id"],
+            "key_prefix": "UNU",
+            "permissions": ["read"],
+            "expiration_policy": {"presets": ["never"], "default": "never"},
+        },
+    )
+    assert unused.status_code == 201, unused.get_json()
+    deleted = owner.delete(f"/api/v1/universal/key-types/{unused_id}")
+    assert deleted.status_code == 200, deleted.get_json()
+    assert deleted.get_json()["deleted"] is True
+    assert db.fetch_one(
+        "SELECT 1 FROM nexora_key_types WHERE id = %s", (unused_id,)
+    ) is None
+
+
+def test_update_key_accepts_tags_and_jsonb_array_fields(owner, db):
+    project = create_project(owner, f"Key Update Project {uuid4().hex[:8]}")
+    created = generate(owner, project["id"])
+    assert created.status_code == 201, created.get_json()
+    key_id = created.get_json()["keys"][0]["id"]
+
+    updated = owner.patch(
+        f"/api/v1/universal/keys/{key_id}",
+        {
+            "tags": ["alpha", "beta"],
+            "permissions": ["read"],
+            "scopes": [],
+            "notes": "tag update regression",
+        },
+    )
+    assert updated.status_code == 200, updated.get_json()
+    key = updated.get_json()["key"]
+    assert key["tags"] == ["alpha", "beta"]
+    assert key["permissions"] == ["read"]
+    assert key["notes"] == "tag update regression"
+
+    row = db.fetch_one(
+        "SELECT tags, permissions, scopes FROM reader_keys WHERE id = %s",
+        (key_id,),
+    )
+    assert row["tags"] == ["alpha", "beta"]
+    assert row["permissions"] == ["read"]
+    assert row["scopes"] == []
+
+
+def test_generate_batch_id_is_idempotent(owner, db):
+    project = create_project(owner, f"Idempotent Project {uuid4().hex[:8]}")
+    batch_id = str(uuid4())
+    first = generate(owner, project["id"], batch_id=batch_id)
+    assert first.status_code == 201, first.get_json()
+    second = generate(owner, project["id"], batch_id=batch_id)
+    assert second.status_code == 409
+    assert second.get_json()["error"]["code"] == "BATCH_ALREADY_PROCESSED"
+    count = db.fetch_one(
+        "SELECT COUNT(*)::int AS count FROM reader_keys WHERE batch_id = %s",
+        (batch_id,),
+    )
+    assert count["count"] == 1
+
+    retry_after_failed_batch = str(uuid4())
+    failed = generate(owner, project["id"], batch_id=retry_after_failed_batch, quantity=0)
+    assert failed.status_code == 422
+    success = generate(owner, project["id"], batch_id=retry_after_failed_batch)
+    assert success.status_code == 201, success.get_json()

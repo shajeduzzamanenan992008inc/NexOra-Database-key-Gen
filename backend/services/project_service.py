@@ -279,6 +279,8 @@ class ProjectService:
         self,
         *,
         project_name: str,
+        expiration: str | None = None,
+        expires_at: datetime | None = None,
         created_by: UUID | str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
@@ -296,6 +298,9 @@ class ProjectService:
             )
 
         now = utcnow()
+        preset, resolved_expires_at, never_expires = self._resolve_expiration(
+            expiration, expires_at, now
+        )
         project_id = uuid4()
         auto_delete_days = self.get_auto_delete_days()
         auto_delete_at = (
@@ -325,14 +330,17 @@ class ProjectService:
                     """
                     INSERT INTO nexora_projects
                         (id, project_name, project_name_normalized, database_url_ref,
-                         status, auto_delete_at, created_at, updated_at, created_by)
-                    VALUES (%s, %s, %s, '', 'active', %s, %s, %s, %s)
+                         status, expires_at, never_expires, auto_delete_at,
+                         created_at, updated_at, created_by)
+                    VALUES (%s, %s, %s, '', 'active', %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
                         str(project_id),
                         display_name,
                         normalized,
+                        resolved_expires_at,
+                        never_expires,
                         auto_delete_at,
                         now,
                         now,
@@ -354,6 +362,12 @@ class ProjectService:
                         "project_name": display_name,
                         "normalized": normalized,
                         "source": "create_project",
+                        "expiration_preset": preset,
+                        "expires_at": (
+                            resolved_expires_at.isoformat()
+                            if resolved_expires_at
+                            else None
+                        ),
                         "auto_delete_at": auto_delete_at,
                     },
                 )
@@ -374,6 +388,14 @@ class ProjectService:
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
             "deleted_at": None,
+            "expiration_preset": preset,
+            "expires_at": resolved_expires_at.isoformat() if resolved_expires_at else None,
+            "never_expires": never_expires,
+            "effective_status": (
+                "expired"
+                if resolved_expires_at is not None and resolved_expires_at <= now
+                else "active"
+            ),
             "auto_delete_at": auto_delete_at.isoformat() if auto_delete_at else None,
             "days_remaining": auto_delete_days if auto_delete_at else None,
             "auto_delete_due": False,
@@ -663,7 +685,13 @@ class ProjectService:
             """
             SELECT p.id, p.project_name, p.project_name_normalized,
                    p.database_url_ref, p.status, p.created_at, p.updated_at,
-                   p.deleted_at, p.created_by, p.auto_delete_at,
+                   p.deleted_at, p.created_by, p.expires_at, p.never_expires,
+                   CASE
+                     WHEN p.expires_at IS NOT NULL AND p.expires_at <= now()
+                       THEN 'expired'
+                     ELSE p.status
+                   END AS effective_status,
+                   p.auto_delete_at,
                    CASE WHEN p.auto_delete_at IS NULL THEN NULL
                         ELSE GREATEST(
                             0,
@@ -742,7 +770,14 @@ class ProjectService:
 
         sql = f"""
             SELECT p.id, p.project_name, p.status, p.database_url_ref,
-                   p.created_at, p.updated_at, p.deleted_at, p.auto_delete_at,
+                   p.created_at, p.updated_at, p.deleted_at, p.expires_at,
+                   p.never_expires,
+                   CASE
+                     WHEN p.expires_at IS NOT NULL AND p.expires_at <= now()
+                       THEN 'expired'
+                     ELSE p.status
+                   END AS effective_status,
+                   p.auto_delete_at,
                    CASE WHEN p.auto_delete_at IS NULL THEN NULL
                         ELSE GREATEST(
                             0,
@@ -1366,14 +1401,17 @@ class ProjectService:
         # Query page
         data_sql = f"""
             SELECT k.id, k.project_id, p.project_name, k.key_hint, k.label,
-                   k.status, k.is_permanent, k.expiration_preset,
-                   k.expires_at, k.created_at,
+                   k.status, k.is_permanent, k.expiration_preset, k.expires_at,
+                   k.key_type_id, k.fingerprint, k.permissions, k.scopes,
+                   k.tags, k.notes, t.name AS key_type_name,
+                   k.created_at,
                    k.used_at, k.used_at AS first_used_at,
                    k.revoked_at, k.revoked_reason, k.revoked_by,
                    revoked_by_user.email AS revoked_by_email,
                    i.id AS installation_id, i.device_id, i.status AS installation_status
             FROM reader_keys k
             JOIN nexora_projects p ON p.id = k.project_id
+            LEFT JOIN nexora_key_types t ON t.id = k.key_type_id
             LEFT JOIN admin_users revoked_by_user ON revoked_by_user.id = k.revoked_by
             LEFT JOIN reader_installations i ON i.reader_key_id = k.id
             {where_clause}
@@ -1399,8 +1437,10 @@ class ProjectService:
         row = self.db.fetch_one(
             """
             SELECT k.id, k.project_id, p.project_name, k.key_hint, k.label,
-                   k.status, k.is_permanent, k.expiration_preset,
-                   k.expires_at, k.created_at,
+                   k.status, k.is_permanent, k.expiration_preset, k.expires_at,
+                   k.key_type_id, k.fingerprint, k.permissions, k.scopes,
+                   k.tags, k.notes, t.name AS key_type_name,
+                   k.created_at,
                    k.used_at, k.used_at AS first_used_at,
                    k.revoked_at, k.revoked_reason, k.revoked_by,
                    revoked_by_user.email AS revoked_by_email,
@@ -1410,6 +1450,7 @@ class ProjectService:
                    i.last_seen_at AS installation_last_seen
             FROM reader_keys k
             JOIN nexora_projects p ON p.id = k.project_id
+            LEFT JOIN nexora_key_types t ON t.id = k.key_type_id
             LEFT JOIN admin_users revoked_by_user ON revoked_by_user.id = k.revoked_by
             LEFT JOIN reader_installations i ON i.reader_key_id = k.id
             WHERE k.id = %s

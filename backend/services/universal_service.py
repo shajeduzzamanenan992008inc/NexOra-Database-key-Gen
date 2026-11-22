@@ -352,8 +352,8 @@ class UniversalService:
         row = self.db.fetch_one(
             """
             SELECT id, project_name, project_name_normalized, description,
-                   project_type, status, expires_at, never_expires, archived_at,
-                   settings, created_at, updated_at, deleted_at
+                   project_type, status, expires_at, never_expires, auto_delete_at,
+                   archived_at, settings, created_at, updated_at, deleted_at
               FROM nexora_projects WHERE id = %s
             """,
             (project_id,),
@@ -520,6 +520,13 @@ class UniversalService:
             if name not in metadata:
                 raise ValidationError(
                     {"metadata": f"Required metadata field '{name}' is missing."}
+                )
+        allowed_metadata = rules.get("allowed_metadata")
+        if isinstance(allowed_metadata, list):
+            unknown = sorted(set(metadata) - {str(item) for item in allowed_metadata})
+            if unknown:
+                raise ValidationError(
+                    {"metadata": f"Metadata fields not allowed: {', '.join(unknown)}"}
                 )
         return metadata
 
@@ -977,7 +984,7 @@ class UniversalService:
             f"""
             SELECT p.id, p.project_name, p.description, p.project_type,
                    p.status, p.created_at, p.updated_at, p.expires_at,
-                   p.never_expires, p.archived_at, p.cloned_from,
+                   p.never_expires, p.auto_delete_at, p.archived_at, p.cloned_from,
                    CASE
                      WHEN p.archived_at IS NOT NULL THEN 'archived'
                      WHEN p.expires_at IS NOT NULL AND p.expires_at <= now() THEN 'expired'
@@ -1046,8 +1053,11 @@ class UniversalService:
         project_type = str(changes.get("project_type", project.get("project_type") or "database")).strip()
         if not project_type or len(project_type) > 40:
             raise ValidationError({"project_type": "Must be 1-40 characters."})
-        status = str(changes.get("status", project.get("status") or "active")).lower()
-        if status not in ("active", "inactive"):
+        stored_status = str(project.get("status") or "active").lower()
+        status = str(changes.get("status", stored_status)).lower()
+        if status == "expired" and "status" in changes:
+            raise ValidationError({"status": "Only active or inactive can be set directly."})
+        if status not in ("active", "inactive", "expired"):
             raise ValidationError({"status": "Only active or inactive can be set directly."})
         settings_value = changes.get("settings", project.get("settings") or {})
         if not isinstance(settings_value, dict):
@@ -1071,6 +1081,15 @@ class UniversalService:
             )
         if changes.get("expiration_preset") == "never":
             resolved_preset, resolved_expires, never = "never", None, True
+        expiry_changed = "expiration_preset" in changes or "expires_at" in changes
+        if (
+            status == "expired"
+            and expiry_changed
+            and (resolved_expires is None or resolved_expires > now)
+        ):
+            # Only extending or clearing expiry revives an expired project.
+            # Editing an unrelated field must not silently rewrite its status.
+            status = "active"
 
         try:
             with self.db.cursor() as cursor:
@@ -1406,6 +1425,34 @@ class UniversalService:
         for scope in scopes:
             if not SCOPE_RE.match(scope):
                 raise ValidationError({"scopes": f"Invalid scope: {scope}"})
+        policy = data.get("expiration_policy") or {
+            "presets": ["1_day", "7_days", "30_days", "90_days", "1_year", "custom", "never"],
+            "default": "never",
+        }
+        if not isinstance(policy, dict):
+            raise ValidationError({"expiration_policy": "Must be an object."})
+        raw_presets = policy.get("presets")
+        if not isinstance(raw_presets, list) or not raw_presets:
+            raise ValidationError({"expiration_policy.presets": "Choose at least one preset."})
+        allowed_expiry = [*EXPIRATION_DELTAS, "custom", "never"]
+        presets: list[str] = []
+        for value in raw_presets:
+            value = str(value or "").strip().lower()
+            if value not in allowed_expiry:
+                raise ValidationError(
+                    {"expiration_policy.presets": f"Unknown expiration preset: {value}"}
+                )
+            if value not in presets:
+                presets.append(value)
+        default_expiry = str(policy.get("default") or "never").strip().lower()
+        if default_expiry not in presets:
+            raise ValidationError(
+                {
+                    "expiration_policy.default": (
+                        "The default must be one of the allowed presets."
+                    )
+                }
+            )
         rules = data.get("validation_rules") or {}
         if not isinstance(rules, dict):
             raise ValidationError({"validation_rules": "Must be an object."})
@@ -1425,8 +1472,13 @@ class UniversalService:
             raise ValidationError({"metadata_schema": "Must be an object."})
         if "fields" in metadata_schema and not isinstance(metadata_schema["fields"], dict):
             raise ValidationError({"metadata_schema.fields": "Must be an object."})
-        for entry in (metadata_schema.get("fields") or {}).values():
-            if isinstance(entry, dict) and entry.get("type") not in {
+        metadata_fields = metadata_schema.get("fields") or {}
+        for field_name, entry in metadata_fields.items():
+            if not isinstance(field_name, str) or not field_name.strip():
+                raise ValidationError({"metadata_schema.fields": "Field names must be non-empty."})
+            if not isinstance(entry, dict):
+                raise ValidationError({"metadata_schema.fields": "Each field must be an object."})
+            if entry.get("type") not in {
                 None,
                 "string",
                 "number",
@@ -1435,6 +1487,38 @@ class UniversalService:
                 "object",
             }:
                 raise ValidationError({"metadata_schema": "Unsupported field type."})
+            if "max_length" in entry:
+                try:
+                    max_length = int(entry["max_length"])
+                except (TypeError, ValueError):
+                    raise ValidationError(
+                        {"metadata_schema": "Field max_length must be an integer."}
+                    ) from None
+                if not 1 <= max_length <= 10000:
+                    raise ValidationError(
+                        {"metadata_schema": "Field max_length must be 1-10000."}
+                    )
+        for rule in ("required_metadata", "allowed_metadata"):
+            if rule in rules:
+                values = rules[rule]
+                if not isinstance(values, list) or any(
+                    not isinstance(item, str) or not item.strip() for item in values
+                ):
+                    raise ValidationError(
+                        {"validation_rules": f"{rule} must be an array of field names."}
+                    )
+        for rule in ("min_length", "max_length"):
+            if rule in rules and rules[rule] is not None:
+                try:
+                    number = int(rules[rule])
+                except (TypeError, ValueError):
+                    raise ValidationError(
+                        {"validation_rules": f"{rule} must be an integer."}
+                    ) from None
+                if number < 0:
+                    raise ValidationError(
+                        {"validation_rules": f"{rule} must not be negative."}
+                    )
         device_policy = data.get("device_policy") or {}
         if not isinstance(device_policy, dict):
             raise ValidationError({"device_policy": "Must be an object."})
@@ -1458,9 +1542,9 @@ class UniversalService:
             },
             "permissions": permissions,
             "scopes": scopes,
-            "expiration_policy": data.get("expiration_policy") or {
-                "presets": ["1_day", "7_days", "30_days", "90_days", "1_year", "custom", "never"],
-                "default": "never",
+            "expiration_policy": {
+                "presets": presets,
+                "default": default_expiry,
             },
             "device_policy": {
                 "binds": bool(device_policy.get("binds")),
@@ -1545,6 +1629,71 @@ class UniversalService:
                 strict=True,
             )
         return self._type_row(values["id"])
+
+    def delete_key_type(
+        self,
+        type_id: str,
+        *,
+        actor: dict[str, Any],
+        ip_address: str | None,
+        user_agent: str | None,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        """Delete an unused custom type. Built-ins and in-use types are immutable."""
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, name, project_id, is_builtin
+                  FROM nexora_key_types WHERE id = %s FOR UPDATE
+                """,
+                (type_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise ApiError(404, "KEY_TYPE_NOT_FOUND", "Key type not found.")
+            if row[3]:
+                raise ApiError(
+                    403,
+                    "BUILTIN_TYPE_IMMUTABLE",
+                    "Built-in key types cannot be deleted.",
+                )
+            cursor.execute(
+                "SELECT COUNT(*)::int FROM reader_keys WHERE key_type_id = %s",
+                (type_id,),
+            )
+            key_count = int((cursor.fetchone() or [0])[0] or 0)
+            cursor.execute(
+                "SELECT COUNT(*)::int FROM nexora_imported_key_records WHERE key_type_id = %s",
+                (type_id,),
+            )
+            imported_count = int((cursor.fetchone() or [0])[0] or 0)
+            if key_count or imported_count:
+                raise ApiError(
+                    409,
+                    "KEY_TYPE_IN_USE",
+                    "This key type is referenced by existing keys. Disable it instead.",
+                    details={"key_count": key_count, "imported_count": imported_count},
+                )
+            cursor.execute(
+                "DELETE FROM nexora_key_types WHERE id = %s AND is_builtin = false",
+                (type_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ApiError(404, "KEY_TYPE_NOT_FOUND", "Key type not found.")
+            self._audit(
+                cursor,
+                actor=actor,
+                action="key_type.delete",
+                target_type="key_type",
+                target_id=type_id,
+                project_id=str(row[2]) if row[2] else None,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                request_id=request_id,
+                details={"name": row[1]},
+                strict=True,
+            )
+        return {"id": type_id, "deleted": True}
 
     def update_key_type(
         self,
@@ -2194,6 +2343,7 @@ class UniversalService:
         label: str = "",
         expiration_preset: str | None = "never",
         expires_at: datetime | None = None,
+        batch_id: str | None = None,
         permissions: Any = None,
         scopes: Any = None,
         tags: Any = None,
@@ -2216,6 +2366,16 @@ class UniversalService:
         limit = int(getattr(self.settings, "max_bulk_keys", 500))
         if not 1 <= quantity <= limit:
             raise ValidationError({"quantity": f"Must be between 1 and {limit}."})
+        requested_batch_id = str(batch_id or "").strip()
+        if requested_batch_id:
+            try:
+                UUID(requested_batch_id)
+            except ValueError:
+                raise ValidationError(
+                    {"batch_id": "Use a valid UUID for idempotent generation."}
+                ) from None
+        else:
+            requested_batch_id = str(uuid4())
         if source_imported_key_id and quantity != 1:
             raise ValidationError(
                 {"quantity": "Replacement generation requires exactly one key."}
@@ -2233,7 +2393,7 @@ class UniversalService:
         )
         policy = _json_obj(key_type.get("expiration_policy"))
         presets = policy.get("presets")
-        if isinstance(presets, list) and preset not in presets and preset != "never":
+        if isinstance(presets, list) and presets and preset not in presets:
             raise ValidationError({"expiration_preset": "This preset is not allowed for the key type."})
         effective_permissions = self._validate_permissions(permissions, key_type)
         effective_scopes = self._validate_scopes(scopes, key_type)
@@ -2256,11 +2416,33 @@ class UniversalService:
                 raise ValidationError({"max_usage": "Must be greater than zero."})
         spec = self._key_spec(key_type)
         status = "generated" if key_type_id == "reader" else "active"
-        batch_id = str(uuid4())
+        batch_id = requested_batch_id
         generated: list[dict[str, Any]] = []
         replacement: dict[str, Any] | None = None
         try:
             with self.db.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))", (batch_id,)
+                )
+                cursor.execute(
+                    """
+                    SELECT id, key_hint FROM reader_keys
+                     WHERE batch_id = %s ORDER BY created_at LIMIT 100
+                    """,
+                    (batch_id,),
+                )
+                previous = cursor.fetchall()
+                if previous:
+                    raise ApiError(
+                        409,
+                        "BATCH_ALREADY_PROCESSED",
+                        "This generation batch was already processed. The plaintext key cannot be revealed again.",
+                        details={
+                            "batch_id": batch_id,
+                            "key_ids": [str(item[0]) for item in previous],
+                            "key_hints": [item[1] for item in previous],
+                        },
+                    )
                 if source_imported_key_id:
                     replacement = self._claim_imported_replacement(
                         cursor,
@@ -2949,18 +3131,39 @@ class UniversalService:
                 changes.get("expires_at"),
                 utcnow(),
             )
+            policy = _json_obj(type_row.get("expiration_policy"))
+            presets = policy.get("presets")
+            if isinstance(presets, list) and presets and preset not in presets:
+                raise ValidationError(
+                    {"expiration_preset": "This preset is not allowed for the key type."}
+                )
             updates["expiration_preset"] = preset
             updates["expires_at"] = expiry
             updates["is_permanent"] = permanent
+            if row.get("status") == "expired" and (expiry is None or expiry > utcnow()):
+                # Extending expiry must also clear the stale 'expired' status
+                # written by a prior authentication attempt.
+                updates["status"] = (
+                    "generated" if str(row.get("key_type_id")) == "reader" else "active"
+                )
         if not updates:
             raise ValidationError({"body": "Provide at least one editable field."})
+        array_columns = {"tags"}
         assignments = ", ".join(
-            f"{column} = %s::jsonb" if isinstance(value, (dict, list)) else f"{column} = %s"
+            f"{column} = %s::text[]"
+            if column in array_columns
+            else f"{column} = %s::jsonb"
+            if isinstance(value, (dict, list))
+            else f"{column} = %s"
             for column, value in updates.items()
         )
         params = [
-            json.dumps(value) if isinstance(value, (dict, list)) else value
-            for value in updates.values()
+            list(value)
+            if column in array_columns
+            else json.dumps(value)
+            if isinstance(value, (dict, list))
+            else value
+            for column, value in updates.items()
         ]
         return self._update_key_row(
             key_id,

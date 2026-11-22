@@ -490,6 +490,22 @@ def universal_key_type_create():
     return _json({"key_type": result}, 201)
 
 
+@bp.delete("/universal/key-types/<type_id>")
+@require_auth(*MANAGE_ROLES)
+def universal_key_type_delete(type_id: str):
+    project_id = _resource_project("key_type", type_id)
+    _authorize("key:write", project_id)
+    ip, agent = request_meta()
+    result = _service().delete_key_type(
+        type_id,
+        actor=_actor(),
+        ip_address=ip,
+        user_agent=agent,
+        request_id=_request_id(),
+    )
+    return _json(result)
+
+
 @bp.patch("/universal/key-types/<type_id>")
 @require_auth(*MANAGE_ROLES)
 def universal_key_type_update(type_id: str):
@@ -548,6 +564,9 @@ def universal_key_generate():
     if body.get("max_usage") is not None:
         max_usage = payload.integer("max_usage", required=False, minimum=1)
     expires_at = payload.datetime_utc("expires_at", required=False, allow_null=True)
+    batch_id = payload.string(
+        "batch_id", required=False, min_length=36, max_length=36, default=""
+    )
     payload.finish()
     ip, agent = request_meta()
     result = _service().generate_keys(
@@ -557,6 +576,7 @@ def universal_key_generate():
         label=label or "",
         expiration_preset=expiration or "never",
         expires_at=expires_at,
+        batch_id=batch_id or None,
         permissions=body.get("permissions"),
         scopes=body.get("scopes"),
         tags=body.get("tags"),

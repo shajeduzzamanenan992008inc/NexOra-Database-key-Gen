@@ -28,6 +28,8 @@ import {
   pulseElement,
   setLiteMode,
 } from "./motion.js";
+import { omegaAsset } from "./omega-assets.js";
+import { renderOperations } from "./operations.js";
 import { clearSensitiveState, runShutdownAnimation } from "./shutdown.js";
 
 const VIEW_META = {
@@ -38,18 +40,28 @@ const VIEW_META = {
   },
   projects: {
     title: "Projects",
-    subtitle: "Projects can own unlimited Reader Keys. Activate, schedule deletion, or permanently remove a project and every key it owns.",
+    subtitle: "Projects can own unlimited keys. Activate, schedule deletion, or permanently remove a project and every key it owns.",
     eyebrow: "OMEGA NEX-ORA / Project Ops",
   },
   generator: {
     title: "Key Generator",
-    subtitle: "Select an existing project or create a new one, choose an expiration, and issue a one-time Reader Key.",
-    eyebrow: "OMEGA NEX-ORA / Cryptographic Generator",
+    subtitle: "Select a project and any Universal key type, configure its policy, then generate from this one form.",
+    eyebrow: "OMEGA NEX-ORA / Universal Key Generator",
   },
   keys: {
     title: "Key Management",
-    subtitle: "Masked reader key records. Plaintext revealed once; digests stored at rest.",
-    eyebrow: "OMEGA NEX-ORA / Reader Keys",
+    subtitle: "Universal key records with type, permissions, expiration, and lifecycle. Plaintext is revealed once.",
+    eyebrow: "OMEGA NEX-ORA / Universal Keys",
+  },
+  "key-types": {
+    title: "Key Types",
+    subtitle: "Built-in and project-owned type policies. Create, edit, disable, or safely remove custom types.",
+    eyebrow: "OMEGA NEX-ORA / Universal Type Engine",
+  },
+  operations: {
+    title: "Operations",
+    subtitle: "Device bindings, API telemetry, signed webhooks, notifications, data transfer, automation, and access control.",
+    eyebrow: "OMEGA NEX-ORA / Universal Control Plane",
   },
   installations: {
     title: "Installations",
@@ -91,6 +103,16 @@ const KEY_LABELS = [
   "Expires",
   "First Used",
   "Revoked",
+  "Actions",
+];
+const KEY_TYPE_LABELS = [
+  "Type",
+  "Scope",
+  "Permissions",
+  "Format",
+  "Expiration",
+  "Keys",
+  "Status",
   "Actions",
 ];
 const EXPIRATION_LABELS = {
@@ -139,6 +161,14 @@ const state = {
   settingsData: null,
   generatedKeys: [],
   generatorMode: "existing",
+  keyTypes: [],
+  keyTypesById: new Map(),
+  allKeyTypes: [],
+  permissionsCatalog: [],
+  keyTypesLoaded: false,
+  keyTypeBuilderId: null,
+  generatorBatchId: null,
+  generatorRecovery: null,
   loggingOut: false,
   sessionCheck: null,
 };
@@ -242,11 +272,45 @@ function tableCell(label, content, className) {
   );
 }
 
-function emptyRow(colspan, title, subtitle, icon = "◇") {
+const EMPTY_ASSET_KINDS = new Set([
+  "database-key",
+  "reader-key",
+  "license-key",
+  "other-key",
+  "key-generating",
+  "key-verified",
+  "logo-mark",
+  "readme-icon",
+]);
+
+function emptyAssetKind(icon, title) {
+  if (EMPTY_ASSET_KINDS.has(icon)) return icon;
+  const text = String(title || "").toLowerCase();
+  if (text.includes("project")) return "database-key";
+  if (text.includes("installation")) return "reader-key";
+  if (text.includes("audit") || text.includes("log") || text.includes("security")) {
+    return "readme-icon";
+  }
+  if (text.includes("type")) return "other-key";
+  if (text.includes("key")) return "license-key";
+  return "database-key";
+}
+
+function emptyRow(colspan, title, subtitle, icon = "") {
   return el("tr", {}, [
     el("td", { colspan: String(colspan), class: "empty-cell" }, [
       el("div", { class: "empty-state" }, [
-        el("span", { class: "empty-icon", "aria-hidden": "true", text: icon }),
+        el("span", { class: "empty-icon", "aria-hidden": "true" }, [
+          el("img", {
+            class: "empty-glyph",
+            src: omegaAsset(emptyAssetKind(icon, title), { animated: false }),
+            alt: "",
+            width: "96",
+            height: "96",
+            loading: "lazy",
+            decoding: "async",
+          }),
+        ]),
         el("strong", { text: title }),
         subtitle ? el("span", { class: "muted", text: subtitle }) : null,
       ]),
@@ -259,12 +323,20 @@ function errorRow(colspan, title = "Data unavailable") {
     colspan,
     title,
     "The authenticated request failed. Use Refresh to try again. No placeholder data is shown.",
-    "!"
+    "other-key"
   );
 }
 
 function loadingBlock(label) {
   return el("div", { class: "loading-block" }, [
+    el("img", {
+      class: "loading-glyph",
+      src: omegaAsset("key-generating"),
+      alt: "",
+      width: "72",
+      height: "72",
+      decoding: "async",
+    }),
     el("span", { class: "spinner spinner-lg", "aria-hidden": "true" }),
     el("p", { class: "muted", text: label }),
   ]);
@@ -407,6 +479,8 @@ async function loadViewData(viewName) {
       else if (viewName === "projects") await loadProjects();
       else if (viewName === "generator") await loadGenerator();
       else if (viewName === "keys") await loadKeys();
+      else if (viewName === "key-types") await loadKeyTypeCatalogue();
+      else if (viewName === "operations") await renderOperations();
       else if (viewName === "installations") await loadInstallations();
       else if (viewName === "security") await loadSecurity();
       else if (viewName === "logs") await loadAuditLogs();
@@ -634,7 +708,13 @@ function renderProjectsTable(projects) {
 
     const row = el("tr", {}, [
       tableCell("Project Name", nameButton, "table-primary"),
-      tableCell("Status", statusBadge(project.status)),
+      tableCell(
+        "Status",
+        el("div", { class: "key-count-cell" }, [
+          statusBadge(project.effective_status || project.status),
+          el("span", { class: "muted", text: projectExpiryLabel(project) }),
+        ])
+      ),
       tableCell(
         "Keys",
         el("div", { class: "key-count-cell" }, [
@@ -706,6 +786,65 @@ async function viewProjectDetails(projectId) {
       dateInput.value = new Date(project.auto_delete_at).toISOString().slice(0, 10);
     }
 
+    const expirySelect = el("select", {
+      id: "project-expiry-select",
+      "aria-label": "Project expiration",
+    });
+    rebuildExpirationSelect(expirySelect, PROJECT_EXPIRY_PRESETS, {
+      includeKeep: Boolean(project.expires_at),
+      selected: project.expires_at ? "keep" : "never",
+    });
+    const expiryCustom = el("input", {
+      type: "datetime-local",
+      id: "project-expiry-custom",
+      value: localDateTimeValue(project.expires_at),
+      "aria-label": "Custom project expiration",
+    });
+    const expiryCustomField = el("label", { class: "field", hidden: true }, [
+      el("span", { class: "field-label", text: "Custom project expiration" }),
+      expiryCustom,
+      el("span", { class: "muted", text: "Local time; stored in UTC. Must be in the future." }),
+    ]);
+    const expiryPreview = el("div", { class: "expiration-preview", "aria-live": "polite" });
+    const syncExpiry = () => {
+      const custom = expirySelect.value === "custom";
+      expiryCustomField.hidden = !custom;
+      let text = "Keep the current project expiration.";
+      if (expirySelect.value === "never") text = "Never expires.";
+      else if (custom) {
+        text = expiryCustom.value
+          ? `Expires ${new Date(expiryCustom.value).toLocaleString()}`
+          : "Choose a project expiration date and time.";
+      } else if (expirySelect.value !== "keep") {
+        text = EXPIRATION_LABELS[expirySelect.value] || expirySelect.value;
+      }
+      clearNode(expiryPreview);
+      expiryPreview.append(el("span", { class: "muted", text: "Project expiration:" }));
+      expiryPreview.append(el("strong", { text }));
+    };
+    expirySelect.addEventListener("change", syncExpiry);
+    expiryCustom.addEventListener("input", syncExpiry);
+    syncExpiry();
+
+    const expirySection = el("section", { class: "detail-section" }, [
+      el("h3", { text: "Project Expiration" }),
+      el("div", { class: "project-expiry-controls" }, [
+        expirySelect,
+        el("button", {
+          class: "btn btn-primary btn-sm",
+          type: "button",
+          text: "Save expiration",
+          onclick: () => saveProjectExpiration(project, expirySelect.value, expiryCustom.value),
+        }),
+      ]),
+      expiryCustomField,
+      expiryPreview,
+      el("p", {
+        class: "muted",
+        text: "Project expiry is independent of key expiry. An expired project blocks authentication until its expiration is extended or removed.",
+      }),
+    ]);
+
     const schedule = el("section", { class: "detail-section" }, [
       el("h3", { text: "Schedule Permanent Deletion" }),
       el("div", { class: "auto-delete-controls" }, [
@@ -733,8 +872,9 @@ async function viewProjectDetails(projectId) {
     body.append(
       recordGrid([
         recordItem("Project Name", project.project_name),
-        recordItem("Status", statusBadge(project.status)),
-        recordItem("Total Reader Keys", String(project.total_keys || 0)),
+        recordItem("Status", statusBadge(project.effective_status || project.status)),
+        recordItem("Project Expiration", projectExpiryLabel(project)),
+        recordItem("Total Keys", String(project.total_keys || 0)),
         recordItem(
           "Latest Key Status",
           project.reader_key_status
@@ -754,6 +894,7 @@ async function viewProjectDetails(projectId) {
         recordItem("Active Installation", project.active_installation_id ? "Active" : "None"),
         recordItem("Active Device", project.active_device_id || "None connected"),
       ]),
+      expirySection,
       schedule
     );
 
@@ -772,10 +913,10 @@ async function viewProjectDetails(projectId) {
 async function renderProjectKeyList(container, project) {
   clearNode(container);
   container.append(
-    el("h3", { id: "project-keys-title", text: "Reader Keys for this Project" }),
+    el("h3", { id: "project-keys-title", text: "Keys for this Project" }),
     el("p", {
       class: "muted",
-      text: "Every Reader Key owned by this project. Revocation applies to one key only and can never be undone.",
+      text: "Every key owned by this project. Revocation applies to one key only and can never be undone.",
     })
   );
 
@@ -812,7 +953,7 @@ async function renderProjectKeyList(container, project) {
       tbody.append(
         emptyRow(
           7,
-          "No Reader Keys yet",
+          "No keys yet",
           "Generate a key to bind a reader to this project.",
           "⌘"
         )
@@ -876,6 +1017,41 @@ async function renderProjectKeyList(container, project) {
   }
 }
 
+async function saveProjectExpiration(project, preset, customValue) {
+  if (preset === "keep") {
+    toast("Project expiration was left unchanged.", { type: "info" });
+    return;
+  }
+
+  let expiresAt = null;
+  if (preset === "custom") {
+    const parsed = customValue ? new Date(customValue) : null;
+    if (!parsed || Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
+      toast("Choose a future custom project expiration.", { type: "error" });
+      return;
+    }
+    expiresAt = parsed.toISOString();
+  }
+
+  try {
+    await api.updateUniversalProject(project.id, {
+      expiration_preset: preset,
+      ...(expiresAt ? { expires_at: expiresAt } : {}),
+    });
+    toast(
+      preset === "never"
+        ? `'${project.project_name}' will never expire.`
+        : `Project expiration updated for '${project.project_name}'.`,
+      { type: "success" }
+    );
+    closeDialog($("#project-detail-modal"));
+    await loadProjects().catch(() => {});
+    await loadOverview().catch(() => {});
+  } catch (error) {
+    fail(error, "Failed to update the project expiration.");
+  }
+}
+
 async function saveProjectAutoDelete(project, dateText) {
   let iso = null;
   if (dateText) {
@@ -931,7 +1107,7 @@ async function deleteProjectPrompt(project) {
   const confirmed = await confirmAction({
     title: `Permanently delete '${project.project_name}'?`,
     message:
-      "This permanently removes the project, every Reader Key it owns, reader installations, device tokens, and other project-owned records. This cannot be undone. Audit history is preserved, and the project name becomes reusable.",
+      "This permanently removes the project, every key it owns, reader installations, device tokens, and other project-owned records. This cannot be undone. Audit history is preserved, and the project name becomes reusable.",
     confirmLabel: "Permanently Delete Project",
     tone: "danger",
     requireText: project.project_name,
@@ -965,6 +1141,7 @@ async function loadGeneratorProjects() {
   try {
     const data = await api.projects({ include_deleted: false });
     const projects = (data.projects || []).filter((project) => !project.deleted_at);
+    state.projects = projects;
     clearNode(select);
     select.append(el("option", { value: "", text: "Choose a project…" }));
     projects.forEach((project) => {
@@ -996,31 +1173,45 @@ function replayMotion(node, className, duration = 420) {
   window.setTimeout(() => node.classList.remove(className), duration);
 }
 
+const PROJECT_EXPIRY_PRESETS = [
+  "1_day",
+  "7_days",
+  "30_days",
+  "90_days",
+  "1_year",
+  "custom",
+  "never",
+];
 const EXPIRATION_PRESETS = [
   ["1_day", "1 Day"],
   ["7_days", "7 Days"],
   ["30_days", "30 Days"],
   ["90_days", "90 Days"],
   ["1_year", "1 Year"],
+  ["custom", "Custom Expiration"],
   ["never", "Never"],
 ];
 
 function buildPresetChips() {
   const rail = $("#gen-expiration-presets");
-  if (!rail || rail.dataset.ready === "true") return;
-  rail.dataset.ready = "true";
+  const select = $("#gen-expiration-select");
+  if (!rail || !select) return;
 
-  EXPIRATION_PRESETS.forEach(([value, label]) => {
+  clearNode(rail);
+  const presets = (select.dataset.presets || "")
+    .split(",")
+    .filter(Boolean)
+    .filter((value) => value !== "custom");
+
+  presets.forEach((value) => {
     const chip = el("button", {
       class: "preset-chip",
       type: "button",
-      text: label,
+      text: EXPIRATION_LABELS[value] || value,
       "data-preset": value,
       "aria-pressed": "false",
     });
     chip.addEventListener("click", () => {
-      const select = $("#gen-expiration-select");
-      if (!select) return;
       if (select.value === value) {
         pulseElement(chip);
         return;
@@ -1030,6 +1221,7 @@ function buildPresetChips() {
     });
     rail.append(chip);
   });
+  syncPresetChips();
 }
 
 function syncPresetChips() {
@@ -1040,6 +1232,769 @@ function syncPresetChips() {
     chip.classList.toggle("is-active", active);
     chip.setAttribute("aria-pressed", String(active));
   });
+}
+
+function keyTypePresets(type) {
+  const configured = type && type.expiration_policy ? type.expiration_policy.presets : null;
+  const values = Array.isArray(configured) && configured.length
+    ? configured
+    : EXPIRATION_PRESETS.map(([value]) => value);
+  return [...new Set(values.filter((value) => EXPIRATION_LABELS[value]))];
+}
+
+function defaultKeyTypePreset(type) {
+  const presets = keyTypePresets(type);
+  const preferred = type && type.expiration_policy ? type.expiration_policy.default : null;
+  if (preferred && presets.includes(preferred)) return preferred;
+  if (presets.includes("30_days")) return "30_days";
+  return presets[0] || "never";
+}
+
+function rebuildExpirationSelect(
+  select,
+  presets,
+  { includeKeep = false, selected = "" } = {}
+) {
+  if (!select) return "";
+  clearNode(select);
+  if (includeKeep) {
+    select.append(el("option", { value: "keep", text: "Keep current expiration" }));
+  }
+  const values = [...new Set((presets || []).filter((value) => EXPIRATION_LABELS[value]))];
+  values.forEach((value) => {
+    select.append(el("option", { value, text: EXPIRATION_LABELS[value] }));
+  });
+  if (!values.length) {
+    select.append(el("option", { value: "never", text: "Never Expires" }));
+  }
+  select.dataset.presets = values.join(",");
+  const hasSelected = selected && Array.from(select.options).some((option) => option.value === selected);
+  select.value = hasSelected
+    ? selected
+    : includeKeep
+      ? "keep"
+      : select.options[0]?.value || "never";
+  return select.value;
+}
+
+async function loadKeyTypes({ force = false } = {}) {
+  if (!force && state.keyTypesLoaded) return state.keyTypes;
+  const data = await api.keyTypes({});
+  state.keyTypes = Array.isArray(data.key_types) ? data.key_types : [];
+  state.permissionsCatalog = Array.isArray(data.permissions) ? data.permissions : [];
+  state.keyTypesById = new Map(state.keyTypes.map((type) => [type.id, type]));
+  state.keyTypesLoaded = true;
+  return state.keyTypes;
+}
+
+function permissionLabel(id) {
+  const entry = state.permissionsCatalog.find((permission) => permission.id === id);
+  return entry ? entry.name : id;
+}
+
+function keyTypeExpirySummary(type) {
+  const presets = type && type.expiration_policy && type.expiration_policy.presets;
+  if (!Array.isArray(presets) || !presets.length) return "—";
+  return presets.map((value) => EXPIRATION_LABELS[value] || value).join(", ");
+}
+
+function keyTypeFormatSummary(type) {
+  const format = type && type.key_format && typeof type.key_format === "object" ? type.key_format : {};
+  const groups = Number(format.groups) || 4;
+  const length = Number(format.group_length) || 4;
+  const separator = String(format.separator ?? "-");
+  return `${type.key_prefix || "NX"} · ${groups}×${length} · ${separator || "no separator"}`;
+}
+
+function keyTypeMatchesSearch(type, term) {
+  if (!term) return true;
+  const haystack = [
+    type.id,
+    type.name,
+    type.description,
+    type.project_name,
+    ...(type.permissions || []),
+    ...(type.scopes || []),
+    ...((type.expiration_policy && type.expiration_policy.presets) || []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(term);
+}
+
+async function loadKeyTypeCatalogue() {
+  const tbody = $("#key-types-table-body");
+  beginTableLoad(tbody, KEY_TYPE_LABELS.length, KEY_TYPE_LABELS, "#key-types-summary");
+  try {
+    const data = await api.keyTypes({ include_inactive: "true" });
+    state.allKeyTypes = Array.isArray(data.key_types) ? data.key_types : [];
+    state.permissionsCatalog = Array.isArray(data.permissions) ? data.permissions : [];
+    renderKeyTypeCatalogue();
+  } catch (error) {
+    if (tbody) {
+      clearNode(tbody);
+      tbody.append(errorRow(KEY_TYPE_LABELS.length, "Key types unavailable"));
+    }
+    throw error;
+  } finally {
+    endTableLoad(tbody);
+  }
+}
+
+function renderKeyTypeCatalogue() {
+  const tbody = $("#key-types-table-body");
+  if (!tbody) return;
+  clearNode(tbody);
+  const term = ($("#key-types-search-input")?.value || "").trim().toLowerCase();
+  const rows = state.allKeyTypes.filter((type) => keyTypeMatchesSearch(type, term));
+
+  if (!rows.length) {
+    tbody.append(
+      emptyRow(
+        KEY_TYPE_LABELS.length,
+        term ? "No matching key types" : "No key types found",
+        term ? "Try a different search term." : "Built-in types should be seeded by the Universal migration.",
+        "◉"
+      )
+    );
+    setText("#key-types-summary", term ? "0 matching key types" : "0 key types");
+    return;
+  }
+
+  rows.forEach((type) => {
+    const scope = type.project_id ? type.project_name || "Project type" : "Global";
+    const typeCell = el("div", { class: "key-type-name-cell" }, [
+      el("strong", { text: type.name || type.id }),
+      el("code", { class: "mono", text: type.id }),
+      el("span", {
+        class: `badge ${type.is_builtin ? "badge-info" : "badge-success"}`,
+        text: type.is_builtin ? "BUILT-IN" : "CUSTOM",
+      }),
+    ]);
+    const actions = el("div", { class: "row-actions" });
+    if (type.is_builtin) {
+      actions.append(el("span", { class: "badge badge-muted", text: "Protected" }));
+    } else {
+      actions.append(
+        el("button", {
+          class: "btn btn-ghost btn-sm",
+          type: "button",
+          text: "Edit",
+          onclick: () => openTypeBuilder(type),
+        }),
+        el("button", {
+          class: "btn btn-ghost btn-sm",
+          type: "button",
+          text: type.is_active ? "Disable" : "Enable",
+          onclick: () => toggleKeyType(type),
+        })
+      );
+      const deleteButton = el("button", {
+        class: "btn btn-danger btn-sm",
+        type: "button",
+        text: "Delete",
+        disabled: Number(type.key_count) > 0,
+        title:
+          Number(type.key_count) > 0
+            ? "This type is referenced by existing keys. Disable it instead."
+            : "Delete this unused custom type.",
+        onclick: () => deleteKeyTypePrompt(type),
+      });
+      actions.append(deleteButton);
+    }
+
+    tbody.append(
+      el("tr", {}, [
+        tableCell("Type", typeCell, "table-primary"),
+        tableCell("Scope", scope),
+        tableCell("Permissions", (type.permissions || []).join(", ") || "None"),
+        tableCell("Format", el("code", { class: "mono", text: keyTypeFormatSummary(type) })),
+        tableCell("Expiration", keyTypeExpirySummary(type), "key-type-expiry-cell"),
+        tableCell("Keys", String(type.key_count || 0)),
+        tableCell("Status", statusBadge(type.is_active ? "active" : "inactive")),
+        tableCell("Actions", actions, "align-right"),
+      ])
+    );
+  });
+
+  const builtIn = rows.filter((type) => type.is_builtin).length;
+  const custom = rows.length - builtIn;
+  setText(
+    "#key-types-summary",
+    `${rows.length} key type${rows.length === 1 ? "" : "s"} · ${builtIn} built-in · ${custom} custom`
+  );
+}
+
+function syncTypeDefaultExpiry(preferred = "") {
+  const container = $("#type-expiry-presets");
+  const select = $("#type-default-expiry");
+  if (!container || !select) return;
+  const checked = readCheckedValues(container, "data-type-expiry");
+  clearNode(select);
+  checked.forEach((value) => {
+    select.append(el("option", { value, text: EXPIRATION_LABELS[value] || value }));
+  });
+  if (!checked.length) {
+    select.append(el("option", { value: "", text: "Choose at least one preset" }));
+    select.value = "";
+    return;
+  }
+  const current = preferred || select.value;
+  select.value = checked.includes(current) ? current : checked[0];
+}
+
+async function fillTypeProjectSelect(selectedId = "") {
+  const select = $("#type-project-select");
+  if (!select) return;
+  const current = selectedId || select.value;
+  clearNode(select);
+  select.append(el("option", { value: "", text: "Global — available to every project" }));
+  let projects = state.projects || [];
+  try {
+    const data = await api.projects({ include_deleted: false });
+    projects = (data.projects || []).filter((project) => !project.deleted_at);
+    state.projects = projects;
+  } catch {
+    // The table still exposes the current project when the project list is unavailable.
+  }
+  projects.forEach((project) => {
+    select.append(el("option", { value: project.id, text: project.project_name }));
+  });
+  if (current && !Array.from(select.options).some((option) => option.value === current)) {
+    select.append(el("option", { value: current, text: "Current project scope" }));
+  }
+  select.value = current || "";
+}
+
+async function openTypeBuilder(type = null) {
+  const panel = $("#type-builder-panel");
+  const form = $("#key-type-form");
+  if (!panel || !form) return;
+  form.reset();
+  state.keyTypeBuilderId = type ? type.id : null;
+  setText("#type-builder-title", type ? `Edit ${type.name}` : "Create Custom Key Type");
+  setText("#type-builder-submit .btn-label", type ? "Save Changes" : "Create Key Type");
+  setToneMessage($("#type-builder-error"), "", "error");
+
+  const idInput = $("#type-id-input");
+  if (idInput) {
+    idInput.value = type ? type.id : "";
+    idInput.disabled = Boolean(type);
+  }
+  $("#type-name-input").value = type ? type.name || "" : "";
+  $("#type-description-input").value = type ? type.description || "" : "";
+  $("#type-prefix-input").value = type ? type.key_prefix || "CUS" : "CUS";
+  const format = type && type.key_format && typeof type.key_format === "object" ? type.key_format : {};
+  $("#type-groups-input").value = String(format.groups || 4);
+  $("#type-group-length-input").value = String(format.group_length || 4);
+  $("#type-separator-select").value = String(format.separator ?? "-");
+  $("#type-suffix-input").value = format.suffix || "";
+  $("#type-scopes-input").value = type && Array.isArray(type.scopes) ? type.scopes.join(", ") : "";
+  $("#type-metadata-input").value = JSON.stringify(
+    type && type.metadata_schema ? type.metadata_schema : { fields: {} },
+    null,
+    2
+  );
+  $("#type-validation-input").value = JSON.stringify(
+    type && type.validation_rules ? type.validation_rules : {},
+    null,
+    2
+  );
+  $("#type-active-input").checked = type ? Boolean(type.is_active) : true;
+
+  await fillTypeProjectSelect(type && type.project_id ? type.project_id : "");
+  const permissionIds = [
+    ...new Set([
+      ...state.permissionsCatalog.map((permission) => permission.id),
+      ...((type && type.permissions) || []),
+    ]),
+  ];
+  renderCheckChoices(
+    $("#type-permissions-grid"),
+    permissionIds,
+    type ? type.permissions || [] : permissionIds.includes("read") ? ["read"] : [],
+    "data-type-permission",
+    permissionLabel
+  );
+
+  const presetValues = EXPIRATION_PRESETS.map(([value]) => value);
+  const selectedPresets =
+    type && type.expiration_policy && Array.isArray(type.expiration_policy.presets)
+      ? type.expiration_policy.presets
+      : presetValues;
+  renderCheckChoices(
+    $("#type-expiry-presets"),
+    presetValues,
+    selectedPresets,
+    "data-type-expiry",
+    (value) => EXPIRATION_LABELS[value] || value
+  );
+  syncTypeDefaultExpiry(
+    type && type.expiration_policy ? type.expiration_policy.default || "" : "never"
+  );
+
+  panel.hidden = false;
+  panel.scrollIntoView({ behavior: isLiteMode() ? "auto" : "smooth", block: "start" });
+  window.setTimeout(() => idInput && !idInput.disabled && idInput.focus({ preventScroll: true }), 120);
+}
+
+function closeTypeBuilder() {
+  const panel = $("#type-builder-panel");
+  const form = $("#key-type-form");
+  if (panel) panel.hidden = true;
+  if (form) form.reset();
+  state.keyTypeBuilderId = null;
+  setToneMessage($("#type-builder-error"), "", "error");
+}
+
+function parseJsonObject(value, label) {
+  const text = String(value || "").trim();
+  if (!text) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`${label} must contain valid JSON.`);
+  }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new Error(`${label} must be a JSON object.`);
+  }
+  return parsed;
+}
+
+function keyTypeFormError(message, target) {
+  setToneMessage($("#type-builder-error"), message, "error");
+  if (target) target.focus({ preventScroll: false });
+}
+
+async function handleKeyTypeSubmit(event) {
+  event.preventDefault();
+  const form = $("#key-type-form");
+  const button = $("#type-builder-submit");
+  if (!form || !button) return;
+  setToneMessage($("#type-builder-error"), "", "error");
+
+  const id = ($("#type-id-input")?.value || "").trim().toLowerCase();
+  const name = ($("#type-name-input")?.value || "").trim();
+  if (!state.keyTypeBuilderId && !/^[a-z][a-z0-9_]{2,49}$/.test(id)) {
+    keyTypeFormError(
+      "Use 3–50 lowercase letters, digits, or underscores, starting with a letter.",
+      $("#type-id-input")
+    );
+    return;
+  }
+  if (!name) {
+    keyTypeFormError("Enter a display name for this key type.", $("#type-name-input"));
+    return;
+  }
+
+  const permissions = readCheckedValues($("#type-permissions-grid"), "data-type-permission");
+  if (!permissions.length) {
+    keyTypeFormError("Select at least one permission for the type ceiling.", $("#type-permissions-grid"));
+    return;
+  }
+  const presets = readCheckedValues($("#type-expiry-presets"), "data-type-expiry");
+  if (!presets.length) {
+    keyTypeFormError("Select at least one allowed expiration preset.", $("#type-expiry-presets"));
+    return;
+  }
+  const defaultExpiry = $("#type-default-expiry")?.value || "";
+  if (!presets.includes(defaultExpiry)) {
+    keyTypeFormError("Choose a default expiration that is allowed for this type.", $("#type-default-expiry"));
+    return;
+  }
+
+  let metadataSchema;
+  let validationRules;
+  try {
+    metadataSchema = parseJsonObject($("#type-metadata-input")?.value, "Metadata schema");
+    validationRules = parseJsonObject($("#type-validation-input")?.value, "Validation rules");
+  } catch (error) {
+    keyTypeFormError(error.message, $("#type-validation-input"));
+    return;
+  }
+
+  const payload = {
+    id,
+    name,
+    description: ($("#type-description-input")?.value || "").trim(),
+    project_id: $("#type-project-select")?.value || null,
+    key_prefix: ($("#type-prefix-input")?.value || "").trim().toUpperCase(),
+    key_format: {
+      groups: Number($("#type-groups-input")?.value) || 4,
+      group_length: Number($("#type-group-length-input")?.value) || 4,
+      separator: $("#type-separator-select")?.value ?? "-",
+      suffix: ($("#type-suffix-input")?.value || "").trim().toUpperCase(),
+    },
+    permissions,
+    scopes: ($("#type-scopes-input")?.value || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+    expiration_policy: { presets, default: defaultExpiry },
+    metadata_schema: metadataSchema,
+    validation_rules: validationRules,
+    is_active: Boolean($("#type-active-input")?.checked),
+  };
+
+  const editing = Boolean(state.keyTypeBuilderId);
+  setButtonBusy(button, true, editing ? "Saving…" : "Creating…");
+  try {
+    const result = editing
+      ? await api.updateKeyType(state.keyTypeBuilderId, payload)
+      : await api.createKeyType(payload);
+    const saved = result && result.key_type ? result.key_type : null;
+    state.keyTypesLoaded = false;
+    closeTypeBuilder();
+    await loadKeyTypeCatalogue();
+    toast(
+      saved
+        ? `Key type '${saved.name}' ${editing ? "updated" : "created"}.`
+        : "Key type saved.",
+      { type: "success" }
+    );
+  } catch (error) {
+    const fields = error instanceof ApiProblem && error.details && error.details.fields;
+    const detail = fields && typeof fields === "object"
+      ? Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join(" · ")
+      : "";
+    keyTypeFormError(error && error.message ? `${error.message}${detail ? ` ${detail}` : ""}` : "Key type save failed.");
+    fail(error, "Key type save failed.");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function toggleKeyType(type) {
+  try {
+    await api.updateKeyType(type.id, { is_active: !type.is_active });
+    state.keyTypesLoaded = false;
+    await loadKeyTypeCatalogue();
+    toast(`Key type '${type.name}' ${type.is_active ? "disabled" : "enabled"}.`, {
+      type: "success",
+    });
+  } catch (error) {
+    fail(error, "Key type status update failed.");
+  }
+}
+
+async function deleteKeyTypePrompt(type) {
+  if (Number(type.key_count) > 0) {
+    toast("This key type is referenced by existing keys. Disable it instead.", { type: "error" });
+    return;
+  }
+  const confirmed = await confirmAction({
+    title: `Delete '${type.name}'?`,
+    message:
+      "This permanently removes the custom type definition. Existing keys or imported records block deletion and must be handled first. Built-in types are never deletable.",
+    confirmLabel: "Delete Key Type",
+    tone: "danger",
+    requireText: type.id,
+    textLabel: `Type the type ID (${type.id}) to confirm`,
+  });
+  if (!confirmed.confirmed) return;
+  try {
+    await api.deleteKeyType(type.id);
+    state.keyTypesLoaded = false;
+    if (state.keyTypeBuilderId === type.id) closeTypeBuilder();
+    await loadKeyTypeCatalogue();
+    toast(`Key type '${type.name}' deleted.`, { type: "success" });
+  } catch (error) {
+    fail(error, "Key type deletion failed.");
+  }
+}
+
+function renderCheckChoices(container, values, selected, dataAttribute, labeler) {
+  if (!container) return;
+  clearNode(container);
+  [...new Set(values || [])].forEach((value) => {
+    const input = el("input", {
+      type: "checkbox",
+      [dataAttribute]: value,
+      checked: (selected || []).includes(value),
+    });
+    const label = el("label", { class: "check-option" }, [
+      input,
+      el("span", {}, [
+        el("strong", { text: labeler(value) }),
+        el("small", { text: value }),
+      ]),
+    ]);
+    container.append(label);
+  });
+}
+
+function renderMetadataFields(container, type) {
+  if (!container) return;
+  clearNode(container);
+  const schema = type && type.metadata_schema && type.metadata_schema.fields;
+  const required = type && type.validation_rules && type.validation_rules.required_metadata;
+  const requiredNames = Array.isArray(required) ? required : [];
+  const names = [
+    ...new Set([
+      ...Object.keys(schema && typeof schema === "object" ? schema : {}),
+      ...requiredNames,
+    ]),
+  ];
+
+  names.forEach((name) => {
+    const spec = schema && schema[name] && typeof schema[name] === "object" ? schema[name] : {};
+    const kind = spec.type || "string";
+    const isRequired = Boolean(spec.required) || requiredNames.includes(name);
+    let control;
+
+    if (kind === "boolean") {
+      control = el("input", {
+        type: "checkbox",
+        "data-metadata-key": name,
+        "data-metadata-type": kind,
+      });
+      container.append(
+        el("label", { class: "check-option" }, [
+          control,
+          el("span", {}, [
+            el("strong", { text: name }),
+            el("small", { text: "Boolean" }),
+          ]),
+        ])
+      );
+      return;
+    }
+
+    if (kind === "array" || kind === "object") {
+      control = el("textarea", {
+        rows: "2",
+        placeholder: kind === "array" ? '[\"value\"]' : '{\"key\": \"value\"}',
+        "data-metadata-key": name,
+        "data-metadata-type": kind,
+      });
+    } else {
+      control = el("input", {
+        type: kind === "number" ? "number" : "text",
+        step: kind === "number" ? "any" : undefined,
+        maxlength: kind === "string" ? spec.max_length || 500 : undefined,
+        "data-metadata-key": name,
+        "data-metadata-type": kind,
+      });
+    }
+    if (isRequired) control.required = true;
+    container.append(
+      el("label", { class: "field" }, [
+        el("span", { class: "field-label", text: `${name}${isRequired ? " *" : ""}` }),
+        control,
+        el("small", { class: "muted", text: `${kind}${isRequired ? " · required" : ""}` }),
+      ])
+    );
+  });
+}
+
+function readCheckedValues(container, attribute) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll(`[${attribute}]:checked`)).map(
+    (input) => input.getAttribute(attribute)
+  );
+}
+
+function readScopeValues() {
+  const checked = readCheckedValues($("#gen-scopes-grid"), "data-scope");
+  const free = ($("#gen-scopes-free")?.value || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return [...new Set([...checked, ...free])];
+}
+
+function readMetadataValues() {
+  const values = {};
+  $$("#gen-metadata-fields [data-metadata-key]").forEach((control) => {
+    const name = control.dataset.metadataKey;
+    const kind = control.dataset.metadataType;
+    if (kind === "boolean") {
+      values[name] = Boolean(control.checked);
+      return;
+    }
+    const raw = control.value.trim();
+    if (!raw) return;
+    if (kind === "number") {
+      const parsed = Number(raw);
+      if (Number.isNaN(parsed)) throw new Error(`${name} must be a number.`);
+      values[name] = parsed;
+    } else if (kind === "array" || kind === "object") {
+      try {
+        values[name] = JSON.parse(raw);
+      } catch {
+        throw new Error(`${name} must contain valid JSON.`);
+      }
+    } else {
+      values[name] = raw;
+    }
+  });
+  return values;
+}
+
+function localDateTimeValue(iso) {
+  if (!iso) return "";
+  const value = new Date(iso);
+  if (Number.isNaN(value.getTime())) return "";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
+}
+
+function projectExpiryLabel(project) {
+  if (!project || !project.expires_at) return "Never expires";
+  const expired =
+    project.effective_status === "expired" || new Date(project.expires_at).getTime() <= Date.now();
+  return `${expired ? "Expired" : "Expires"} ${formatDate(project.expires_at)}`;
+}
+
+function updateProjectExpirationPreview() {
+  const select = $("#gen-project-expiration-select");
+  const field = $("#gen-project-expiration-field");
+  const customField = $("#gen-project-expiration-custom-field");
+  const customInput = $("#gen-project-expiration-custom");
+  const preview = $("#gen-project-expiration-preview");
+  const isNew = state.generatorMode === "new";
+  if (field) field.hidden = !isNew;
+  if (preview) preview.hidden = !isNew;
+  if (!select) return;
+  const preset = select.value;
+  if (customField) customField.hidden = !isNew || preset !== "custom";
+  if (!preview) return;
+
+  let text = EXPIRATION_LABELS[preset] || "Never Expires";
+  if (preset === "never") text = "Never expires — stored explicitly on the project.";
+  if (preset === "custom") {
+    text = customInput && customInput.value
+      ? `Expires ${new Date(customInput.value).toLocaleString()}`
+      : "Choose a project expiration date and time.";
+  }
+  clearNode(preview);
+  preview.append(el("span", { class: "muted", text: "Project expiration:" }));
+  preview.append(el("strong", { text }));
+}
+
+async function loadGeneratorKeyTypes() {
+  const select = $("#gen-key-type-select");
+  if (!select) return;
+  let types = [];
+  try {
+    types = await loadKeyTypes();
+  } catch (error) {
+    clearNode(select);
+    select.append(el("option", { value: "", text: "Key types unavailable" }));
+    return;
+  }
+  const projectId = state.generatorMode === "existing"
+    ? $("#gen-project-select")?.value || ""
+    : "";
+  const visible = types.filter(
+    (type) => !type.project_id || String(type.project_id) === String(projectId)
+  );
+  const current = select.value;
+  clearNode(select);
+  if (!visible.length) {
+    select.append(el("option", { value: "", text: "No key types available" }));
+    select.disabled = true;
+    updateGeneratorType();
+    return;
+  }
+  select.disabled = false;
+  visible.forEach((type) => {
+    select.append(
+      el("option", {
+        value: type.id,
+        text: type.project_id ? `${type.name} · project custom` : type.name,
+      })
+    );
+  });
+  select.value = visible.some((type) => type.id === current)
+    ? current
+    : visible.some((type) => type.id === "reader")
+      ? "reader"
+      : visible[0].id;
+  updateGeneratorType();
+}
+
+function updateGeneratorType() {
+  const select = $("#gen-key-type-select");
+  const summary = $("#gen-key-type-summary");
+  const config = $("#gen-type-config");
+  if (!select || !summary || !config) return;
+  const type = state.keyTypesById.get(select.value);
+  if (!type) {
+    summary.hidden = true;
+    config.hidden = true;
+    return;
+  }
+
+  clearNode(summary);
+  summary.hidden = false;
+  summary.append(
+    el("div", { class: "key-type-summary-head" }, [
+      el("strong", { text: type.name || type.id }),
+      el("span", {
+        class: `badge ${type.is_builtin ? "badge-info" : "badge-success"}`,
+        text: type.is_builtin ? "BUILT-IN" : "PROJECT CUSTOM",
+      }),
+    ]),
+    el("p", { class: "muted", text: type.description || "Universal key type." }),
+    el("p", {
+      class: "muted key-type-meta",
+      text: `Prefix ${type.key_prefix || "NX"} · ${keyTypePresets(type).map((value) => EXPIRATION_LABELS[value]).join(", ")}`,
+    })
+  );
+  config.hidden = false;
+
+  const presets = keyTypePresets(type);
+  rebuildExpirationSelect($("#gen-expiration-select"), presets, {
+    selected: defaultKeyTypePreset(type),
+  });
+  buildPresetChips();
+  updateExpirationPreview();
+
+  const permissions = Array.isArray(type.permissions) ? type.permissions.map(String) : [];
+  const permissionSection = $("#gen-permissions-section");
+  if (permissionSection) permissionSection.hidden = !permissions.length;
+  renderCheckChoices(
+    $("#gen-permissions-grid"),
+    permissions,
+    permissions,
+    "data-permission",
+    permissionLabel
+  );
+
+  const scopes = Array.isArray(type.scopes) ? type.scopes.map(String) : [];
+  const scopeSection = $("#gen-scopes-section");
+  if (scopeSection) scopeSection.hidden = false;
+  renderCheckChoices($("#gen-scopes-grid"), scopes, scopes, "data-scope", (value) => value);
+  const freeScopes = $("#gen-scopes-free");
+  if (freeScopes) {
+    freeScopes.hidden = scopes.length > 0;
+    freeScopes.value = "";
+  }
+
+  const metadataContainer = $("#gen-metadata-fields");
+  renderMetadataFields(metadataContainer, type);
+  const metadataSection = $("#gen-metadata-section");
+  if (metadataSection) metadataSection.hidden = !metadataContainer?.children.length;
+
+  const format = type.key_format && typeof type.key_format === "object" ? type.key_format : {};
+  const groups = Math.max(1, Number(format.groups) || 4);
+  const groupLength = Math.max(1, Number(format.group_length) || 4);
+  const separator = String(format.separator || "-");
+  const pattern = [
+    type.key_prefix || "NX",
+    ...Array.from({ length: groups }, () => "*".repeat(groupLength)),
+  ].join(separator);
+  const formatCode = $("#gen-format-code");
+  if (formatCode) formatCode.textContent = pattern;
+  const formatHint = $("#gen-format-hint");
+  if (formatHint) {
+    formatHint.textContent = `${groups * groupLength} random characters · OS CSPRNG · HMAC-SHA256 keyed digest at rest`;
+  }
+  const submitLabel = $("#gen-submit-label");
+  if (submitLabel) submitLabel.textContent = `Generate ${type.name || "Key"}`;
 }
 
 function setGeneratorMode(mode, { focus = true } = {}) {
@@ -1065,8 +2020,10 @@ function setGeneratorMode(mode, { focus = true } = {}) {
   if (select) select.required = existing;
   if (nameInput) nameInput.required = !existing;
 
+  updateProjectExpirationPreview();
   replayMotion(existing ? existingField : newField, "is-field-in", 320);
   replayMotion(existing ? existingButton : newButton, "is-selected", 320);
+  loadGeneratorKeyTypes().catch(() => {});
 
   if (focus) {
     const target = existing ? select : nameInput;
@@ -1102,7 +2059,9 @@ function updateExpirationPreview({ animate = false } = {}) {
   }
 
   let text = EXPIRATION_LABELS[preset] || "30 Days";
-  if (preset === "never") {
+  if (preset === "keep") {
+    text = "Current expiration is unchanged.";
+  } else if (preset === "never") {
     text = "Never expires — stored explicitly on the key.";
   } else if (isCustom) {
     const value = customInput ? customInput.value : "";
@@ -1124,9 +2083,10 @@ function updateExpirationPreview({ animate = false } = {}) {
 }
 
 async function loadGenerator() {
-  buildPresetChips();
   await loadGeneratorProjects();
   setGeneratorMode(state.generatorMode, { focus: false });
+  await loadGeneratorKeyTypes();
+  updateProjectExpirationPreview();
   updateExpirationPreview();
   const target =
     state.generatorMode === "existing"
@@ -1137,19 +2097,59 @@ async function loadGenerator() {
   }
 }
 
+function createGeneratorBatchId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(
+    16,
+    20
+  )}-${hex.slice(20)}`;
+}
+
+function showGeneratorRecovery({ title, message, retry = true, viewKeys = false }) {
+  const panel = $("#generator-recovery");
+  if (!panel) return;
+  state.generatorRecovery = { retry, viewKeys };
+  setText("#generator-recovery-title", title || "Key generation needs attention");
+  setText("#generator-recovery-message", message || "");
+  const retryButton = $("#generator-retry-btn");
+  const viewButton = $("#generator-recovery-view-btn");
+  if (retryButton) retryButton.hidden = !retry;
+  if (viewButton) viewButton.hidden = !viewKeys;
+  panel.hidden = false;
+}
+
+function hideGeneratorRecovery() {
+  const panel = $("#generator-recovery");
+  if (panel) panel.hidden = true;
+  state.generatorRecovery = null;
+}
+
 async function handleGenerateKeys(event) {
   event.preventDefault();
 
   const nameInput = $("#gen-project-name-input");
   const projectSelect = $("#gen-project-select");
+  const typeSelect = $("#gen-key-type-select");
   const labelInput = $("#gen-label-input");
+  const tagsInput = $("#gen-tags-input");
+  const notesInput = $("#gen-notes-input");
   const expirationSelect = $("#gen-expiration-select");
   const customInput = $("#gen-expiration-custom");
+  const projectExpirationSelect = $("#gen-project-expiration-select");
+  const projectCustomInput = $("#gen-project-expiration-custom");
   const errorNode = $("#generator-error");
   const submitButton = $("#generate-keys-btn");
   const cryptoVisual = $(".crypto-visual");
   const projectName = nameInput ? nameInput.value.trim() : "";
   const projectId = projectSelect ? projectSelect.value : "";
+  const type = state.keyTypesById.get(typeSelect ? typeSelect.value : "");
   const label = labelInput ? labelInput.value.trim() : "";
   const expiration = expirationSelect ? expirationSelect.value : "30_days";
 
@@ -1158,6 +2158,7 @@ async function handleGenerateKeys(event) {
   setToneMessage(errorNode, "", "error");
   if (nameInput) nameInput.classList.remove("is-invalid");
   if (projectSelect) projectSelect.classList.remove("is-invalid");
+  if (typeSelect) typeSelect.classList.remove("is-invalid");
   if (customInput) customInput.classList.remove("is-invalid");
 
   if (state.generatorMode === "existing" && !projectId) {
@@ -1177,6 +2178,22 @@ async function handleGenerateKeys(event) {
       nameInput.focus();
     }
     announce("Enter a project name before generating a key.");
+    return;
+  }
+
+  if (!type) {
+    setToneMessage(errorNode, "Choose a key type before generating a key.", "error");
+    if (typeSelect) {
+      typeSelect.classList.add("is-invalid");
+      typeSelect.focus();
+    }
+    return;
+  }
+
+  const allowedPresets = (expirationSelect?.dataset.presets || "").split(",").filter(Boolean);
+  if (allowedPresets.length && !allowedPresets.includes(expiration)) {
+    setToneMessage(errorNode, "This expiration is not allowed for the selected key type.", "error");
+    if (expirationSelect) expirationSelect.focus();
     return;
   }
 
@@ -1203,55 +2220,199 @@ async function handleGenerateKeys(event) {
     expiresAt = parsed.toISOString();
   }
 
+  let projectExpiration = "never";
+  let projectExpiresAt = null;
+  if (state.generatorMode === "new") {
+    projectExpiration = projectExpirationSelect ? projectExpirationSelect.value : "never";
+    if (projectExpiration === "custom") {
+      const raw = projectCustomInput ? projectCustomInput.value : "";
+      const parsed = raw ? new Date(raw) : null;
+      if (!parsed || Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
+        setToneMessage(
+          errorNode,
+          "Choose a future custom project expiration date and time.",
+          "error"
+        );
+        if (projectCustomInput) {
+          projectCustomInput.classList.add("is-invalid");
+          projectCustomInput.focus();
+        }
+        return;
+      }
+      projectExpiresAt = parsed.toISOString();
+    }
+  }
+
+  const permissions = readCheckedValues($("#gen-permissions-grid"), "data-permission");
+  const scopes = readScopeValues();
+  let metadata = {};
+  try {
+    metadata = readMetadataValues();
+  } catch (metadataError) {
+    setToneMessage(errorNode, metadataError.message, "error");
+    return;
+  }
+  const tags = ($("#gen-tags-input")?.value || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+  const notes = notesInput ? notesInput.value.trim() : "";
+
   const generatorForm = $("#key-generator-form");
+  const batchId = state.generatorBatchId || createGeneratorBatchId();
+  state.generatorBatchId = batchId;
   if (generatorForm) generatorForm.setAttribute("aria-busy", "true");
 
   setButtonBusy(submitButton, true, "Generating securely…");
   const generatorPanel = generatorForm ? generatorForm.closest(".generator-form-panel") : null;
   if (submitButton) submitButton.classList.add("is-surging");
   if (cryptoVisual) cryptoVisual.classList.add("is-processing");
+  let projectCreated = false;
+  let createdProject = null;
+  let keyRequestStarted = false;
 
   try {
-    const body = { label, expiration, expires_at: expiresAt };
-    const result =
-      state.generatorMode === "existing"
-        ? await api.generateKeyForProject(projectId, body)
-        : await api.generateProjectKey({
-            project_name: projectName,
-            ...body,
-          });
+    let project;
+    if (state.generatorMode === "new") {
+      const created = await api.createProject(projectName, {
+        expiration: projectExpiration,
+        expires_at: projectExpiresAt,
+      });
+      project = created.project;
+      createdProject = project;
+      projectCreated = true;
+    } else {
+      project = state.projects.find((item) => String(item.id) === String(projectId)) || {
+        id: projectId,
+        project_name: projectSelect?.selectedOptions?.[0]?.textContent || "Selected project",
+      };
+    }
 
-    state.generatedKeys = result.reader_key ? [result.reader_key] : [];
+    const body = {
+      project_id: project.id,
+      key_type_id: type.id,
+      batch_id: batchId,
+      label,
+      expiration_preset: expiration,
+      expires_at: expiresAt,
+      permissions,
+      scopes,
+      tags,
+      notes,
+      metadata,
+    };
+    keyRequestStarted = true;
+    const result = await api.generateUniversalKeys(body);
+    const generated = (result.keys || []).map((item) => ({
+      ...item,
+      plaintext_key: item.key,
+      project_name: project.project_name,
+      key_type_id: type.id,
+      key_type_name: type.name || type.id,
+      expiration_preset: expiration,
+      is_permanent: expiration === "never" || !item.expires_at,
+      created_at: new Date().toISOString(),
+      label,
+    }));
+    if (!generated.length) {
+      throw new Error("The server did not return a generated key.");
+    }
+
+    state.generatorBatchId = null;
+    hideGeneratorRecovery();
+    state.generatedKeys = generated;
     replayMotion(generatorPanel, "is-success", 520);
-    renderGeneratedKeysModal(result.reader_key);
+    renderGeneratedKeysModal(generated[0]);
     toast(
-      result.project_created
-        ? `Project '${result.project.project_name}' created with its first Reader Key.`
-        : `New Reader Key issued for '${result.project.project_name}'.`,
+      projectCreated
+        ? `Project '${project.project_name}' created with its first ${type.name || "key"}.`
+        : `${type.name || "Key"} issued for '${project.project_name}'.`,
       { type: "success" }
     );
     if (nameInput) nameInput.value = "";
     if (labelInput) labelInput.value = "";
+    if (tagsInput) tagsInput.value = "";
+    if (notesInput) notesInput.value = "";
     await loadGeneratorProjects();
+    await loadGeneratorKeyTypes();
     loadOverview().catch(() => {});
   } catch (error) {
-    if (error instanceof ApiProblem && error.status === 409) {
+    if (
+      error instanceof ApiProblem &&
+      error.status === 409 &&
+      error.code === "PROJECT_ALREADY_EXISTS" &&
+      !keyRequestStarted
+    ) {
+      state.generatorBatchId = null;
       state.generatedKeys = [];
       renderExistingProjectModal(error.details || {}, projectName);
       await loadGeneratorProjects();
       return;
     }
 
-    const message = error && error.message ? error.message : "Failed to generate the reader key.";
+    if (projectCreated) {
+      await loadGeneratorProjects().catch(() => {});
+      setGeneratorMode("existing", { focus: false });
+      if (createdProject && projectSelect) {
+        const optionExists = Array.from(projectSelect.options).some(
+          (option) => option.value === createdProject.id
+        );
+        if (optionExists) projectSelect.value = createdProject.id;
+      }
+      await loadGeneratorKeyTypes().catch(() => {});
+    }
+
+    const fallback = projectCreated
+      ? "The project was created, but the key could not be generated. Retry below without creating another project."
+      : "Failed to generate the key.";
+    const message = error && error.message ? error.message : fallback;
     setToneMessage(errorNode, message, "error");
     replayMotion(errorNode, "is-invalid", 460);
     replayMotion(generatorPanel, "is-shaking", 520);
-    fail(error, "Failed to generate the reader key.");
-    const invalidTarget =
-      state.generatorMode === "new" ? nameInput : projectSelect;
-    if (invalidTarget) {
-      invalidTarget.classList.add("is-invalid");
-      invalidTarget.focus();
+
+    if (
+      error instanceof ApiProblem &&
+      error.code === "BATCH_ALREADY_PROCESSED"
+    ) {
+      state.generatorBatchId = null;
+      const hints = Array.isArray(error.details?.key_hints)
+        ? error.details.key_hints.filter(Boolean).join(", ")
+        : "";
+      showGeneratorRecovery({
+        title: "This key was already created",
+        message:
+          `The server already processed this generation batch, so no duplicate key was created. ` +
+          `The plaintext cannot be revealed again.${hints ? ` Existing key hint: ${hints}.` : ""}`,
+        retry: false,
+        viewKeys: true,
+      });
+      toast("Already processed — no duplicate key was created.", { type: "warning" });
+    } else {
+      if (!keyRequestStarted) state.generatorBatchId = null;
+      if (keyRequestStarted) {
+        showGeneratorRecovery({
+          title: projectCreated
+            ? "Project created; key generation failed"
+            : "Key generation did not complete",
+          message:
+            `${message} ` +
+            "Retry uses this same project and generation batch, so an uncertain network result cannot silently create a duplicate.",
+          retry: true,
+          viewKeys: false,
+        });
+      } else {
+        hideGeneratorRecovery();
+      }
+      fail(error, fallback);
+    }
+
+    if (!keyRequestStarted) {
+      const invalidTarget = state.generatorMode === "new" ? nameInput : projectSelect;
+      if (invalidTarget) {
+        invalidTarget.classList.add("is-invalid");
+        invalidTarget.focus();
+      }
     }
   } finally {
     if (generatorForm) generatorForm.removeAttribute("aria-busy");
@@ -1291,15 +2452,14 @@ function renderGeneratedKeysModal(key) {
   if (!container || !modal) return;
 
   if (!key || !key.plaintext_key) {
-    fail(new Error("The server response did not include a one-time reader key."));
+    fail(new Error("The server response did not include a one-time key."));
     return;
   }
 
-  clearNode(container);
-  setText("#result-title", "Reader Key Generated");
+  clearNode(container);  setText("#result-title", "Key Generated");
   setText(
     "#result-summary",
-    `One-time key for '${key.project_name}'. Plaintext is shown only now and is cleared when this dialog closes.`
+    `One-time ${key.key_type_name || "key"} for '${key.project_name}'. Plaintext is shown only now and is cleared when this dialog closes.`
   );
 
   const warning = $("#result-warning");
@@ -1316,13 +2476,13 @@ function renderGeneratedKeysModal(key) {
     text: "Copy key",
   });
   copyButton.addEventListener("click", () =>
-    copyWithFeedback(key.plaintext_key, copyButton, "Plaintext reader key copied to clipboard.")
+    copyWithFeedback(key.plaintext_key, copyButton, "Plaintext key copied to clipboard.")
   );
 
   const reveal = el("article", { class: "key-reveal" }, [
     el("div", { class: "key-reveal-head" }, [
       el("span", { class: "key-founder-mark", "aria-hidden": "true" }),
-      el("span", { class: "key-reveal-label", text: "Plaintext reader key / one-time reveal" }),
+      el("span", { class: "key-reveal-label", text: "Plaintext key / one-time reveal" }),
       el("span", { class: "badge badge-info", text: "ONE-TIME" }),
     ]),
     buildKeySegments(key.plaintext_key),
@@ -1363,7 +2523,7 @@ function renderGeneratedKeysModal(key) {
     if (reveal) replayMotion(reveal, "is-key-reveal", 600);
   });
 
-  announce(`Reader key generated for ${key.project_name}. Copy it now; it is shown only once.`);
+  announce(`Key generated for ${key.project_name}. Copy it now; it is shown only once.`);
 }
 
 function renderExistingProjectModal(details, requestedName) {
@@ -1379,14 +2539,14 @@ function renderExistingProjectModal(details, requestedName) {
   setText("#result-title", "Project Already Exists");
   setText(
     "#result-summary",
-    `'${name}' already exists with ${details.key_count || (key ? 1 : 0)} Reader Key(s). No new project was created. Choose it under Existing Project to issue another key.`
+    `'${name}' already exists with ${details.key_count || (key ? 1 : 0)} key(s). No new project was created. Choose it under Existing Project to issue another key.`
   );
 
   const warning = $("#result-warning");
   if (warning) {
     warning.hidden = false;
     warning.textContent =
-      "For security, an existing Reader Key is never displayed again. Use Key Management for its masked status.";
+      "For security, an existing key is never displayed again. Use Key Management for its masked status.";
   }
   setResultButtonsVisible(false);
 
@@ -1394,7 +2554,7 @@ function renderExistingProjectModal(details, requestedName) {
     recordGrid([
       recordItem("Project Name", name),
       recordItem("Project Status", project.status || "—"),
-      recordItem("Reader Key Status", key ? key.status || "—" : "No key exists"),
+      recordItem("Key Status", key ? key.status || "—" : "No key exists"),
       recordItem("Key Hint", key ? key.key_hint || "—" : "—", { mono: true }),
       recordItem("Key Created", key ? formatDate(key.created_at) : "—"),
       recordItem("Key Expires", key ? expirationText(key) : "—"),
@@ -1522,6 +2682,10 @@ function renderKeysTable(keys) {
     const identity = el("div", { class: "key-identity" }, [
       hint,
       el("span", { class: "key-id", text: key.id }),
+      el("span", {
+        class: "badge badge-info",
+        text: key.key_type_name || key.key_type_id || "reader",
+      }),
       key.label ? el("span", { class: "key-label", text: key.label }) : null,
     ]);
 
@@ -1564,6 +2728,237 @@ function renderKeysTable(keys) {
   });
 }
 
+function buildKeyEditSection(key, type) {
+  const expirySelect = el("select", {
+    id: "key-expiry-select",
+    "aria-label": "Key expiration",
+  });
+  rebuildExpirationSelect(expirySelect, keyTypePresets(type), {
+    includeKeep: true,
+    selected: "keep",
+  });
+  const customInput = el("input", {
+    type: "datetime-local",
+    id: "key-expiry-custom",
+    value: localDateTimeValue(key.expires_at),
+    "aria-label": "Custom key expiration",
+  });
+  const customField = el("label", { class: "field", hidden: true }, [
+    el("span", { class: "field-label", text: "Custom key expiration" }),
+    customInput,
+    el("span", { class: "muted", text: "Local time; stored in UTC. Must be in the future." }),
+  ]);
+  const expiryPreview = el("div", { class: "expiration-preview", "aria-live": "polite" });
+  const syncExpiry = () => {
+    const custom = expirySelect.value === "custom";
+    customField.hidden = !custom;
+    let text = "Current expiration is unchanged.";
+    if (expirySelect.value === "never") text = "Never expires.";
+    else if (custom) {
+      text = customInput.value
+        ? `Expires ${new Date(customInput.value).toLocaleString()}`
+        : "Choose a key expiration date and time.";
+    }
+    clearNode(expiryPreview);
+    expiryPreview.append(el("span", { class: "muted", text: "Key expiration:" }));
+    expiryPreview.append(el("strong", { text }));
+  };
+  expirySelect.addEventListener("change", syncExpiry);
+  customInput.addEventListener("input", syncExpiry);
+  syncExpiry();
+
+  const permissionSection = el("section", { class: "generator-config-section" }, [
+    el("span", { class: "field-label", text: "Permissions" }),
+  ]);
+  const permissionGrid = el("div", { class: "check-grid" });
+  const allowedPermissions = Array.isArray(type.permissions)
+    ? type.permissions.map(String)
+    : [];
+  if (allowedPermissions.length) {
+    renderCheckChoices(
+      permissionGrid,
+      allowedPermissions,
+      Array.isArray(key.permissions) ? key.permissions : [],
+      "data-permission",
+      permissionLabel
+    );
+    permissionSection.append(permissionGrid);
+  } else {
+    permissionSection.hidden = true;
+  }
+
+  const scopeSection = el("section", { class: "generator-config-section" }, [
+    el("span", { class: "field-label", text: "Scopes" }),
+  ]);
+  const scopeGrid = el("div", { class: "check-grid" });
+  const freeScopes = el("input", {
+    type: "text",
+    placeholder: "comma-separated scopes",
+    maxlength: "500",
+  });
+  const allowedScopes = Array.isArray(type.scopes) ? type.scopes.map(String) : [];
+  if (allowedScopes.length) {
+    renderCheckChoices(
+      scopeGrid,
+      allowedScopes,
+      Array.isArray(key.scopes) ? key.scopes : [],
+      "data-scope",
+      (value) => value
+    );
+    scopeSection.append(scopeGrid);
+  } else {
+    scopeSection.append(freeScopes);
+  }
+
+  const labelInput = el("input", {
+    type: "text",
+    value: key.label || "",
+    maxlength: "100",
+    placeholder: "Key label",
+  });
+  const tagsInput = el("input", {
+    type: "text",
+    value: (key.tags || []).join(", "),
+    maxlength: "500",
+    placeholder: "comma-separated tags",
+  });
+  const notesInput = el("textarea", {
+    rows: "2",
+    maxlength: "2000",
+    placeholder: "Internal notes",
+  });
+  notesInput.value = key.notes || "";
+  const metadataInput = el("textarea", {
+    rows: "2",
+    maxlength: "8000",
+    placeholder: "{}",
+  });
+  metadataInput.value = JSON.stringify(key.metadata || {}, null, 2);
+  const errorNode = el("p", { class: "form-message", role: "alert" });
+  const saveButton = el("button", {
+    class: "btn btn-primary btn-sm",
+    type: "button",
+    text: "Save key changes",
+  });
+  saveButton.addEventListener("click", () =>
+    saveKeyEdits(key, {
+      expirySelect,
+      customInput,
+      permissionGrid,
+      scopeGrid,
+      freeScopes,
+      labelInput,
+      tagsInput,
+      notesInput,
+      metadataInput,
+      errorNode,
+      saveButton,
+    })
+  );
+
+  return el("section", { class: "detail-section key-edit-section" }, [
+    el("h3", { text: "Edit Key Settings" }),
+    el("div", { class: "form-grid" }, [
+      el("label", { class: "field" }, [
+        el("span", { class: "field-label", text: "Expiration" }),
+        expirySelect,
+        customField,
+        expiryPreview,
+      ]),
+      el("label", { class: "field" }, [
+        el("span", { class: "field-label", text: "Label" }),
+        labelInput,
+      ]),
+      permissionSection,
+      scopeSection,
+      el("label", { class: "field" }, [
+        el("span", { class: "field-label", text: "Tags" }),
+        tagsInput,
+      ]),
+      el("label", { class: "field span-2" }, [
+        el("span", { class: "field-label", text: "Notes" }),
+        notesInput,
+      ]),
+      el("label", { class: "field span-2" }, [
+        el("span", { class: "field-label", text: "Metadata (JSON)" }),
+        metadataInput,
+      ]),
+      errorNode,
+      el("div", { class: "span-2 modal-actions" }, [saveButton]),
+    ]),
+  ]);
+}
+
+async function saveKeyEdits(
+  key,
+  {
+    expirySelect,
+    customInput,
+    permissionGrid,
+    scopeGrid,
+    freeScopes,
+    labelInput,
+    tagsInput,
+    notesInput,
+    metadataInput,
+    errorNode,
+    saveButton,
+  }
+) {
+  setToneMessage(errorNode, "", "error");
+  const preset = expirySelect.value;
+  let expiresAt = null;
+  if (preset === "custom") {
+    const parsed = customInput.value ? new Date(customInput.value) : null;
+    if (!parsed || Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
+      setToneMessage(errorNode, "Choose a future custom expiration.", "error");
+      return;
+    }
+    expiresAt = parsed.toISOString();
+  }
+  let metadata = {};
+  try {
+    metadata = metadataInput.value.trim() ? JSON.parse(metadataInput.value) : {};
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+      throw new Error("Metadata must be a JSON object.");
+    }
+  } catch (error) {
+    setToneMessage(errorNode, "Metadata must be a valid JSON object.", "error");
+    return;
+  }
+  const scopes = [
+    ...readCheckedValues(scopeGrid, "data-scope"),
+    ...(scopeGrid.children.length ? [] : freeScopes.value.split(",")),
+  ]
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const body = {
+    label: labelInput.value.trim(),
+    permissions: readCheckedValues(permissionGrid, "data-permission"),
+    scopes: [...new Set(scopes)],
+    tags: tagsInput.value.split(",").map((value) => value.trim()).filter(Boolean),
+    notes: notesInput.value.trim(),
+    metadata,
+  };
+  if (preset !== "keep") {
+    body.expiration_preset = preset;
+    if (preset === "custom") body.expires_at = expiresAt;
+  }
+
+  setButtonBusy(saveButton, true, "Saving…");
+  try {
+    await api.updateUniversalKey(key.id, body);
+    toast(`Key ${key.key_hint} updated.`, { type: "success" });
+    closeDialog($("#detail-modal"));
+    await loadKeys().catch(() => {});
+    await loadOverview().catch(() => {});
+  } catch (error) {
+    setToneMessage(errorNode, error.message || "Failed to update the key.", "error");
+  } finally {
+    setButtonBusy(saveButton, false);
+  }
+}
+
 async function viewKeyDetails(keyId) {
   const modal = $("#detail-modal");
   const body = $("#detail-body");
@@ -1574,19 +2969,32 @@ async function viewKeyDetails(keyId) {
   openDialog(modal);
 
   try {
-    const data = await api.readerKey(keyId);
-    const key = data.key;
+    await loadKeyTypes().catch(() => {});
+    let key;
+    try {
+      const data = await api.universalKey(keyId);
+      key = data.key;
+    } catch {
+      const data = await api.readerKey(keyId);
+      key = data.key;
+    }
+    const type = state.keyTypesById.get(key.key_type_id) || null;
     const items = [
       recordItem("Key ID", key.id, { mono: true }),
       recordItem("Key Hint (Masked)", key.key_hint, { mono: true }),
       recordItem("Status", statusBadge(key.status)),
       recordItem("Project", key.project_name),
+      recordItem("Key Type", key.key_type_name || key.key_type_id || "reader"),
       recordItem("Label", key.label || "None"),
       recordItem(
         "Expiration Setting",
         EXPIRATION_LABELS[key.expiration_preset] || (key.is_permanent ? "Never Expires" : "Custom")
       ),
       recordItem("Expires At", key.is_permanent ? "Never" : formatDate(key.expires_at)),
+      recordItem("Permissions", (key.permissions || []).join(", ") || "None", { full: true }),
+      recordItem("Scopes", (key.scopes || []).join(", ") || "None", { full: true }),
+      recordItem("Tags", (key.tags || []).join(", ") || "None", { full: true }),
+      recordItem("Notes", key.notes || "None", { full: true }),
       recordItem("Created At", formatDate(key.created_at)),
       recordItem("First Used At", formatDate(key.first_used_at || key.used_at)),
     ];
@@ -1610,6 +3018,9 @@ async function viewKeyDetails(keyId) {
 
     clearNode(body);
     body.append(recordGrid(items));
+    if (type && key.status !== "revoked") {
+      body.append(buildKeyEditSection(key, type));
+    }
   } catch (error) {
     closeDialog(modal, { immediate: true });
     fail(error, "Failed to load key details.");
@@ -1618,14 +3029,14 @@ async function viewKeyDetails(keyId) {
 
 async function revokeKeyPrompt(key, { onDone } = {}) {
   const confirmed = await confirmAction({
-    title: `Revoke Reader Key '${key.key_hint}'?`,
+    title: `Revoke Key '${key.key_hint}'?`,
     message:
-      "Revoking this key is permanent. If it has an active Reader installation, that installation and its device tokens are revoked immediately. A revoked key can never become active again.",
+      "Revoking this key is permanent. If it has an active installation, that installation and its device tokens are revoked immediately. A revoked key can never become active again.",
     confirmLabel: "Revoke Key",
     tone: "danger",
     requireReason: true,
     reasonLabel: "Revocation Reason (Required for Audit Trail)",
-    reasonPlaceholder: "Explain why this reader key is being revoked…",
+    reasonPlaceholder: "Explain why this key is being revoked…",
   });
   if (!confirmed.confirmed) return;
 
@@ -1636,7 +3047,7 @@ async function revokeKeyPrompt(key, { onDone } = {}) {
     await loadOverview();
     if (typeof onDone === "function") await onDone();
   } catch (error) {
-    fail(error, "Failed to revoke reader key.");
+    fail(error, "Failed to revoke key.");
   }
 }
 
@@ -2230,7 +3641,8 @@ function exportGeneratedKeysCsv() {
   const header = [
     "key_id",
     "project_name",
-    "reader_key",
+    "key_type",
+    "key",
     "key_hint",
     "created_at",
     "expiration_preset",
@@ -2244,6 +3656,7 @@ function exportGeneratedKeysCsv() {
       [
         key.id,
         key.project_name,
+        key.key_type_name || key.key_type_id || "reader",
         key.plaintext_key,
         key.key_hint,
         key.created_at,
@@ -2301,7 +3714,7 @@ async function exportReaderKeysCsv() {
     toast("Reader key CSV exported.", { type: "success" });
     announce("Reader key CSV exported.");
   } catch (error) {
-    fail(error, "Failed to export reader keys.");
+    fail(error, "Failed to export keys.");
   } finally {
     setButtonBusy(button, false);
   }
@@ -2524,6 +3937,25 @@ function setupEventListeners() {
   const modeNew = $("#gen-mode-new");
   if (modeNew) modeNew.addEventListener("click", () => setGeneratorMode("new"));
 
+  const generatorProject = $("#gen-project-select");
+  if (generatorProject) {
+    generatorProject.addEventListener("change", () => {
+      loadGeneratorKeyTypes().catch(() => {});
+    });
+  }
+  const keyTypeSelect = $("#gen-key-type-select");
+  if (keyTypeSelect) {
+    keyTypeSelect.addEventListener("change", updateGeneratorType);
+  }
+  const projectExpirySelect = $("#gen-project-expiration-select");
+  if (projectExpirySelect) {
+    projectExpirySelect.addEventListener("change", updateProjectExpirationPreview);
+  }
+  const projectExpiryCustom = $("#gen-project-expiration-custom");
+  if (projectExpiryCustom) {
+    projectExpiryCustom.addEventListener("input", updateProjectExpirationPreview);
+  }
+
   buildPresetChips();
   const expirationSelect = $("#gen-expiration-select");
   if (expirationSelect) {
@@ -2538,13 +3970,60 @@ function setupEventListeners() {
     );
   }
 
+  const generatorRetry = $("#generator-retry-btn");
+  if (generatorRetry) {
+    generatorRetry.addEventListener("click", () => {
+      const form = $("#key-generator-form");
+      if (form) form.requestSubmit();
+    });
+  }
+  const generatorRecoveryView = $("#generator-recovery-view-btn");
+  if (generatorRecoveryView) {
+    generatorRecoveryView.addEventListener("click", () => showView("keys"));
+  }
+  const generatorRecoveryDismiss = $("#generator-recovery-dismiss");
+  if (generatorRecoveryDismiss) {
+    generatorRecoveryDismiss.addEventListener("click", () => {
+      state.generatorBatchId = null;
+      hideGeneratorRecovery();
+      setToneMessage($("#generator-error"), "", "error");
+    });
+  }
+
+  const newKeyType = $("#new-key-type-btn");
+  if (newKeyType) newKeyType.addEventListener("click", () => openTypeBuilder());
+  bindRefreshButton(
+    "#key-types-refresh-btn",
+    loadKeyTypeCatalogue,
+    "Failed to refresh key types."
+  );
+  bindRefreshButton(
+    "#ops-refresh-btn",
+    renderOperations,
+    "Failed to refresh operations."
+  );
+  const keyTypesSearch = $("#key-types-search-input");
+  if (keyTypesSearch) {
+    keyTypesSearch.addEventListener("input", debounce(renderKeyTypeCatalogue, 180));
+  }
+  const keyTypeForm = $("#key-type-form");
+  if (keyTypeForm) keyTypeForm.addEventListener("submit", handleKeyTypeSubmit);
+  const typeBuilderClose = $("#type-builder-close");
+  if (typeBuilderClose) typeBuilderClose.addEventListener("click", closeTypeBuilder);
+  const typeBuilderCancel = $("#type-builder-cancel");
+  if (typeBuilderCancel) typeBuilderCancel.addEventListener("click", closeTypeBuilder);
+  const typeExpiryPresets = $("#type-expiry-presets");
+  if (typeExpiryPresets) {
+    typeExpiryPresets.addEventListener("change", () => syncTypeDefaultExpiry());
+  }
+
   const keysSearch = $("#keys-search-input");
   if (keysSearch) {
     keysSearch.addEventListener(
       "input",
       debounce(() => {
         state.keysPagination.page = 1;
-        reportLoad(loadKeys, "Failed to search reader keys.");
+        reportLoad(loadKeys, "Failed to search keys.");
       }, 320)
     );
   }
@@ -2555,7 +4034,7 @@ function setupEventListeners() {
       if (!control) return;
       control.addEventListener("change", () => {
         state.keysPagination.page = 1;
-        reportLoad(loadKeys, "Failed to filter reader keys.");
+        reportLoad(loadKeys, "Failed to filter keys.");
       });
     }
   );
@@ -2642,7 +4121,7 @@ function setupEventListeners() {
         toast("No plaintext key is available in this session.", { type: "error" });
         return;
       }
-      copyWithFeedback(values.join("\n"), copyAll, "Plaintext reader key copied to clipboard.");
+      copyWithFeedback(values.join("\n"), copyAll, "Plaintext key copied to clipboard.");
     });
   }
 

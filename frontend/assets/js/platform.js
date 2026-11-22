@@ -22,13 +22,14 @@ import { secureSignOut } from "./shutdown.js";
 initMotion();
 
 const VIEWS = {
-  overview: ["Overview", "Universal platform pulse, key inventory, and live access telemetry.", "COMMAND / LIVE PULSE"],
+  overview: ["Overview", "Unified platform pulse, key inventory, and live access telemetry.", "COMMAND / LIVE PULSE"],
   analytics: ["Analytics", "Generation volume, API traffic, failure rates, and key-type distribution.", "COMMAND / TELEMETRY"],
-  projects: ["Projects", "Universal projects own multiple key types, expiration policy, and access scopes.", "KEY ENGINE / PROJECTS"],
-  keys: ["Universal Keys", "One key store for reader, license, API, service, device, and custom credentials.", "KEY ENGINE / LIFECYCLE"],
+  projects: ["Projects", "Projects own key types, expiration policy, keys, and access scopes.", "KEY ENGINE / PROJECTS"],
+  keys: ["Keys", "One key store for reader, license, API, service, device, and custom credentials.", "KEY ENGINE / LIFECYCLE"],
   generator: ["Generate Keys", "Issue one or many keys. Plaintext is revealed once and never stored.", "KEY ENGINE / CSPRNG"],
   "key-types": ["Key Types", "Built-in types plus project-owned declarative custom types.", "KEY ENGINE / TYPE CATALOGUE"],
   builder: ["Type Builder", "Create a declarative key type. No user code is executed.", "KEY ENGINE / CUSTOM TYPE"],
+  installations: ["Installations", "Reader App installations, device bindings, and revocation.", "ACCESS / INSTALLATIONS"],
   devices: ["Devices", "Device bindings created by type-isolated authentication.", "ACCESS / DEVICES"],
   "api-usage": ["API Usage", "Requests, failures, latency, and endpoint activity for universal access.", "ACCESS / ANALYTICS"],
   webhooks: ["Webhooks", "Signed event delivery with retry and permanent-failure handling.", "ACCESS / WEBHOOKS"],
@@ -41,6 +42,7 @@ const VIEWS = {
   scheduler: ["Scheduler", "Worker health, lock state, job durations, queue depth, and recent failures.", "GOVERNANCE / WORKER"],
   roles: ["Roles", "Platform permission matrix. Authorization remains server-side.", "GOVERNANCE / RBAC"],
   admins: ["Administrators", "Platform role assignment and session revocation.", "GOVERNANCE / ADMINS"],
+  security: ["Security Center", "Authentication, session, API, and key-storage posture.", "SYSTEM / SECURITY"],
   health: ["Health", "Database, API, and security readiness.", "SYSTEM / HEALTH"],
   settings: ["Preferences", "Notification routing, reduced mode, and session context.", "SYSTEM / PREFERENCES"],
   docs: ["API Docs", "The versioned endpoint surface and a minimal access example.", "SYSTEM / OPENAPI"],
@@ -54,6 +56,9 @@ const state = {
   keyTypes: [],
   keys: [],
   keysPage: 1,
+  keySelection: new Set(),
+  keyRows: [],
+  projectFilter: "",
   refreshing: false,
   redirecting: false,
   health: null,
@@ -189,6 +194,182 @@ function select(options, attributes = {}) {
   return node;
 }
 
+const EXPIRY_PRESETS = [
+  ["never", "Never expires"],
+  ["1_day", "1 day"],
+  ["7_days", "7 days"],
+  ["30_days", "30 days"],
+  ["90_days", "90 days"],
+  ["1_year", "1 year"],
+  ["custom", "Custom date & time"],
+];
+
+function allowedExpiryOptions(type) {
+  const policy = type?.expiration_policy || {};
+  const allowed = Array.isArray(policy.presets) && policy.presets.length
+    ? new Set(policy.presets)
+    : null;
+  return EXPIRY_PRESETS.filter(([value]) => !allowed || allowed.has(value));
+}
+
+const KEY_TYPE_COPY = {
+  reader: {
+    labelPlaceholder: "e.g. Reader rollout — warehouse A",
+    permissionsPlaceholder: "read, device_access",
+    scopesPlaceholder: "e.g. devices.connect",
+    metadataPlaceholder: 'Optional JSON, e.g. {"site":"warehouse-a"}',
+    notesPlaceholder: "Optional internal note (never a secret)",
+    description: "Reader App activation key. Device binding and one-time issuance follow the type policy.",
+  },
+  license: {
+    labelPlaceholder: "e.g. Annual license batch",
+    permissionsPlaceholder: "read, feature_access",
+    scopesPlaceholder: "e.g. billing.plan",
+    metadataPlaceholder: 'Optional JSON, e.g. {"tier":"pro"}',
+    notesPlaceholder: "Optional license note (never a secret)",
+    description: "License credential for entitlement checks. Feature permissions and scopes are bounded by the type.",
+  },
+  api: {
+    labelPlaceholder: "e.g. Billing service — production",
+    permissionsPlaceholder: "read, write, api_access",
+    scopesPlaceholder: "e.g. reports.read, invoices.write",
+    metadataPlaceholder: 'Optional JSON, e.g. {"client":"billing-service"}',
+    notesPlaceholder: "Optional API client note (never a secret)",
+    description: "API client credential. Narrow the permission and scope ceiling for each integration.",
+  },
+  database: {
+    labelPlaceholder: "e.g. Primary database — read replica",
+    permissionsPlaceholder: "read, write, database_access",
+    scopesPlaceholder: "e.g. tables.orders.read",
+    metadataPlaceholder: 'Optional JSON, e.g. {"database":"orders"}',
+    notesPlaceholder: "Optional database access note (never a secret)",
+    description: "Database access credential. The type policy controls whether writes and device binding are allowed.",
+  },
+  service: {
+    labelPlaceholder: "e.g. Sync worker — region EU",
+    permissionsPlaceholder: "read, service_access",
+    scopesPlaceholder: "e.g. sync.run",
+    metadataPlaceholder: 'Optional JSON, e.g. {"service":"sync-worker"}',
+    notesPlaceholder: "Optional service note (never a secret)",
+    description: "Service-to-service credential. Use a narrow scope set for each deployment.",
+  },
+  device: {
+    labelPlaceholder: "e.g. Kiosk device — lobby",
+    permissionsPlaceholder: "read, device_access",
+    scopesPlaceholder: "e.g. device.heartbeat",
+    metadataPlaceholder: 'Optional JSON, e.g. {"asset":"kiosk-04"}',
+    notesPlaceholder: "Optional device note (never a secret)",
+    description: "Device-bound credential. The generated key inherits the type’s binding policy.",
+  },
+  custom: {
+    labelPlaceholder: "e.g. Integration batch — partner A",
+    permissionsPlaceholder: "optional, comma-separated permissions",
+    scopesPlaceholder: "optional, comma-separated scopes",
+    metadataPlaceholder: "Optional metadata JSON object",
+    notesPlaceholder: "Optional internal note (never a secret)",
+    description: "Custom key type. Permissions, scopes and allowed expirations are defined by this type.",
+  },
+};
+
+function typeCopy(type) {
+  const id = String(type?.id || "").toLowerCase();
+  const name = String(type?.name || "").toLowerCase();
+  if (KEY_TYPE_COPY[id]) return KEY_TYPE_COPY[id];
+  if (id.includes("database") || name.includes("database")) return KEY_TYPE_COPY.database;
+  if (id.includes("license") || name.includes("license")) return KEY_TYPE_COPY.license;
+  if (id.includes("api") || name.includes("api")) return KEY_TYPE_COPY.api;
+  if (id.includes("reader") || name.includes("reader")) return KEY_TYPE_COPY.reader;
+  if (id.includes("device") || name.includes("device")) return KEY_TYPE_COPY.device;
+  if (id.includes("service") || name.includes("service")) return KEY_TYPE_COPY.service;
+  return KEY_TYPE_COPY.custom;
+}
+
+function localDateTimeValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function expiryLabel(preset, value) {
+  if (preset === "keep") return "Current expiration is unchanged.";
+  if (preset === "never") return "Never expires";
+  if (preset === "custom") {
+    const raw = String(value || "").trim();
+    if (!raw) return "Choose a future date and time.";
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? "Invalid date and time." : `Expires ${date.toLocaleString()}`;
+  }
+  return EXPIRY_PRESETS.find(([key]) => key === preset)?.[1] || "Server-computed expiration";
+}
+
+function expiryValidation(preset, value) {
+  if (preset !== "custom") return null;
+  const raw = String(value || "").trim();
+  if (!raw) return "Choose a custom expiration date and time.";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "Enter a valid custom expiration date and time.";
+  if (date.getTime() <= Date.now()) return "The custom expiration must be in the future.";
+  return null;
+}
+
+function expiryStatus(project) {
+  if (!project || !project.expires_at) return "Never expires";
+  const expired = project.effective_status === "expired" || new Date(project.expires_at).getTime() <= Date.now();
+  return `${expired ? "Expired" : "Expires"} ${formatDate(project.expires_at)}`;
+}
+
+function renderExpiryPreview(previewNode, preset, value) {
+  if (!previewNode) return;
+  previewNode.classList.toggle("is-custom", preset === "custom");
+  previewNode.classList.toggle("is-never", preset === "never");
+  clearNode(previewNode);
+  previewNode.append(
+    el("span", { class: "muted", text: "Expiration:" }),
+    el("strong", { text: expiryLabel(preset, value) }),
+    el("span", { class: "muted", text: "Server-enforced · UTC storage" })
+  );
+}
+
+function pulseControl(node, className = "is-picked", duration = 420) {
+  if (!node) return;
+  node.classList.remove(className);
+  void node.offsetWidth;
+  node.classList.add(className);
+  window.setTimeout(() => node.classList.remove(className), duration);
+}
+
+function bindExpiryControls(selectNode, fieldNode, inputNode, previewNode) {
+  const sync = () => {
+    const custom = selectNode.value === "custom";
+    if (fieldNode) fieldNode.hidden = !custom;
+    renderExpiryPreview(previewNode, selectNode.value, inputNode ? inputNode.value : "");
+  };
+  selectNode.addEventListener("change", () => {
+    pulseControl(selectNode);
+    sync();
+  });
+  if (inputNode) {
+    inputNode.addEventListener("input", sync);
+    inputNode.addEventListener("change", sync);
+  }
+  sync();
+  return sync;
+}
+
+function formStep(text) {
+  return el("div", { class: "span-2 form-step" }, [node("span", "", text)]);
+}
+
+function dynamicField(labelText, control, hintNode) {
+  return el("label", { class: "field" }, [
+    node("span", "", labelText),
+    control,
+    hintNode || null,
+  ]);
+}
+
 function readJson(text, fieldName) {
   const value = String(text || "").trim();
   if (!value) return {};
@@ -302,7 +483,7 @@ async function renderOverview(root) {
   root.append(
     el("section", { class: "platform-hero glass" }, [
       el("div", {}, [
-        node("p", "eyebrow", "UNIVERSAL KEY ENGINE / ONLINE"),
+        node("p", "eyebrow", "UNIFIED KEY PLATFORM / ONLINE"),
         node("h2", "", "One control plane. Every credential class."),
         el("p", { text: "Projects, key types, permissions, device policy, lifecycle, webhooks, audit, and automation share one server-enforced access model. Plaintext never leaves the creation response." }),
         el("div", { class: "card-actions" }, [
@@ -413,12 +594,22 @@ async function renderAnalytics(root) {
 }
 
 function newProjectForm() {
-  const name = input({ placeholder: "Project name", maxlength: "200", "aria-label": "Project name" });
+  const name = input({ placeholder: "e.g. Warehouse Operations", maxlength: "200", "aria-label": "Project name" });
+  const preset = select(EXPIRY_PRESETS, { value: "never", "aria-label": "Project expiration preset" });
+  const custom = input({ type: "datetime-local", "aria-label": "Custom project expiration" });
+  const customField = field("Custom project expiration (local time)", custom, "Converted to UTC. Must be in the future.");
+  customField.classList.add("span-2");
+  const preview = el("div", { class: "expiration-preview span-2", "aria-live": "polite" });
+  bindExpiryControls(preset, customField, custom, preview);
   const submit = button("Create project", async () => {
     if (!name.value.trim()) return toast("Enter a project name.", { type: "error" });
+    const error = expiryValidation(preset.value, custom.value);
+    if (error) return toast(error, { type: "error" });
     setButtonBusy(submit, true, "Creating…");
     try {
-      await api.createProject(name.value.trim());
+      const body = { expiration: preset.value };
+      if (preset.value === "custom") body.expires_at = new Date(custom.value).toISOString();
+      await api.createProject(name.value.trim(), body);
       toast("Project created.", { type: "success" });
       closeSecretDialog();
       showView("projects", { reload: true });
@@ -428,24 +619,34 @@ function newProjectForm() {
       setButtonBusy(submit, false);
     }
   }, "btn btn-primary btn-sm");
-  return el("div", { class: "inline-form" }, [name, submit]);
+  const form = el("form", { class: "form-grid" }, [
+    field("Project name", name, "1–200 characters. Names are normalized for lookup."),
+    field("Project expiration", preset),
+    customField,
+    preview,
+    el("p", { class: "muted span-2", text: "Project expiry blocks project authentication. It does not rewrite individual key expiry timestamps; each key keeps its own schedule." }),
+    el("div", { class: "span-2 card-actions" }, [submit]),
+  ]);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submit.click();
+  });
+  return form;
 }
 
 async function renderProjects(root) {
   const data = await api.universalProjects({ page_size: 100 });
   state.projects = data.items || [];
-  const actions = [
-    button("New project", () => showPanel("Create a project", newProjectForm()), "btn btn-primary btn-sm"),
-    button("Export all (ZIP)", exportAllProjects, "btn btn-ghost btn-sm"),
-  ];
-  if (state.user && state.user.role === "owner") {
-    actions.push(button("Delete all projects", deleteAllProjects, "btn btn-danger btn-sm"));
-  }
-  root.append(
-    pageHeader("Universal projects", "Each project is an isolation boundary for keys, permissions, scope, and device policy.", actions),
-    table(
-      ["Project", "Type", "Status", "Keys", "Devices", "Expires", "Created", "Actions"],
-      state.projects.map((project) => el("tr", {}, [
+  const search = input({ placeholder: "Search projects", "aria-label": "Search projects" });
+  const tbody = el("tbody");
+  const draw = (items) => {
+    clearNode(tbody);
+    if (!items.length) {
+      tbody.append(el("tr", {}, [el("td", { colspan: "8" }, [tableEmpty("No projects match")])]));
+      return;
+    }
+    items.forEach((project) => {
+      tbody.append(el("tr", {}, [
         cell(el("div", {}, [
           el("strong", { text: project.project_name }),
           el("div", { class: "mono", text: project.id }),
@@ -454,9 +655,14 @@ async function renderProjects(root) {
         cell(statusBadge(project.effective_status || project.status)),
         cell(`${project.active_keys || 0} active / ${project.total_keys || 0} total`),
         cell(String(project.active_devices || 0)),
-        cell(project.expires_at ? formatDate(project.expires_at) : "Never"),
+        cell(el("div", { class: "expiry-cell" }, [
+          node("span", "", project.expires_at ? formatDate(project.expires_at) : "Never"),
+          project.effective_status === "expired" ? pill("Expired", "warn") : null,
+        ])),
         cell(formatDate(project.created_at, { time: false })),
         cell(el("div", { class: "row-actions" }, [
+          button("Details", () => showProjectDetails(project)),
+          button("Keys", () => manageProjectKeys(project)),
           button("Edit", () => editProject(project)),
           button("Clone", () => cloneProject(project)),
           button("Export", () => exportProject(project)),
@@ -465,10 +671,94 @@ async function renderProjects(root) {
             : null,
           button("Delete", () => deleteProject(project), "btn btn-danger btn-sm"),
         ]), "align-right"),
-      ])),
-      "No universal projects"
-    )
+      ]));
+    });
+  };
+  const applyFilter = () => {
+    const term = search.value.trim().toLowerCase();
+    draw(term
+      ? state.projects.filter((project) => `${project.project_name} ${project.project_type || ""} ${project.id}`.toLowerCase().includes(term))
+      : state.projects);
+  };
+  search.addEventListener("input", applyFilter);
+  const actions = [
+    button("New project", () => showPanel("Create a project", newProjectForm()), "btn btn-primary btn-sm"),
+    button("Export all (ZIP)", exportAllProjects, "btn btn-ghost btn-sm"),
+  ];
+  if (state.user && state.user.role === "owner") {
+    actions.push(button("Delete all projects", deleteAllProjects, "btn btn-danger btn-sm"));
+  }
+  root.append(
+    pageHeader("Projects", "Each project is an isolation boundary for keys, permissions, scope, device policy, and expiry.", actions),
+    el("div", { class: "page-toolbar" }, [
+      el("div", { class: "filter-row" }, [search, button("Search", applyFilter, "btn btn-primary btn-sm")]),
+    ]),
+    el("div", { class: "platform-table-wrap" }, [
+      el("table", { class: "platform-table" }, [
+        el("thead", {}, [el("tr", {}, ["Project", "Type", "Status", "Keys", "Devices", "Expires", "Created", "Actions"].map((header) => el("th", { text: header })))]),
+        tbody,
+      ]),
+    ])
   );
+  draw(state.projects);
+}
+
+function manageProjectKeys(project) {
+  state.projectFilter = project.id;
+  showView("keys");
+}
+
+async function showProjectDetails(project) {
+  try {
+    const [stats, timeline, keyData] = await Promise.all([
+      api.universalProjectStats(project.id),
+      api.universalProjectTimeline(project.id),
+      api.universalKeys({ project_id: project.id, page_size: 20 }),
+    ]);
+    const keys = keyData.items || [];
+    const events = timeline.events || timeline.items || [];
+    showPanel(`Project · ${project.project_name}`, el("div", { class: "stack" }, [
+      el("div", { class: "expiry-current" }, [
+        statusBadge(project.effective_status || project.status),
+        node("span", "", expiryStatus(project)),
+      ]),
+      el("dl", { class: "record-grid" }, [
+        el("div", { class: "record-item" }, [node("dt", "", "Project ID"), el("dd", { class: "mono", text: project.id })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Type"), el("dd", { text: project.project_type || "database" })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Created"), el("dd", { text: formatDate(project.created_at) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Description"), el("dd", { text: project.description || "—" })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Auto-delete"), el("dd", { text: project.auto_delete_at ? formatDate(project.auto_delete_at) : "Disabled" })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Keys"), el("dd", { text: `${stats.keys?.active || 0} active / ${stats.keys?.total || 0} total` })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Devices"), el("dd", { text: String(stats.devices?.active || 0) })]),
+        el("div", { class: "record-item" }, [node("dt", "", "API calls / 7d"), el("dd", { text: numberFormat.format(stats.api_usage_7d || 0) })]),
+      ]),
+      el("div", { class: "card-actions" }, [
+        button("Edit project", () => editProject(project)),
+        button("Manage keys", () => manageProjectKeys(project), "btn btn-primary btn-sm"),
+      ]),
+      node("h3", "", "Keys"),
+      table(
+        ["Hint", "Type", "Status", "Expires", ""],
+        keys.map((key) => el("tr", {}, [
+          cell(el("span", { class: "mono", text: key.key_hint })),
+          cell(pill(key.key_type_id, "info")),
+          cell(statusBadge(key.status)),
+          cell(key.expires_at ? formatDate(key.expires_at) : "Never"),
+          cell(button("Details", () => showKeyDetails(key.id)), "align-right"),
+        ])),
+        "No keys in this project"
+      ),
+      node("h3", "", "Recent activity"),
+      events.length
+        ? el("div", { class: "stack" }, events.slice(0, 12).map((event) =>
+            el("div", { class: "result-row" }, [
+              node("strong", "", event.event || event.action || "event"),
+              node("span", "muted", event.created_at ? formatDate(event.created_at) : ""),
+            ])
+          ))
+        : node("p", "muted", "No project activity recorded."),
+    ]));
+  } catch (error) { fail(error, "Project details unavailable."); }
 }
 
 function downloadBlob(filename, blob) {
@@ -590,35 +880,84 @@ function editProject(project) {
     ["database", "Database"], ["api", "API"], ["service", "Service"],
     ["webhook", "Webhook"], ["ai", "AI service"], ["other", "Other"],
   ], { value: project.project_type || "database" });
-  const status = select([["active", "Active"], ["inactive", "Inactive"]], { value: project.status === "inactive" ? "inactive" : "active" });
+  const storedStatus = project.status === "inactive"
+    ? "inactive"
+    : (project.status === "expired" ? "expired" : "active");
+  const status = select([["active", "Active"], ["inactive", "Inactive"]], { value: storedStatus === "inactive" ? "inactive" : "active" });
+  const autoDeleteInitial = localDateTimeValue(project.auto_delete_at);
+  const autoDelete = input({
+    type: "datetime-local",
+    value: autoDeleteInitial,
+    "aria-label": "Scheduled project deletion",
+  });
+  const hasExpiry = Boolean(project.expires_at);
   const preset = select([
-    ["never", "Never"], ["7_days", "7 days"], ["30_days", "30 days"],
-    ["90_days", "90 days"], ["1_year", "1 year"],
-  ], { value: "never" });
+    ...(hasExpiry ? [["keep", "Keep current expiration"]] : []),
+    ...EXPIRY_PRESETS,
+  ], { value: hasExpiry ? "keep" : "never", "aria-label": "Project expiration preset" });
+  const custom = input({
+    type: "datetime-local",
+    value: localDateTimeValue(project.expires_at),
+    "aria-label": "Custom project expiration",
+  });
+  const customField = field("Custom project expiration (local time)", custom, "Converted to UTC. Must be in the future.");
+  customField.classList.add("span-2");
+  const preview = el("div", { class: "expiration-preview span-2", "aria-live": "polite" });
+  bindExpiryControls(preset, customField, custom, preview);
+  const submit = button("Save changes", async () => {
+    if (!name.value.trim()) return toast("Enter a project name.", { type: "error" });
+    const error = preset.value === "keep" ? null : expiryValidation(preset.value, custom.value);
+    if (error) return toast(error, { type: "error" });
+    setButtonBusy(submit, true, "Saving…");
+    try {
+      const body = {
+        project_name: name.value.trim(),
+        description: description.value,
+        project_type: type.value,
+      };
+      // A stored 'expired' status is derived; leave it untouched unless the
+      // administrator explicitly edits it or extends the expiry below.
+      if (storedStatus !== "expired" || status.value !== "active") {
+        body.status = status.value;
+      }
+      if (preset.value !== "keep") {
+        body.expiration_preset = preset.value;
+        body.expires_at = preset.value === "custom" ? new Date(custom.value).toISOString() : null;
+      }
+      await api.updateUniversalProject(project.id, body);
+      if (autoDelete.value !== autoDeleteInitial) {
+        await api.setProjectAutoDelete(
+          project.id,
+          autoDelete.value ? new Date(autoDelete.value).toISOString() : null,
+        );
+      }
+      toast("Project updated.", { type: "success" });
+      closeSecretDialog();
+      showView("projects", { reload: true });
+    } catch (error) { fail(error, "Project update failed."); }
+    finally { setButtonBusy(submit, false); }
+  }, "btn btn-primary btn-sm");
   const form = el("form", { class: "form-grid" }, [
     field("Project name", name),
     field("Project type", type),
     field("Description", description),
     field("Status", status),
-    field("Expiration from now", preset, "Choosing a preset replaces the current expiration."),
-    el("div", { class: "span-2 card-actions" }, [
-      button("Save changes", async () => {
-        try {
-          await api.updateUniversalProject(project.id, {
-            project_name: name.value.trim(),
-            description: description.value,
-            project_type: type.value,
-            status: status.value,
-            expiration_preset: preset.value,
-          });
-          toast("Project updated.", { type: "success" });
-          closeSecretDialog();
-          showView("projects", { reload: true });
-        } catch (error) { fail(error, "Project update failed."); }
-      }, "btn btn-primary btn-sm"),
+    field("Project expiration", preset, "Choose ‘Keep current expiration’ to edit other fields without changing this date."),
+    customField,
+    preview,
+    field("Scheduled auto-delete (local time)", autoDelete, "Optional. Empty disables scheduled deletion. Deletion only runs when the server scheduler executes."),
+    el("div", { class: "span-2 expiry-current" }, [
+      node("span", "muted", "Current expiration"),
+      statusBadge(project.effective_status || project.status),
+      node("span", "", expiryStatus(project)),
     ]),
+    el("p", { class: "muted span-2", text: "Project expiry blocks project authentication. Existing key expiry timestamps are preserved." }),
+    el("div", { class: "span-2 card-actions" }, [submit]),
   ]);
-  form.addEventListener("submit", (event) => event.preventDefault());
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submit.click();
+  });
   showPanel("Edit project", form);
 }
 
@@ -663,71 +1002,116 @@ async function renderGenerator(root) {
   state.keyTypes = typesData.key_types || [];
   const projectSelect = select([["", "Choose a project"]].concat(state.projects.map((p) => [p.id, p.project_name])), { required: "required" });
   const typeSelect = select(state.keyTypes.map((t) => [t.id, `${t.name} (${t.id})`]));
+  const typeSummary = el("div", { class: "key-type-summary span-2", "aria-live": "polite" });
+  const projectState = el("p", { class: "span-2 muted", "aria-live": "polite" });
   const label = input({ placeholder: "Optional batch label", maxlength: "100" });
+  const labelHint = node("small", "muted", "Optional; shown in inventory. Never put a secret here.");
   const quantity = input({ type: "number", min: "1", max: "500", value: "1" });
-  const expiration = select([
-    ["never", "Never"], ["1_day", "1 day"], ["7_days", "7 days"],
-    ["30_days", "30 days"], ["90_days", "90 days"], ["1_year", "1 year"],
-  ], { value: "never" });
-  const expires = input({ type: "datetime-local", "aria-label": "Custom expiration" });
-  const permissions = input({ placeholder: "optional, comma-separated: read, api_access" });
-  const scopes = input({ placeholder: "optional, comma-separated scopes" });
+  const expiration = select(EXPIRY_PRESETS, { value: "never", "aria-label": "Expiration preset" });
+  const expires = input({ type: "datetime-local", "aria-label": "Custom key expiration" });
+  const customExpiryField = field("Custom expiration (local time)", expires, "Converted to UTC. Must be in the future.");
+  customExpiryField.classList.add("span-2");
+  const expiryPreview = el("div", { class: "expiration-preview span-2", "aria-live": "polite" });
+  const syncExpiry = bindExpiryControls(expiration, customExpiryField, expires, expiryPreview);
+  const permissions = input();
+  const permissionsHint = node("small", "muted", "");
+  const scopes = input();
+  const scopesHint = node("small", "muted", "");
   const tags = input({ placeholder: "optional tags, comma-separated" });
   const notes = el("textarea", { rows: "2", placeholder: "Optional internal notes (never secret)" });
   const metadata = el("textarea", { rows: "2", placeholder: "Optional metadata JSON object" });
+  const metadataHint = node("small", "muted", "");
   const maxUsage = input({ type: "number", min: "1", placeholder: "Unlimited" });
-  const hint = el("p", { class: "muted", text: "Type permissions and scopes are ceilings. The server rejects anything broader." });
+  const deviceNote = el("p", { class: "span-2 muted", text: "" });
 
-  const typeInfo = () => {
-    const selected = state.keyTypes.find((item) => item.id === typeSelect.value);
-    hint.textContent = selected
-      ? `Permissions: ${(selected.permissions || []).join(", ") || "none"} · Scopes: ${(selected.scopes || []).join(", ") || "none"} · Device binding: ${selected.device_policy?.binds ? "required" : "optional"}`
-      : "";
+  const syncProjectState = () => {
+    const project = state.projects.find((item) => item.id === projectSelect.value);
+    projectState.textContent = project
+      ? `Project status: ${project.effective_status || project.status} · ${expiryStatus(project)}`
+      : "Choose the project that will own this key.";
   };
-  typeSelect.addEventListener("change", typeInfo);
-  typeInfo();
+  projectSelect.addEventListener("change", () => {
+    pulseControl(projectSelect);
+    syncProjectState();
+  });
+  syncProjectState();
 
-  const form = el("form", { class: "form-grid" }, [
-    field("Project", projectSelect),
-    field("Key type", typeSelect),
-    field("Batch label", label),
-    field("Quantity", quantity, "Maximum is server-configured (default 500)."),
-    field("Expiration preset", expiration),
-    field("Custom expiration (UTC local input)", expires),
-    el("div", { class: "span-2" }, [hint]),
-    field("Permission subset", permissions),
-    field("Scope subset", scopes),
-    field("Tags", tags),
-    field("Max usage", maxUsage),
-    field("Notes", notes),
-    field("Metadata JSON", metadata),
-    el("div", { class: "span-2 card-actions" }, [
-      el("button", { class: "btn btn-primary btn-glow", type: "submit", text: "Generate secure keys" }),
-    ]),
-  ]);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const submit = form.querySelector("button[type=submit]");
+  const applyType = (animate = true) => {
+    const selected = state.keyTypes.find((item) => item.id === typeSelect.value);
+    const copy = typeCopy(selected);
+    label.placeholder = copy.labelPlaceholder;
+    permissions.placeholder = copy.permissionsPlaceholder;
+    scopes.placeholder = copy.scopesPlaceholder;
+    metadata.placeholder = copy.metadataPlaceholder;
+    notes.placeholder = copy.notesPlaceholder;
+    permissionsHint.textContent = selected
+      ? `Allowed ceiling for ${selected.name}: ${(selected.permissions || []).join(", ") || "none"}. Broader requests are rejected server-side.`
+      : "Select a type to see its permission ceiling.";
+    scopesHint.textContent = selected
+      ? `Allowed scopes: ${(selected.scopes || []).join(", ") || "none declared"}.`
+      : "Select a type to see its scope ceiling.";
+    const schemaFields = Object.keys(selected?.metadata_schema?.fields || {});
+    metadataHint.textContent = schemaFields.length
+      ? `Known metadata fields: ${schemaFields.slice(0, 6).join(", ")}. Must be a JSON object.`
+      : "Optional JSON object; the type schema is enforced by the server.";
+    deviceNote.textContent = selected
+      ? `Device policy: ${selected.device_policy?.binds ? `binding required, ${selected.device_policy.max_devices || 1} device(s) per key` : "unbound"} · Rate limit: ${selected.usage_limits?.rate_per_minute ? `${selected.usage_limits.rate_per_minute}/min` : "type default"}.`
+      : "";
+
+    clearNode(typeSummary);
+    if (!selected) {
+      typeSummary.append(node("p", "muted", "Select a key type to load its placeholders, permissions and expiration policy."));
+    } else {
+      typeSummary.append(
+        el("div", { class: "type-summary-head" }, [
+          el("strong", { text: selected.name }),
+          pill(selected.id, "info"),
+          node("span", "muted", selected.is_builtin ? "Built-in type" : "Project type"),
+        ]),
+        node("p", "muted", selected.description || copy.description),
+        el("div", { class: "type-summary-chips" }, [
+          node("span", "type-chip", `Format ${selected.key_prefix || "NX"}-••••`),
+          node("span", "type-chip", selected.device_policy?.binds ? `Device-bound · max ${selected.device_policy.max_devices || 1}` : "Unbound"),
+          node("span", "type-chip", selected.usage_limits?.rate_per_minute ? `Rate ${selected.usage_limits.rate_per_minute}/min` : "Rate policy default"),
+          node("span", "type-chip", `Permissions ${(selected.permissions || []).length}`),
+        ])
+      );
+    }
+
+    const policy = selected?.expiration_policy || {};
+    const options = allowedExpiryOptions(selected);
+    const previous = expiration.value;
+    clearNode(expiration);
+    options.forEach(([value, text]) => expiration.append(el("option", { value, text })));
+    const preferred = options.some(([value]) => value === previous)
+      ? previous
+      : (policy.default && options.some(([value]) => value === policy.default) ? policy.default : options[0]?.[0] || "never");
+    expiration.value = preferred;
+    syncExpiry();
+    if (animate) {
+      pulseControl(typeSelect);
+      pulseControl(typeSummary);
+    }
+  };
+  typeSelect.addEventListener("change", () => applyType(true));
+  applyType(false);
+
+  const submit = button("Generate secure keys", async () => {
     if (!projectSelect.value) return toast("Choose a project.", { type: "error" });
+    if (!typeSelect.value) return toast("Choose a key type.", { type: "error" });
+    const error = expiryValidation(expiration.value, expires.value);
+    if (error) return toast(error, { type: "error" });
     setButtonBusy(submit, true, "Generating…");
     const split = (value) => String(value || "").split(",").map((x) => x.trim()).filter(Boolean);
     try {
-      let expiresAt = null;
-      if (expires.value) {
-        const parsed = new Date(expires.value);
-        if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
-          throw new Error("Custom expiration must be in the future.");
-        }
-        expiresAt = parsed.toISOString();
-      }
       const body = {
         project_id: projectSelect.value,
         key_type_id: typeSelect.value,
         quantity: Number(quantity.value) || 1,
         label: label.value.trim(),
         notes: notes.value,
-        expiration_preset: expiresAt ? "custom" : expiration.value,
-        expires_at: expiresAt,
+        expiration_preset: expiration.value,
+        expires_at: expiration.value === "custom" ? new Date(expires.value).toISOString() : null,
         tags: split(tags.value),
         permissions: permissions.value.trim() ? split(permissions.value) : undefined,
         scopes: scopes.value.trim() ? split(scopes.value) : undefined,
@@ -741,16 +1125,44 @@ async function renderGenerator(root) {
         `Type: ${result.key_type.name} · Batch ${result.batch_id}`
       );
       form.reset();
-      typeInfo();
+      applyType(false);
+      syncProjectState();
     } catch (error) {
       fail(error, "Key generation failed.");
     } finally {
       setButtonBusy(submit, false);
     }
-  });
+  }, "btn btn-primary btn-glow");
+
+  const form = el("form", { class: "form-grid" }, [
+    formStep("1 · Project"),
+    field("Project", projectSelect),
+    projectState,
+    formStep("2 · Key type"),
+    field("Key type", typeSelect),
+    typeSummary,
+    formStep("3 · Type configuration"),
+    dynamicField("Batch label", label, labelHint),
+    field("Quantity", quantity, "Maximum is server-configured (default 500)."),
+    deviceNote,
+    formStep("4 · Expiration"),
+    field("Expiration preset", expiration),
+    customExpiryField,
+    expiryPreview,
+    formStep("5 · Permissions and features"),
+    dynamicField("Permission subset", permissions, permissionsHint),
+    dynamicField("Scope subset", scopes, scopesHint),
+    field("Tags", tags),
+    field("Max usage", maxUsage),
+    dynamicField("Metadata JSON", metadata, metadataHint),
+    field("Notes", notes),
+    formStep("6 · Review and generate"),
+    el("div", { class: "span-2 card-actions" }, [submit]),
+  ]);
+  form.addEventListener("submit", (event) => event.preventDefault());
   root.append(
-    pageHeader("Generate universal keys", "CSPRNG generation with one-time reveal. Choose a type, then narrow its permissions and scopes."),
-    card("Generation policy", form),
+    pageHeader("Generate universal keys", "One flow: project, type, type configuration, expiry, then a one-time key reveal."),
+    card("Key creation", form),
     el("div", { class: "asset-banner" }, [
       el("img", { src: omegaAsset("key-generating"), alt: "", width: "58", height: "58" }),
       el("div", {}, [
@@ -772,39 +1184,146 @@ async function loadKeyFilters() {
 
 async function renderKeys(root) {
   await loadKeyFilters();
-  const projectFilter = select([["", "All projects"]].concat(state.projects.map((p) => [p.id, p.project_name])));
+  state.keySelection = new Set();
+  const projectFilter = select(
+    [["", "All projects"]].concat(state.projects.map((p) => [p.id, p.project_name])),
+    { value: state.projectFilter || "" }
+  );
   const typeFilter = select([["", "All types"]].concat(state.keyTypes.map((t) => [t.id, t.name])));
   const statusFilter = select([
     ["", "All statuses"], ["generated", "Generated"], ["active", "Active"],
-    ["deactivated", "Deactivated"], ["expired", "Expired"],
+    ["used", "Used"], ["deactivated", "Deactivated"], ["expired", "Expired"],
   ]);
   const search = input({ placeholder: "Search hint, fingerprint, label, tags" });
-  const toolbar = el("div", { class: "page-toolbar" }, [
-    el("div", { class: "filter-row" }, [projectFilter, typeFilter, statusFilter, search]),
-    el("div", { class: "card-actions" }, [
-      button("Apply", () => loadKeysTable(tbody, { projectFilter, typeFilter, statusFilter, search }), "btn btn-primary btn-sm"),
-    ]),
-  ]);
   const tbody = el("tbody");
-  const tableWrap = el("div", { class: "platform-table-wrap" }, [
-    el("table", { class: "platform-table" }, [
-      el("thead", {}, [el("tr", {}, ["Key hint", "Project", "Type", "Status", "Usage", "Expires", "Created", "Actions"].map((h) => el("th", { text: h })))]),
-      tbody,
-    ]),
-  ]);
+  const selectAll = el("input", { type: "checkbox", "aria-label": "Select all visible keys" });
+  const bulkCount = node("span", "muted", "0 selected");
+  bulkCount.id = "key-bulk-count";
+  const bulkDeactivate = button("Deactivate selected", bulkDeactivateKeys, "btn btn-ghost btn-sm");
+  bulkDeactivate.id = "key-bulk-deactivate";
+  bulkDeactivate.disabled = true;
+  const bulkRevoke = button("Revoke selected", bulkRevokeKeys, "btn btn-danger btn-sm");
+  bulkRevoke.id = "key-bulk-revoke";
+  bulkRevoke.disabled = true;
+  const filters = { projectFilter, typeFilter, statusFilter, search };
+  const reload = () => loadKeysTable(tbody, filters).catch((error) => fail(error, "Keys unavailable."));
+  projectFilter.addEventListener("change", () => {
+    state.projectFilter = projectFilter.value;
+    reload();
+  });
+  typeFilter.addEventListener("change", reload);
+  statusFilter.addEventListener("change", reload);
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); reload(); }
+  });
+  selectAll.addEventListener("change", () => {
+    for (const key of state.keyRows || []) {
+      if (selectAll.checked) state.keySelection.add(key.id);
+      else state.keySelection.delete(key.id);
+    }
+    tbody.querySelectorAll('input[type="checkbox"]').forEach((box) => { box.checked = selectAll.checked; });
+    updateKeyBulk();
+  });
+  const exportLink = link("Export CSV", "#", "btn btn-ghost btn-sm");
+  exportLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    window.location.assign(api.universalKeysExportUrl({
+      project_id: projectFilter.value,
+      key_type_id: typeFilter.value,
+      status: statusFilter.value,
+      format: "csv",
+    }));
+  });
   root.append(
-    pageHeader("Universal key inventory", "All key types live in one store. Filtering and lifecycle actions are server-authorized.", [
+    pageHeader("Key inventory", "One store for every key type. Filtering, bulk lifecycle actions, permissions, and expiry are server-authorized.", [
       button("Generate keys", () => showView("generator"), "btn btn-primary btn-sm"),
+      exportLink,
     ]),
-    toolbar,
-    tableWrap
+    el("div", { class: "page-toolbar" }, [
+      el("div", { class: "filter-row" }, [projectFilter, typeFilter, statusFilter, search]),
+      el("div", { class: "card-actions" }, [
+        button("Apply", reload, "btn btn-primary btn-sm"),
+      ]),
+    ]),
+    el("div", { class: "toolbar" }, [
+      el("label", { class: "field-inline" }, [selectAll, node("span", "", "Select all visible")]),
+      bulkCount,
+      bulkDeactivate,
+      bulkRevoke,
+    ]),
+    el("div", { class: "platform-table-wrap" }, [
+      el("table", { class: "platform-table" }, [
+        el("thead", {}, [el("tr", {}, ["", "Key hint", "Project", "Type", "Status", "Usage", "Expires", "Created", "Actions"].map((header) => el("th", { text: header })))]),
+        tbody,
+      ]),
+    ])
   );
-  await loadKeysTable(tbody, { projectFilter, typeFilter, statusFilter, search });
+  await loadKeysTable(tbody, filters);
+}
+
+function updateKeyBulk() {
+  const count = state.keySelection ? state.keySelection.size : 0;
+  const label = $("#key-bulk-count");
+  if (label) label.textContent = `${count} selected`;
+  ["#key-bulk-deactivate", "#key-bulk-revoke"].forEach((selector) => {
+    const node = $(selector);
+    if (node) node.disabled = count === 0;
+  });
+}
+
+async function bulkDeactivateKeys() {
+  const keys = (state.keyRows || []).filter((key) => state.keySelection.has(key.id));
+  if (!keys.length) return toast("Select at least one key.", { type: "error" });
+  const confirmed = await confirmAction({
+    title: `Deactivate ${keys.length} key(s)?`,
+    message: "Every selected key stops authenticating and its active devices are deactivated. Revoked keys are skipped by the server.",
+    confirmLabel: "Deactivate selected",
+    tone: "warn",
+  });
+  if (!confirmed.confirmed) return;
+  let applied = 0;
+  let failed = 0;
+  for (const key of keys) {
+    try {
+      await api.deactivateUniversalKey(key.id, "Bulk deactivation from unified platform");
+      applied += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  toast(`${applied} key(s) deactivated${failed ? `; ${failed} failed` : ""}.`, { type: failed ? "warn" : "success" });
+  showView("keys", { reload: true });
+}
+
+async function bulkRevokeKeys() {
+  const keys = (state.keyRows || []).filter((key) => state.keySelection.has(key.id));
+  if (!keys.length) return toast("Select at least one key.", { type: "error" });
+  const confirmed = await confirmAction({
+    title: `Permanently revoke ${keys.length} key(s)?`,
+    message: "The selected keys and their device bindings are destroyed. Audit and key-event history remain. This cannot be undone.",
+    confirmLabel: "Revoke selected",
+    tone: "danger",
+    requireText: "REVOKE",
+    textLabel: "Type REVOKE to confirm",
+  });
+  if (!confirmed.confirmed) return;
+  let applied = 0;
+  let failed = 0;
+  for (const key of keys) {
+    try {
+      await api.revokeUniversalKey(key.id, "Bulk revocation from unified platform");
+      applied += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  toast(`${applied} key(s) revoked${failed ? `; ${failed} failed` : ""}.`, { type: failed ? "warn" : "success" });
+  showView("keys", { reload: true });
 }
 
 async function loadKeysTable(tbody, filters) {
   clearNode(tbody);
-  tbody.append(el("tr", {}, [el("td", { colspan: "8" }, [emptyState("Loading keys…", "Reading the authenticated inventory.", "⌘")])]));
+  tbody.append(el("tr", {}, [el("td", { colspan: "9" }, [emptyState("Loading keys…", "Reading the authenticated inventory.", "⌘")])]));
   try {
     const data = await api.universalKeys({
       page: state.keysPage,
@@ -815,13 +1334,23 @@ async function loadKeysTable(tbody, filters) {
       search: filters.search.value.trim(),
     });
     state.keys = data.items || [];
+    state.keyRows = state.keys;
     clearNode(tbody);
     if (!state.keys.length) {
-      tbody.append(el("tr", {}, [el("td", { colspan: "8" }, [tableEmpty("No keys match")])]));
+      tbody.append(el("tr", {}, [el("td", { colspan: "9" }, [tableEmpty("No keys match")])]));
+      updateKeyBulk();
       return;
     }
     state.keys.forEach((key) => {
+      const box = el("input", { type: "checkbox", "aria-label": `Select ${key.key_hint}` });
+      box.checked = state.keySelection.has(key.id);
+      box.addEventListener("change", () => {
+        if (box.checked) state.keySelection.add(key.id);
+        else state.keySelection.delete(key.id);
+        updateKeyBulk();
+      });
       tbody.append(el("tr", {}, [
+        cell(box),
         cell(el("div", {}, [
           el("strong", { class: "mono", text: key.key_hint }),
           el("div", { class: "mono truncate", text: key.fingerprint || "—" }),
@@ -834,6 +1363,8 @@ async function loadKeysTable(tbody, filters) {
         cell(formatDate(key.created_at, { time: false })),
         cell(el("div", { class: "row-actions" }, [
           button("Details", () => showKeyDetails(key.id)),
+          button("Edit", () => editKey(key)),
+          button("Expiration", () => editKeyExpiration(key)),
           key.status === "active" || key.status === "generated"
             ? button("Deactivate", () => deactivateKey(key))
             : null,
@@ -845,27 +1376,37 @@ async function loadKeysTable(tbody, filters) {
         ]), "align-right"),
       ]));
     });
+    updateKeyBulk();
   } catch (error) {
     clearNode(tbody);
-    tbody.append(el("tr", {}, [el("td", { colspan: "8" }, [emptyState("Keys unavailable", error.message || "Request failed.")])]));
+    tbody.append(el("tr", {}, [el("td", { colspan: "9" }, [emptyState("Keys unavailable", error.message || "Request failed.")])]));
     throw error;
   }
 }
 
 async function showKeyDetails(id) {
   try {
+    if (!state.keyTypes.length) await loadKeyFilters();
     const data = await api.universalKey(id);
     const key = data.key;
     showPanel(`Key ${key.key_hint}`, el("div", { class: "stack" }, [
       el("dl", { class: "record-grid" }, [
         el("div", { class: "record-item" }, [node("dt", "", "Project"), el("dd", { text: key.project_name })]),
         el("div", { class: "record-item" }, [node("dt", "", "Type"), el("dd", {}, [pill(key.key_type_id, "info")])]),
+        el("div", { class: "record-item" }, [node("dt", "", "Label"), el("dd", { text: key.label || "—" })]),
         el("div", { class: "record-item" }, [node("dt", "", "Status"), el("dd", {}, [statusBadge(key.status)])]),
         el("div", { class: "record-item" }, [node("dt", "", "Fingerprint"), el("dd", { class: "mono", text: key.fingerprint || "—" })]),
         el("div", { class: "record-item" }, [node("dt", "", "Permissions"), el("dd", { text: (key.permissions || []).join(", ") || "—" })]),
         el("div", { class: "record-item" }, [node("dt", "", "Scopes"), el("dd", { text: (key.scopes || []).join(", ") || "—" })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Tags"), el("dd", { text: (key.tags || []).join(", ") || "—" })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Notes"), el("dd", { text: key.notes || "—" })]),
         el("div", { class: "record-item" }, [node("dt", "", "Usage"), el("dd", { text: `${key.usage_count || 0}${key.max_usage ? ` / ${key.max_usage}` : ""}` })]),
         el("div", { class: "record-item" }, [node("dt", "", "Expires"), el("dd", { text: key.expires_at ? formatDate(key.expires_at) : "Never" })]),
+        el("div", { class: "record-item" }, [node("dt", "", "Expiration policy"), el("dd", {}, [pill(key.expiration_preset || (key.expires_at ? "custom" : "never"), "info")])]),
+      ]),
+      el("div", { class: "card-actions" }, [
+        button("Edit key", () => editKey(key), "btn btn-primary btn-sm"),
+        button("Edit expiration", () => editKeyExpiration(key), "btn btn-ghost btn-sm"),
       ]),
       node("h3", "", "Recent key events"),
       data.events && data.events.length
@@ -880,6 +1421,130 @@ async function showKeyDetails(id) {
       data.devices && data.devices.length ? node("p", "muted", `${data.devices.length} device binding(s) recorded.`) : null,
     ]));
   } catch (error) { fail(error, "Key details unavailable."); }
+}
+
+function editKeyExpiration(key) {
+  const hasExpiry = Boolean(key.expires_at);
+  const type = state.keyTypes.find((item) => item.id === key.key_type_id);
+  const policy = type?.expiration_policy || {};
+  const options = allowedExpiryOptions(type);
+  const initial = hasExpiry
+    ? "keep"
+    : (options.some(([value]) => value === "never") ? "never" : (options[0]?.[0] || "never"));
+  const preset = select([
+    ...(hasExpiry ? [["keep", "Keep current expiration"]] : []),
+    ...options,
+  ], { value: initial, "aria-label": "Key expiration preset" });
+  const custom = input({
+    type: "datetime-local",
+    value: localDateTimeValue(key.expires_at),
+    "aria-label": "Custom key expiration",
+  });
+  const customField = field("Custom expiration (local time)", custom, "Converted to UTC. Must be in the future.");
+  customField.classList.add("span-2");
+  const preview = el("div", { class: "expiration-preview span-2", "aria-live": "polite" });
+  bindExpiryControls(preset, customField, custom, preview);
+  const submit = button("Save expiration", async () => {
+    if (preset.value === "keep") {
+      closeSecretDialog();
+      return toast("Expiration unchanged.", { type: "info" });
+    }
+    const error = expiryValidation(preset.value, custom.value);
+    if (error) return toast(error, { type: "error" });
+    setButtonBusy(submit, true, "Saving…");
+    try {
+      await api.updateUniversalKey(key.id, {
+        expiration_preset: preset.value,
+        expires_at: preset.value === "custom" ? new Date(custom.value).toISOString() : null,
+      });
+      toast("Key expiration updated.", { type: "success" });
+      closeSecretDialog();
+      showView("keys", { reload: true });
+    } catch (error) { fail(error, "Key expiration update failed."); }
+    finally { setButtonBusy(submit, false); }
+  }, "btn btn-primary btn-sm");
+  showPanel(`Edit expiration · ${key.key_hint}`, el("div", { class: "form-grid" }, [
+    el("div", { class: "span-2 expiry-current" }, [
+      node("span", "muted", "Current status"),
+      statusBadge(key.status),
+      node("span", "", key.expires_at ? `Expires ${formatDate(key.expires_at)}` : "Never expires"),
+    ]),
+    field("Expiration preset", preset, type ? `Allowed by ${type.name}: ${(policy.presets || ["never"]).join(", ")}.` : ""),
+    customField,
+    preview,
+    el("p", { class: "muted span-2", text: "Changing key expiry never changes the project expiry. Expired keys remain rejected by authentication." }),
+    el("div", { class: "span-2 card-actions" }, [submit]),
+  ]));
+}
+
+async function editKey(key) {
+  if (!state.keyTypes.length) await loadKeyFilters();
+  const type = state.keyTypes.find((item) => item.id === key.key_type_id);
+  const options = allowedExpiryOptions(type);
+  const label = input({ value: key.label || "", maxlength: "100" });
+  const permissions = input({ value: (key.permissions || []).join(", ") });
+  const scopes = input({ value: (key.scopes || []).join(", ") });
+  const tags = input({ value: (key.tags || []).join(", ") });
+  const notes = el("textarea", { rows: "2" });
+  notes.value = key.notes || "";
+  const maxUsage = input({ type: "number", min: "1", value: key.max_usage ? String(key.max_usage) : "" });
+  const preset = select([
+    ...(key.expires_at ? [["keep", "Keep current expiration"]] : []),
+    ...options,
+  ], {
+    value: key.expires_at
+      ? "keep"
+      : (options.some(([value]) => value === "never") ? "never" : (options[0]?.[0] || "never")),
+    "aria-label": "Key expiration preset",
+  });
+  const custom = input({ type: "datetime-local", value: localDateTimeValue(key.expires_at), "aria-label": "Custom key expiration" });
+  const customField = field("Custom expiration (local time)", custom, "Converted to UTC. Must be in the future.");
+  customField.classList.add("span-2");
+  const preview = el("div", { class: "expiration-preview span-2", "aria-live": "polite" });
+  bindExpiryControls(preset, customField, custom, preview);
+  const submit = button("Save key", async () => {
+    const error = preset.value === "keep" ? null : expiryValidation(preset.value, custom.value);
+    if (error) return toast(error, { type: "error" });
+    setButtonBusy(submit, true, "Saving…");
+    const split = (value) => String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+    try {
+      const body = {
+        label: label.value.trim(),
+        permissions: split(permissions.value),
+        scopes: split(scopes.value),
+        tags: split(tags.value),
+        notes: notes.value,
+        max_usage: maxUsage.value ? Number(maxUsage.value) : null,
+      };
+      if (preset.value !== "keep") {
+        body.expiration_preset = preset.value;
+        body.expires_at = preset.value === "custom" ? new Date(custom.value).toISOString() : null;
+      }
+      await api.updateUniversalKey(key.id, body);
+      toast("Key updated.", { type: "success" });
+      closeSecretDialog();
+      showView("keys", { reload: true });
+    } catch (error) { fail(error, "Key update failed."); }
+    finally { setButtonBusy(submit, false); }
+  }, "btn btn-primary btn-sm");
+  showPanel(`Edit key · ${key.key_hint}`, el("div", { class: "form-grid" }, [
+    el("div", { class: "span-2 expiry-current" }, [
+      node("span", "muted", "Current status"),
+      statusBadge(key.status),
+      node("span", "", key.expires_at ? `Expires ${formatDate(key.expires_at)}` : "Never expires"),
+    ]),
+    field("Label", label),
+    field("Max usage", maxUsage, "Empty means unlimited."),
+    field("Permissions", permissions, type ? `Allowed for ${type.name}: ${(type.permissions || []).join(", ") || "none"}.` : "Comma-separated permission ids."),
+    field("Scopes", scopes, type ? `Allowed scopes: ${(type.scopes || []).join(", ") || "none"}.` : "Comma-separated scopes."),
+    field("Tags", tags, "Comma-separated."),
+    field("Notes", notes),
+    field("Expiration preset", preset, type ? `Allowed by ${type.name}: ${((type.expiration_policy || {}).presets || options.map(([value]) => value)).join(", ")}.` : ""),
+    customField,
+    preview,
+    el("p", { class: "muted span-2", text: "Save changes without losing unrelated key settings. Expiration options follow the key type policy; the project expiry is not changed." }),
+    el("div", { class: "span-2 card-actions" }, [submit]),
+  ]));
 }
 
 async function activateKey(key) {
@@ -2079,11 +2744,41 @@ async function renderHealth(root) {
 let liteButton = null;
 
 async function renderSettings(root) {
-  const [prefs, session] = await Promise.all([
+  const [prefs, session, system] = await Promise.all([
     api.notificationPreferences(),
     api.session(),
+    api.settings(),
   ]);
   const preferences = prefs.preferences || {};
+  const canEditSystem = state.user?.role === "owner";
+  const keyPrefix = input({ value: system.key_prefix || "", maxlength: "12" });
+  const defaultExpiry = input({ type: "number", min: "1", max: "3650", value: String(system.default_key_expiry_days ?? 30) });
+  const maxBulk = input({ type: "number", min: "1", max: "5000", value: String(system.max_bulk_keys ?? 500) });
+  const heartbeat = input({ type: "number", min: "30", max: "86400", value: String(system.heartbeat_interval_seconds ?? 300) });
+  const rateLimits = input({ value: system.api_rate_limits || "60/min" });
+  const timezone = input({ value: system.display_timezone || "UTC" });
+  const autoDelete = input({ type: "number", min: "0", max: "3650", value: String(system.auto_delete_days ?? 0) });
+  const maintenance = el("input", { type: "checkbox", checked: Boolean(system.maintenance_mode) });
+  const saveSystem = button("Save system settings", async () => {
+    setButtonBusy(saveSystem, true, "Saving…");
+    try {
+      await api.updateSettings({
+        key_prefix: keyPrefix.value.trim(),
+        default_key_expiry_days: Number(defaultExpiry.value),
+        max_bulk_keys: Number(maxBulk.value),
+        heartbeat_interval_seconds: Number(heartbeat.value),
+        api_rate_limits: rateLimits.value.trim(),
+        display_timezone: timezone.value.trim() || "UTC",
+        maintenance_mode: maintenance.checked,
+        auto_delete_days: Number(autoDelete.value),
+      });
+      toast("System settings updated.", { type: "success" });
+      showView("settings", { reload: true });
+    } catch (error) { fail(error, "System settings update failed."); }
+    finally { setButtonBusy(saveSystem, false); }
+  }, "btn btn-primary btn-sm");
+  [keyPrefix, defaultExpiry, maxBulk, heartbeat, rateLimits, timezone, autoDelete, maintenance].forEach((control) => { control.disabled = !canEditSystem; });
+  saveSystem.disabled = !canEditSystem;
   const checks = el("div", { class: "check-grid" }, Object.entries(preferences).map(([key, value]) =>
     el("label", { class: "check" }, [
       el("input", { type: "checkbox", checked: value ? "checked" : null, value: key }),
@@ -2105,8 +2800,20 @@ async function renderSettings(root) {
     toast(next ? "Lite mode enabled." : "Full motion restored.", { type: "success" });
   }, "btn btn-ghost btn-sm");
   root.append(
-    pageHeader("Platform preferences", "Notification routing and display motion preferences. Security toggles require server configuration."),
+    pageHeader("Platform preferences", "System configuration, notification routing, and display motion in one place."),
     el("div", { class: "platform-grid" }, [
+      card("System configuration", el("div", { class: "form-grid" }, [
+        field("Key prefix", keyPrefix),
+        field("Default key expiry (days)", defaultExpiry),
+        field("Maximum bulk keys", maxBulk),
+        field("Heartbeat interval (seconds)", heartbeat),
+        field("API rate limits", rateLimits),
+        field("Display timezone", timezone),
+        field("Auto-delete days", autoDelete, "0 disables scheduled project deletion."),
+        el("label", { class: "check" }, [maintenance, el("span", { text: " Maintenance mode" })]),
+        el("p", { class: "muted span-2", text: canEditSystem ? "System changes are audited server-side." : "Owner role required to change system configuration. Values are read-only for this account." }),
+        el("div", { class: "span-2 card-actions" }, [saveSystem]),
+      ])),
       card("Notification events", [checks, el("div", { class: "card-actions" }, [savePrefs])]),
       card("Session and display", [
         el("dl", { class: "record-grid" }, [
@@ -2157,6 +2864,115 @@ Response 200:
   );
 }
 
+async function renderInstallations(root) {
+  const [data, projectData] = await Promise.all([
+    api.installations({ page: 1, page_size: 100 }),
+    api.universalProjects({ page_size: 100 }),
+  ]);
+  state.projects = projectData.items || [];
+  const items = data.items || [];
+  root.append(
+    pageHeader("Reader installations", "Reader App installations appear when a Reader Key is redeemed. Revocation invalidates the bound device credential immediately."),
+    table(
+      ["Project", "Redeemed key", "Device", "Status", "Activated", "Last heartbeat", "IP", "Actions"],
+      items.map((installation) => el("tr", {}, [
+        cell(installation.project_name),
+        cell(el("span", { class: "mono", text: installation.key_hint || "—" })),
+        cell(el("span", { class: "mono", text: installation.device_id || "—" })),
+        cell(statusBadge(installation.status)),
+        cell(formatDate(installation.activated_at)),
+        cell(formatRelative(installation.last_seen_at)),
+        cell(installation.ip_address || "—"),
+        cell(el("div", { class: "row-actions" }, [
+          installation.status === "active"
+            ? button("Revoke", () => revokeInstallation(installation), "btn btn-danger btn-sm")
+            : null,
+        ]), "align-right"),
+      ])),
+      "No reader installations"
+    )
+  );
+}
+
+async function revokeInstallation(installation) {
+  const confirmed = await confirmAction({
+    title: `Revoke installation for '${installation.project_name}'?`,
+    message: "The device token is invalidated immediately. The Reader App cannot reconnect or send heartbeats until a new key is redeemed.",
+    confirmLabel: "Revoke installation",
+    tone: "danger",
+  });
+  if (!confirmed.confirmed) return;
+  try {
+    await api.revokeInstallation(installation.id, "Revoked from unified platform console");
+    toast("Installation revoked.", { type: "success" });
+    showView("installations", { reload: true });
+  } catch (error) { fail(error, "Installation revocation failed."); }
+}
+
+async function renderSecurity(root) {
+  const data = await api.securityStatus();
+  const auth = data.auth || {};
+  const session = data.session || {};
+  const apiSec = data.api_security || {};
+  const database = data.database || {};
+  const keySec = data.key_security || {};
+  const row = (label, value) => el("div", { class: "record-item" }, [
+    node("dt", "", label),
+    el("dd", { text: String(value === undefined || value === null || value === "" ? "—" : value) }),
+  ]);
+  root.append(
+    pageHeader("Security center", "Authentication, session, API, database, and key-storage posture. Secrets are never returned."),
+    el("div", { class: "stat-strip" }, [
+      stat("Database", database.status === "connected" ? 1 : 0, database.status === "connected" ? "is-good" : "is-bad"),
+      stat("Account locked", auth.is_locked ? 1 : 0, auth.is_locked ? "is-warn" : ""),
+      stat("Failed logins", auth.failed_login_attempts || 0, auth.failed_login_attempts ? "is-warn" : ""),
+      stat("Rate limiting", apiSec.rate_limit_enabled ? 1 : 0, apiSec.rate_limit_enabled ? "is-good" : "is-warn"),
+    ]),
+    el("div", { class: "platform-grid" }, [
+      card("Authentication", el("dl", { class: "record-grid" }, [
+        row("Administrator", auth.admin_email),
+        row("Role", auth.admin_role),
+        row("Account active", auth.account_active ? "Yes" : "No"),
+        row("Password algorithm", auth.password_algorithm),
+        row("Public registration", auth.public_registration ? "Enabled" : "Disabled"),
+      ])),
+      card("Session", el("dl", { class: "record-grid" }, [
+        row("Storage", session.session_storage),
+        row("TTL", `${session.session_ttl_seconds}s`),
+        row("Cookie", session.cookie_name),
+        row("HttpOnly", session.cookie_httponly ? "Yes" : "No"),
+        row("SameSite", session.cookie_samesite),
+        row("CSRF", session.csrf_protection),
+      ])),
+      card("API security", el("dl", { class: "record-grid" }, [
+        row("Rate limiting", apiSec.rate_limiting),
+        row("Trust proxy", apiSec.trust_proxy ? "Yes" : "No"),
+        row("CSP", apiSec.csp_policy),
+        row("HSTS", apiSec.hsts_enabled ? "Enabled" : "Disabled"),
+        row("Frames", apiSec.x_frame_options),
+        row("MIME sniffing", apiSec.x_content_type_options),
+      ])),
+      card("Key storage", el("dl", { class: "record-grid" }, [
+        row("Method", keySec.storage_method),
+        row("Plaintext stored", keySec.plaintext_storage ? "Yes" : "No"),
+        row("Domain separation", keySec.domain_separation),
+        row("Bulk limit", keySec.max_bulk_limit),
+        row("Database SSL", database.ssl_mode),
+      ])),
+    ]),
+    card("Recent security events", table(
+      ["Time", "Action", "Outcome", "IP"],
+      (data.recent_events || []).map((event) => el("tr", {}, [
+        cell(formatDate(event.created_at)),
+        cell(el("span", { class: "mono", text: event.action })),
+        cell(pill(event.outcome, statusTone(event.outcome))),
+        cell(event.ip_address || "—"),
+      ])),
+      "No security events"
+    ))
+  );
+}
+
 /* ----------------------------------------------------------------- router */
 
 const LOADERS = {
@@ -2167,6 +2983,7 @@ const LOADERS = {
   generator: renderGenerator,
   "key-types": renderKeyTypes,
   builder: renderBuilder,
+  installations: renderInstallations,
   devices: renderDevices,
   "api-usage": renderApiUsage,
   webhooks: renderWebhooks,
@@ -2179,6 +2996,7 @@ const LOADERS = {
   scheduler: renderScheduler,
   roles: renderRoles,
   admins: renderAdmins,
+  security: renderSecurity,
   health: renderHealth,
   settings: renderSettings,
   docs: renderDocs,

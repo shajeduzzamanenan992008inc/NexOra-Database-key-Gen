@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 
-def test_login_and_dashboard_pages_are_served(app, owner):
+def test_login_and_classic_dashboard_pages_are_served(app, owner):
     client = app.test_client()
     login = client.get("/")
     assert login.status_code == 200
@@ -11,23 +11,29 @@ def test_login_and_dashboard_pages_are_served(app, owner):
     assert "NexOra" in login.get_data(as_text=True)
     assert 'id="login-form"' in login.get_data(as_text=True)
 
-    # The console is server-rendered markup, so it must never reach anonymous
-    # visitors; only an authenticated session may load it.
+    # The Classic console is server-rendered markup and must never reach
+    # anonymous visitors; only an authenticated session may load it.
     anonymous = client.get("/dashboard")
     assert anonymous.status_code == 302
     assert anonymous.headers["Location"].endswith("/login")
     assert 'id="view-overview"' not in anonymous.get_data(as_text=True)
 
-    dashboard = owner.client.get("/dashboard")
-    assert dashboard.status_code == 200
-    body = dashboard.get_data(as_text=True)
+    # The retired unified console now redirects into the Classic console.
+    compatibility = owner.client.get("/platform")
+    assert compatibility.status_code == 302
+    assert compatibility.headers["Location"].endswith("/dashboard")
+
+    classic = owner.client.get("/dashboard")
+    assert classic.status_code == 200
+    body = classic.get_data(as_text=True)
     assert 'id="view-overview"' in body
-    assert 'id="keys-body"' in body
-    assert 'id="gen-project-name-input"' in body
-    assert 'id="delete-all-modal"' in body
-    assert 'id="detail-modal"' in body
-    assert 'id="project-modal"' not in body
-    assert 'id="generate-modal"' not in body
+    assert 'id="key-generator-form"' in body
+    assert 'id="gen-key-type-select"' in body
+    assert 'id="gen-project-expiration-select"' in body
+    assert 'id="platform-view"' not in body
+    assert "Universal Platform" not in body
+    for view in ("projects", "generator", "keys", "installations", "security", "logs", "settings"):
+        assert f'data-view="{view}"' in body
 
 
 def test_all_local_assets_resolve(app, owner):
@@ -70,15 +76,18 @@ def test_javascript_uses_safe_dom_apis(app):
     assert "textContent" in uijs
 
 
-def test_dashboard_generate_key_uses_canonical_endpoint_and_fields(app):
+def test_dashboard_generate_key_uses_universal_endpoints_and_fields(app):
     client = app.test_client()
     api_js = client.get("/assets/js/api.js").get_data(as_text=True)
     dashboard_js = client.get("/assets/js/dashboard.js").get_data(as_text=True)
 
-    assert '"/api/v1/projects/generate-key"' in api_js
-    assert "api.generateProjectKey" in dashboard_js
-    assert "project_name: projectName" in dashboard_js
-    assert "label," in dashboard_js
+    assert "generateUniversalKeys" in api_js
+    assert "api.generateUniversalKeys" in dashboard_js
+    assert "api.keyTypes" in dashboard_js
+    assert "project_id: project.id" in dashboard_js
+    assert "key_type_id: type.id" in dashboard_js
+    assert "expiration_preset: expiration" in dashboard_js
+    assert "api.createProject" in dashboard_js
 
 
 OLD_BRAND = re.compile(r"RH E-?SPORTS|rhesports|rh-esports|rh_keygen|rh_session|RHX", re.IGNORECASE)

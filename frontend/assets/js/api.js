@@ -24,7 +24,7 @@ const DEFAULT_TIMEOUT_MS = 15000;
 
 async function request(
   path,
-  { method = "GET", body, headers = {}, timeoutMs = DEFAULT_TIMEOUT_MS } = {}
+  { method = "GET", body, headers = {}, timeoutMs = DEFAULT_TIMEOUT_MS, _csrfRetry = false } = {}
 ) {
   const options = {
     method,
@@ -83,8 +83,43 @@ async function request(
     }
   }
 
+  // Keep the cached CSRF token in sync whenever a session is read, since the
+  // server rotates it on every /auth/session call.
+  if (path === "/api/v1/auth/session" && payload && payload.csrf_token) {
+    setCsrfToken(payload.csrf_token);
+  }
+  if (path === "/api/v1/auth/login" && payload && payload.csrf_token) {
+    setCsrfToken(payload.csrf_token);
+  }
+
   if (!response.ok) {
     const problem = payload && payload.error ? payload.error : {};
+    const mutating = !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
+    if (
+      !_csrfRetry &&
+      mutating &&
+      response.status === 403 &&
+      problem.code === "csrf_failed"
+    ) {
+      try {
+        const session = await request("/api/v1/auth/session", {
+          timeoutMs: 8000,
+          _csrfRetry: true,
+        });
+        if (session && session.csrf_token) setCsrfToken(session.csrf_token);
+      } catch {
+        // Fall through and surface the original error.
+      }
+      if (csrfToken) {
+        return request(path, {
+          method,
+          body,
+          headers,
+          timeoutMs,
+          _csrfRetry: true,
+        });
+      }
+    }
     throw new ApiProblem(
       problem.message || `Request failed with status ${response.status}.`,
       response.status,
@@ -171,6 +206,27 @@ async function authorizedFetch(path, options = {}, timeoutMs = 30000) {
     } catch {
       problem = {};
     }
+    if (
+      response.status === 403 &&
+      problem.code === "csrf_failed"
+    ) {
+      try {
+        const session = await request("/api/v1/auth/session", { timeoutMs: 8000, _csrfRetry: true });
+        if (session && session.csrf_token) setCsrfToken(session.csrf_token);
+      } catch {
+        // fall through
+      }
+      if (csrfToken) {
+        const retryHeaders = { ...(options.headers || {}), "X-CSRF-Token": csrfToken };
+        const retryResponse = await fetch(path, {
+          ...options,
+          headers: retryHeaders,
+          credentials: "same-origin",
+        });
+        if (retryResponse.ok) return retryResponse;
+        // fall through to throw original
+      }
+    }
     throw new ApiProblem(
       problem.message || `Request failed with status ${response.status}.`,
       response.status,
@@ -223,10 +279,10 @@ export const api = {
   // Project Management
   projects: (params) => request(`/api/v1/projects?${query(params)}`),
   project: (id) => request(`/api/v1/projects/${encodeURIComponent(id)}`),
-  createProject: (projectName) =>
+  createProject: (projectName, options = {}) =>
     request("/api/v1/projects", {
       method: "POST",
-      body: { project_name: projectName },
+      body: { project_name: projectName, ...options },
     }),
   generateProjectKey: (body) =>
     request("/api/v1/projects/generate-key", { method: "POST", body }),
@@ -369,6 +425,10 @@ export const api = {
     request(`/api/v1/universal/key-types/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body,
+    }),
+  deleteKeyType: (id) =>
+    request(`/api/v1/universal/key-types/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     }),
   universalDevices: (params) =>
     request(`/api/v1/universal/devices?${query(params)}`),

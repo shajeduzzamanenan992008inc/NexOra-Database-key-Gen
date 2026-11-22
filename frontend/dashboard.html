@@ -9,7 +9,8 @@
   <meta name="application-name" content="NexOra-Database-key-Gen">
   <meta name="description" content="OMEGA NEX-ORA — NexOra Database Key Generator & License Management System. Secure Keys. Smarter Database Management.">
   <title>OMEGA NEX-ORA · NexOra Database Key Generator</title>
-  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/omega-assets/webp/favicon.webp" type="image/webp" sizes="128x128">
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body class="app-page">
@@ -19,7 +20,10 @@
     <div class="boot-visual">
       <span class="boot-ring boot-ring-a"></span>
       <span class="boot-ring boot-ring-b"></span>
-      <img src="/assets/logo.svg" alt="" width="74" height="74">
+      <picture class="boot-logo">
+        <source media="(prefers-reduced-motion: reduce)" srcset="/omega-assets/webp/logo-mark.webp">
+        <img src="/effect-assets/ultra-universal-keygen-logo-v3.svg" alt="" width="96" height="96">
+      </picture>
     </div>
     <p class="boot-kicker">OMEGA NEX-ORA / COMMAND CENTER</p>
     <p class="boot-title">Initializing secure console</p>
@@ -49,9 +53,12 @@
   <div class="app-shell">
     <aside id="sidebar" class="sidebar glass" aria-label="Sidebar navigation">
       <button id="sidebar-close" class="icon-close sidebar-close" type="button" aria-label="Close navigation">×</button>
-
+      <div class="sidebar-scroll">
       <a class="brand brand-sm" href="/dashboard" aria-label="OMEGA NEX-ORA Home">
-        <img src="/assets/logo.svg" alt="" width="42" height="42">
+        <picture class="brand-logo">
+          <source media="(prefers-reduced-motion: reduce)" srcset="/omega-assets/webp/logo-mark.webp">
+          <img src="/effect-assets/ultra-universal-keygen-logo-v3.svg" alt="" width="46" height="46">
+        </picture>
         <span class="brand-name">
           <strong>OMEGA NEX-ORA</strong>
           <small>NexOra Database Key Generator</small>
@@ -60,27 +67,35 @@
 
       <nav class="side-nav" aria-label="Primary navigation">
         <button class="nav-item is-active" type="button" data-view="overview">
-          <span class="nav-icon" aria-hidden="true">◈</span>
+          <span class="nav-icon" aria-hidden="true"><img src="/omega-assets/svg/logo-mark.svg" alt="" width="18" height="18"></span>
           <span><strong>Overview</strong><small>System pulse</small></span>
         </button>
         <button class="nav-item" type="button" data-view="projects">
-          <span class="nav-icon" aria-hidden="true">◫</span>
+          <span class="nav-icon" aria-hidden="true"><img src="/omega-assets/svg/database-key.svg" alt="" width="18" height="18"></span>
           <span><strong>Projects</strong><small>Database targets</small></span>
         </button>
         <button class="nav-item" type="button" data-view="generator">
-          <span class="nav-icon" aria-hidden="true">⚡</span>
-          <span><strong>Key Generator</strong><small>Issue reader keys</small></span>
+          <span class="nav-icon" aria-hidden="true"><img src="/omega-assets/svg/key-generating.svg" alt="" width="18" height="18"></span>
+          <span><strong>Key Generator</strong><small>All key types</small></span>
         </button>
         <button class="nav-item" type="button" data-view="keys">
-          <span class="nav-icon" aria-hidden="true">⌘</span>
+          <span class="nav-icon" aria-hidden="true"><img src="/omega-assets/svg/license-key.svg" alt="" width="18" height="18"></span>
           <span><strong>Key Management</strong><small>Masked keys &amp; status</small></span>
         </button>
+        <button class="nav-item" type="button" data-view="key-types">
+          <span class="nav-icon" aria-hidden="true"><img src="/omega-assets/svg/other-key.svg" alt="" width="18" height="18"></span>
+          <span><strong>Key Types</strong><small>Catalogue &amp; builder</small></span>
+        </button>
+        <button class="nav-item" type="button" data-view="operations">
+          <span class="nav-icon" aria-hidden="true">⟐</span>
+          <span><strong>Operations</strong><small>Devices, webhooks, data</small></span>
+        </button>
         <button class="nav-item" type="button" data-view="installations">
-          <span class="nav-icon" aria-hidden="true">✇</span>
+          <span class="nav-icon" aria-hidden="true"><img src="/omega-assets/svg/reader-key.svg" alt="" width="18" height="18"></span>
           <span><strong>Installations</strong><small>Active reader devices</small></span>
         </button>
         <button class="nav-item" type="button" data-view="security">
-          <span class="nav-icon" aria-hidden="true">🛡</span>
+          <span class="nav-icon" aria-hidden="true"><img src="/omega-assets/svg/key-verified.svg" alt="" width="18" height="18"></span>
           <span><strong>Security Center</strong><small>Argon2id &amp; posture</small></span>
         </button>
         <button class="nav-item" type="button" data-view="logs">
@@ -91,13 +106,13 @@
           <span class="nav-icon" aria-hidden="true">⚙</span>
           <span><strong>Settings</strong><small>System configuration</small></span>
         </button>
-        <a class="nav-item nav-link" href="/platform">
-          <span class="nav-icon" aria-hidden="true">✦</span>
-          <span><strong>Universal Platform</strong><small>Projects, key types &amp; RBAC</small></span>
-        </a>
       </nav>
 
       <div class="side-foot">
+        <picture class="omega-pic" data-omega="logo-mark">
+          <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/logo-mark-animated.webp">
+          <img class="side-watermark" src="/omega-assets/webp/logo-mark.webp" alt="" width="120" height="120">
+        </picture>
         <div class="user-chip">
           <span id="user-initials" class="avatar" aria-hidden="true">NX</span>
           <span class="user-meta">
@@ -109,7 +124,8 @@
           <span class="btn-label">Sign out</span>
           <span class="spinner" hidden aria-hidden="true"></span>
         </button>
-        <p class="side-note">Server-side authorization · CSRF protected</p>
+        <p class="side-note"><img class="side-note-mark" src="/omega-assets/svg/favicon.svg" alt="" width="14" height="14"> Server-side authorization · CSRF protected</p>
+      </div>
       </div>
     </aside>
 
@@ -120,6 +136,7 @@
                   aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
             <span></span><span></span><span></span>
           </button>
+          <img class="topbar-mark" src="/effect-assets/ultra-universal-keygen-logo-v3.svg" alt="" width="30" height="30">
           <div class="topbar-copy">
             <p class="eyebrow" id="topbar-eyebrow">OMEGA NEX-ORA / Command Center</p>
             <h1 id="page-title">Overview</h1>
@@ -141,6 +158,32 @@
 
       <!-- VIEW 1: OVERVIEW -->
       <section id="view-overview" class="view is-active" aria-labelledby="page-title">
+        <section class="omega-hero glass" aria-labelledby="omega-hero-title">
+          <div class="omega-hero-copy">
+            <p class="eyebrow">OMEGA ULTRA UNIVERSAL KEYGEN</p>
+            <h2 id="omega-hero-title">Issue, track and retire every reader key from one secure console.</h2>
+            <p>Projects, Universal key types, HMAC-SHA256 storage and one-time plaintext reveals are enforced server-side. The banner, emblem and key art all come from the approved NexOra asset set.</p>
+            <div class="omega-hero-actions">
+              <button class="btn btn-primary btn-glow" type="button" data-go="generator">Generate a key</button>
+              <button class="btn btn-ghost" type="button" data-go="security">Open Security Center</button>
+            </div>
+            <ul class="omega-hero-points">
+              <li>CSPRNG plaintext · one reveal</li>
+              <li>1 active installation / project</li>
+              <li>Audited revocation</li>
+            </ul>
+          </div>
+          <figure class="omega-hero-visual">
+            <picture>
+              <source media="(prefers-reduced-motion: reduce)" srcset="/omega-assets/webp/logo.webp">
+              <img class="omega-hero-banner" src="/effect-assets/ultra-universal-keygen.svg" alt="OMEGA Ultra Universal Key Gen — secure database key generation" width="960" height="600">
+            </picture>
+            <picture class="omega-pic" data-omega="divider">
+              <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/divider-animated.webp">
+              <img class="omega-hero-divider" src="/omega-assets/webp/divider.webp" alt="" width="800" height="20">
+            </picture>
+          </figure>
+        </section>
         <div class="stat-grid">
           <article class="stat-card glass">
             <span class="stat-index" aria-hidden="true">01</span>
@@ -222,7 +265,7 @@
               <svg class="donut" viewBox="0 0 120 120" role="img"
                    aria-labelledby="lifecycle-donut-title lifecycle-donut-desc">
                 <title id="lifecycle-donut-title">Reader key lifecycle distribution</title>
-                <desc id="lifecycle-donut-desc">Live proportions of unused, used, expired and revoked reader keys.</desc>
+                <desc id="lifecycle-donut-desc">Live proportions of unused, used, expired and revoked keys.</desc>
                 <circle class="donut-track" cx="60" cy="60" r="46" pathLength="100"></circle>
                 <g class="donut-segments" transform="rotate(-90 60 60)">
                   <circle id="donut-unused" class="donut-seg seg-unused" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="0 100"></circle>
@@ -270,6 +313,10 @@
                 <h2>Security &amp; Backend Pulse</h2>
                 <p>Live health from authenticated backend APIs.</p>
               </div>
+              <picture class="omega-pic" data-omega="database-key">
+                <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/database-key-animated.webp">
+                <img class="panel-glyph" src="/omega-assets/webp/database-key.webp" alt="" width="48" height="48">
+              </picture>
               <button class="btn btn-ghost btn-sm" type="button" data-go="security">Security Center</button>
             </header>
             <div class="pulse-metrics-stack">
@@ -308,8 +355,12 @@
           <header class="panel-head">
             <div>
               <h2>Managed Projects</h2>
-              <p>Each project can own unlimited Reader Keys. Generating a key creates a new project or adds another key to an existing one; permanent deletion removes every project-owned record.</p>
+              <p>Each project can own unlimited keys. Generating a key creates a new project or adds another key to an existing one; permanent deletion removes every project-owned record.</p>
             </div>
+            <picture class="omega-pic" data-omega="database-key">
+              <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/database-key-animated.webp">
+              <img class="panel-glyph" src="/omega-assets/webp/database-key.webp" alt="" width="56" height="56">
+            </picture>
             <button id="delete-all-projects-btn" class="btn btn-danger" type="button" data-tip="Permanently removes every project, reader key and installation. Requires confirmation and your password.">Delete All Projects</button>
           </header>
           <div class="toolbar">
@@ -355,10 +406,14 @@
             <header class="panel-head">
               <div>
                 <p class="eyebrow">CRYPTOGRAPHIC ISSUANCE</p>
-                <h2>Reader Key Generator</h2>
-                <p>Cryptographically secure random keys. Stored only as HMAC-SHA256 digests. Plaintext shown once.</p>
+                <h2>Key Generator</h2>
+                <p>One Classic form for every Universal key type. Keys are stored only as HMAC-SHA256 digests; plaintext is shown once.</p>
               </div>
             </header>
+            <div class="generator-hero" aria-hidden="true">
+              <img class="generator-hero-art" data-omega="key-generating" src="/omega-assets/webp/key-generating-animated.webp" alt="" width="132" height="132">
+              <img class="generator-hero-mark" src="/omega-assets/svg/license-key.svg" alt="" width="46" height="46">
+            </div>
             <form id="key-generator-form" class="form-grid" novalidate>
               <fieldset class="span-2 generator-mode-field">
                 <legend class="field-label">Project Workflow</legend>
@@ -373,13 +428,74 @@
                 <select id="gen-project-select">
                   <option value="">Choose a project…</option>
                 </select>
-                <small class="muted">A project can own unlimited Reader Keys. Select one to issue another key.</small>
+                <small class="muted">A project can own unlimited keys. Select one to issue another key.</small>
               </label>
 
               <label id="gen-new-field" class="field span-2" hidden>
                 <span class="field-label">Project Name *</span>
                 <input id="gen-project-name-input" type="text" maxlength="200" placeholder="e.g. Production Cluster Alpha" autocomplete="off">
-                <small class="muted">The project and its first Reader Key are created together. Names are unique case-insensitively while the project exists.</small>
+                <small class="muted">The project and its first key are created together. Names are unique case-insensitively while the project exists.</small>
+              </label>
+
+              <label id="gen-project-expiration-field" class="field span-2" hidden>
+                <span class="field-label">Project Expiration</span>
+                <select id="gen-project-expiration-select">
+                  <option value="never" selected>Never Expire</option>
+                  <option value="1_day">1 Day</option>
+                  <option value="7_days">7 Days</option>
+                  <option value="30_days">30 Days</option>
+                  <option value="90_days">90 Days</option>
+                  <option value="1_year">1 Year</option>
+                  <option value="custom">Custom Expiration</option>
+                </select>
+                <small class="muted">Project expiry is separate from key expiry. An expired project blocks new key use.</small>
+              </label>
+
+              <label id="gen-project-expiration-custom-field" class="field span-2" hidden>
+                <span class="field-label">Custom Project Expiration *</span>
+                <input id="gen-project-expiration-custom" type="datetime-local">
+                <small class="muted">Local date and time; stored and enforced in UTC. Must be in the future.</small>
+              </label>
+
+              <div id="gen-project-expiration-preview" class="span-2 expiration-preview" aria-live="polite" hidden>
+                <span class="muted">Project expiration:</span>
+                <strong>Never expires</strong>
+              </div>
+
+              <label class="field span-2">
+                <span class="field-label">Key Type *</span>
+                <select id="gen-key-type-select">
+                  <option value="">Loading key types…</option>
+                </select>
+                <small class="muted" id="gen-key-type-hint">Built-in and project-defined Universal key types.</small>
+              </label>
+
+              <div id="gen-key-type-summary" class="span-2 key-type-summary" hidden></div>
+
+              <div id="gen-type-config" class="span-2 generator-config" hidden>
+                <section id="gen-permissions-section" class="generator-config-section" hidden>
+                  <span class="field-label">Permitted Permissions</span>
+                  <div id="gen-permissions-grid" class="check-grid"></div>
+                </section>
+                <section id="gen-scopes-section" class="generator-config-section" hidden>
+                  <span class="field-label">Scopes</span>
+                  <div id="gen-scopes-grid" class="check-grid"></div>
+                  <input id="gen-scopes-free" type="text" maxlength="500" placeholder="comma-separated scopes, e.g. reports.read, billing.write" hidden>
+                </section>
+                <section id="gen-metadata-section" class="generator-config-section" hidden>
+                  <span class="field-label">Type Configuration / Metadata</span>
+                  <div id="gen-metadata-fields" class="form-grid"></div>
+                </section>
+              </div>
+
+              <label class="field">
+                <span class="field-label">Tags (optional, comma separated)</span>
+                <input id="gen-tags-input" type="text" maxlength="500" placeholder="e.g. production, primary" autocomplete="off">
+              </label>
+
+              <label class="field">
+                <span class="field-label">Notes (optional)</span>
+                <textarea id="gen-notes-input" rows="2" maxlength="2000" placeholder="Internal audit note"></textarea>
               </label>
 
               <label class="field span-2">
@@ -415,19 +531,31 @@
 
               <div class="span-2 format-preview">
                 <span>Format preview &amp; Cryptography</span>
-                <code>NXR-****-****-****-****</code>
-                <small>80+ bits of entropy · OS CSPRNG · HMAC-SHA256 keyed digest at rest</small>
+                <code id="gen-format-code">NXR-****-****-****-****</code>
+                <small id="gen-format-hint">80+ bits of entropy · OS CSPRNG · HMAC-SHA256 keyed digest at rest</small>
               </div>
 
               <div class="span-2 alert alert-warn">
-                <strong>Strict Security Notice:</strong> The plaintext Reader Key is revealed exactly ONCE. Only its HMAC-SHA256 digest is stored. A project may own unlimited keys, but each key is individually revocable and can never be un-revoked.
+                <strong>Strict Security Notice:</strong> The plaintext key is revealed exactly ONCE. Only its HMAC-SHA256 digest is stored. A project may own unlimited keys, but each key is individually revocable and can never be un-revoked.
               </div>
 
               <p id="generator-error" class="span-2 form-message" role="alert" aria-live="polite"></p>
 
+              <div id="generator-recovery" class="span-2 alert alert-warn generator-recovery" hidden>
+                <div class="generator-recovery-copy">
+                  <strong id="generator-recovery-title">Key generation needs attention</strong>
+                  <p id="generator-recovery-message"></p>
+                </div>
+                <div class="row-actions">
+                  <button id="generator-retry-btn" class="btn btn-primary btn-sm" type="button">Retry Key Generation</button>
+                  <button id="generator-recovery-view-btn" class="btn btn-ghost btn-sm" type="button" hidden>Open Key Management</button>
+                  <button id="generator-recovery-dismiss" class="btn btn-ghost btn-sm" type="button">Dismiss</button>
+                </div>
+              </div>
+
               <div class="span-2 modal-actions clean-actions-bar margin-top-md">
                 <button id="generate-keys-btn" class="btn btn-primary btn-glow" type="submit">
-                  <span class="btn-label">Generate Reader Key</span>
+                  <span id="gen-submit-label" class="btn-label">Generate Key</span>
                   <span class="spinner" hidden aria-hidden="true"></span>
                 </button>
               </div>
@@ -457,10 +585,14 @@
         <section class="panel glass">
           <header class="panel-head">
             <div>
-              <h2>Reader Key Management</h2>
-              <p>Masked key representation only. A successfully redeemed key remains USED permanently.</p>
+              <h2>Key Management</h2>
+              <p>Masked records for every key type. A successfully redeemed key remains USED permanently.</p>
             </div>
-            <button id="export-keys-btn" class="btn btn-ghost" type="button" data-tip="Exports masked key records only. Plaintext reader keys are never included.">Export CSV</button>
+            <picture class="omega-pic" data-omega="license-key">
+              <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/license-key-animated.webp">
+              <img class="panel-glyph" src="/omega-assets/webp/license-key.webp" alt="" width="56" height="56">
+            </picture>
+            <button id="export-keys-btn" class="btn btn-ghost" type="button" data-tip="Exports masked key records only. Plaintext keys are never included.">Export CSV</button>
           </header>
           <div class="toolbar">
             <label class="search">
@@ -517,7 +649,7 @@
                 </tr>
               </thead>
               <tbody id="keys-body">
-                <tr><td colspan="8" class="muted text-center">Loading reader keys…</td></tr>
+                <tr><td colspan="8" class="muted text-center">Loading keys…</td></tr>
               </tbody>
             </table>
           </div>
@@ -532,8 +664,195 @@
         </section>
       </section>
 
-      <!-- VIEW 5: INSTALLATION MANAGEMENT -->
+      <!-- VIEW 5: KEY TYPES & TYPE BUILDER -->
+      <section id="view-key-types" class="view" aria-label="Key Types and Type Builder">
+        <section class="panel glass">
+          <header class="panel-head">
+            <div>
+              <p class="eyebrow">UNIVERSAL KEY ENGINE</p>
+              <h2>Key Types</h2>
+              <p>Built-in types are protected. Project-owned custom types use declarative policy only; no user code is executed.</p>
+            </div>
+            <picture class="omega-pic" data-omega="other-key">
+              <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/other-key-animated.webp">
+              <img class="panel-glyph" src="/omega-assets/webp/other-key.webp" alt="" width="56" height="56">
+            </picture>
+            <button id="new-key-type-btn" class="btn btn-primary" type="button">New Custom Type</button>
+          </header>
+          <div class="toolbar">
+            <label class="search">
+              <span class="sr-only">Search key types</span>
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <input id="key-types-search-input" type="search" placeholder="Search name, ID, project, permission…" maxlength="200" autocomplete="off">
+            </label>
+            <button id="key-types-refresh-btn" class="btn btn-ghost" type="button">
+              <span class="btn-label">Refresh</span>
+              <span class="spinner" hidden aria-hidden="true"></span>
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table responsive-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Scope</th>
+                  <th>Permissions</th>
+                  <th>Format</th>
+                  <th>Expiration</th>
+                  <th>Keys</th>
+                  <th>Status</th>
+                  <th class="align-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="key-types-table-body">
+                <tr><td colspan="8" class="muted text-center">Loading key types…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <footer class="table-foot">
+            <span id="key-types-summary" class="muted">—</span>
+            <span class="muted">Built-in types cannot be edited or deleted. Referenced custom types can only be disabled.</span>
+          </footer>
+        </section>
+
+        <section id="type-builder-panel" class="panel glass type-builder-panel" hidden aria-labelledby="type-builder-title">
+          <header class="panel-head">
+            <div>
+              <p class="eyebrow">DECLARATIVE POLICY / CUSTOM TYPE</p>
+              <h2 id="type-builder-title">Create Custom Key Type</h2>
+              <p>Define format, permissions, scopes, metadata, validation, and expiration policy. Changes are authorized and persisted server-side.</p>
+            </div>
+            <button id="type-builder-close" class="icon-close" type="button" aria-label="Close type builder">×</button>
+          </header>
+          <form id="key-type-form" class="form-grid" novalidate>
+            <label class="field">
+              <span class="field-label">Type ID *</span>
+              <input id="type-id-input" type="text" maxlength="50" pattern="[a-z][a-z0-9_]{2,49}" placeholder="custom_reader" autocomplete="off" required>
+              <small class="muted">3–50 lowercase letters, digits, or underscores. The ID cannot change later.</small>
+            </label>
+            <label class="field">
+              <span class="field-label">Display Name *</span>
+              <input id="type-name-input" type="text" maxlength="80" placeholder="My custom key type" autocomplete="off" required>
+            </label>
+            <label class="field">
+              <span class="field-label">Project Scope</span>
+              <select id="type-project-select">
+                <option value="">Global — available to every project</option>
+              </select>
+              <small class="muted">Project types are isolated to their owning project.</small>
+            </label>
+            <label class="field">
+              <span class="field-label">Key Prefix</span>
+              <input id="type-prefix-input" type="text" maxlength="12" pattern="[A-Za-z0-9]*" value="CUS" autocomplete="off">
+              <small class="muted">Up to 12 uppercase letters or digits.</small>
+            </label>
+            <label class="field">
+              <span class="field-label">Groups</span>
+              <input id="type-groups-input" type="number" min="1" max="8" value="4">
+            </label>
+            <label class="field">
+              <span class="field-label">Group Length</span>
+              <input id="type-group-length-input" type="number" min="3" max="10" value="4">
+            </label>
+            <label class="field">
+              <span class="field-label">Separator</span>
+              <select id="type-separator-select">
+                <option value="-">Hyphen (-)</option>
+                <option value="_">Underscore (_)</option>
+                <option value="">None</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Suffix</span>
+              <input id="type-suffix-input" type="text" maxlength="12" pattern="[A-Za-z0-9]*" placeholder="Optional" autocomplete="off">
+            </label>
+            <label class="field span-2">
+              <span class="field-label">Description</span>
+              <textarea id="type-description-input" rows="3" maxlength="500" placeholder="What this type is for, and when it should be used."></textarea>
+            </label>
+            <div class="span-2 generator-config-section">
+              <span class="field-label">Permission Ceiling *</span>
+              <div id="type-permissions-grid" class="check-grid"></div>
+              <small class="muted">A generated key can request only a subset of these permissions.</small>
+            </div>
+            <label class="field span-2">
+              <span class="field-label">Allowed Scopes</span>
+              <input id="type-scopes-input" type="text" maxlength="1000" placeholder="reports.read, devices.connect" autocomplete="off">
+              <small class="muted">Comma-separated lowercase scopes. Empty means no scopes are allowed.</small>
+            </label>
+            <label class="field span-2">
+              <span class="field-label">Metadata Schema (JSON)</span>
+              <textarea id="type-metadata-input" rows="5" spellcheck="false" placeholder='{"fields":{"tenant":{"type":"string","required":true,"max_length":40}}}'></textarea>
+              <small class="muted">Use a JSON object with a <code>fields</code> object. Supported types: string, number, boolean, array, object.</small>
+            </label>
+            <label class="field span-2">
+              <span class="field-label">Validation Rules (JSON)</span>
+              <textarea id="type-validation-input" rows="4" spellcheck="false" placeholder='{"required_metadata":["tenant"],"allowed_metadata":["tenant"]}'></textarea>
+              <small class="muted">Supported declarative rules: required_metadata, allowed_metadata, min_length, max_length.</small>
+            </label>
+            <div class="span-2 generator-config-section">
+              <span class="field-label">Allowed Expiration Presets *</span>
+              <div id="type-expiry-presets" class="check-grid"></div>
+              <small class="muted">Only checked presets can be selected when generating a key of this type.</small>
+            </div>
+            <label class="field">
+              <span class="field-label">Default Expiration *</span>
+              <select id="type-default-expiry"></select>
+            </label>
+            <label class="field checkbox-field-wrap">
+              <input id="type-active-input" type="checkbox" checked>
+              <span class="field-label">Active
+                <small class="muted">Inactive types remain visible but cannot issue new keys.</small>
+              </span>
+            </label>
+            <p id="type-builder-error" class="span-2 form-message" role="alert" aria-live="polite"></p>
+            <div class="span-2 modal-actions clean-actions-bar margin-top-md">
+              <button id="type-builder-cancel" class="btn btn-ghost" type="button">Cancel</button>
+              <button id="type-builder-submit" class="btn btn-primary btn-glow" type="submit">
+                <span class="btn-label">Create Key Type</span>
+                <span class="spinner" hidden aria-hidden="true"></span>
+              </button>
+            </div>
+          </form>
+        </section>
+      </section>
+
+      <!-- VIEW 6: UNIVERSAL OPERATIONS -->
+      <section id="view-operations" class="view" aria-label="Universal operations">
+        <section class="panel glass">
+          <header class="panel-head">
+            <div>
+              <p class="eyebrow">UNIVERSAL CONTROL PLANE</p>
+              <h2>Operations</h2>
+              <p>Devices, API activity, signed webhooks, notifications, data transfer, automation, access roles, search, and API documentation.</p>
+            </div>
+            <img class="panel-glyph" src="/omega-assets/svg/logo-mark.svg" alt="" width="48" height="48">
+            <button id="ops-refresh-btn" class="btn btn-ghost" type="button">
+              <span class="btn-label">Refresh</span>
+              <span class="spinner" hidden aria-hidden="true"></span>
+            </button>
+          </header>
+          <nav id="operations-tabs" class="operations-tabs" aria-label="Operations sections">
+            <button class="ops-tab is-active" type="button" data-ops-tab="devices">Devices</button>
+            <button class="ops-tab" type="button" data-ops-tab="api-usage">API Usage</button>
+            <button class="ops-tab" type="button" data-ops-tab="webhooks">Webhooks</button>
+            <button class="ops-tab" type="button" data-ops-tab="inbox">Inbox</button>
+            <button class="ops-tab" type="button" data-ops-tab="data">Import / Export</button>
+            <button class="ops-tab" type="button" data-ops-tab="automation">Automation</button>
+            <button class="ops-tab" type="button" data-ops-tab="access-control">Access Control</button>
+            <button class="ops-tab" type="button" data-ops-tab="search">Search</button>
+            <button class="ops-tab" type="button" data-ops-tab="docs">API Docs</button>
+          </nav>
+          <div id="operations-content" class="ops-stack" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <!-- VIEW 7: INSTALLATION MANAGEMENT -->
       <section id="view-installations" class="view" aria-label="Installation Management">
+        <picture class="omega-pic" data-omega="reader-key">
+          <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/reader-key-animated.webp">
+          <img class="view-glyph" src="/omega-assets/webp/reader-key.webp" alt="" width="140" height="140">
+        </picture>
         <section class="panel glass">
           <header class="panel-head">
             <div>
@@ -592,7 +911,7 @@
         </section>
       </section>
 
-      <!-- VIEW 6: SECURITY CENTER -->
+      <!-- VIEW 7: SECURITY CENTER -->
       <section id="view-security" class="view" aria-label="Security Center">
         <div class="grid-2">
           <section class="panel glass">
@@ -601,6 +920,7 @@
                 <h2>Super Admin Authentication</h2>
                 <p>Argon2id hashing &amp; lockout protection.</p>
               </div>
+              <img class="panel-glyph" src="/omega-assets/webp/key-verified.webp" alt="" width="56" height="56">
               <span class="badge badge-success">ENFORCED</span>
             </header>
             <div class="pulse-metrics-stack">
@@ -752,6 +1072,7 @@
 
       <!-- VIEW 7: AUDIT LOGS -->
       <section id="view-logs" class="view" aria-label="Audit Logs">
+        <img class="view-glyph" src="/omega-assets/svg/readme-icon.svg" alt="" width="140" height="140">
         <section class="panel glass">
           <header class="panel-head">
             <div>
@@ -826,7 +1147,7 @@
         </section>
       </section>
 
-      <!-- VIEW 8: SETTINGS -->
+      <!-- VIEW 9: SETTINGS -->
       <section id="view-settings" class="view" aria-label="Settings">
         <section class="panel glass form-panel-contained motion-panel" aria-labelledby="motion-title">
           <header class="panel-head">
@@ -835,6 +1156,7 @@
               <h2 id="motion-title">Display &amp; Motion</h2>
               <p>Effect profile for this browser. Stored locally only — never sent to the server and never used for keys.</p>
             </div>
+            <img class="panel-glyph" src="/omega-assets/webp/readme-icon.webp" alt="" width="48" height="48">
             <span class="chip"><span class="pulse-dot"></span> DEVICE</span>
           </header>
           <div class="pulse-metrics-stack">
@@ -908,7 +1230,7 @@
 
             <label class="field span-2 checkbox-field-wrap">
               <input id="setting-maintenance-mode" type="checkbox">
-              <span class="field-label">Maintenance Mode (Disables new reader key activations)</span>
+              <span class="field-label">Maintenance Mode (Disables new key activations)</span>
             </label>
 
             <div class="span-2 alert alert-warn">
@@ -928,6 +1250,7 @@
       </section>
 
       <footer class="app-foot">
+        <img class="foot-divider" src="/omega-assets/webp/divider.webp" alt="" width="800" height="20">
         OMEGA NEX-ORA · NexOra Database Key Generator · Production Admin Platform · Server-side Authorization Enforced
       </footer>
     </main>
@@ -943,6 +1266,7 @@
           <p class="eyebrow">PROJECT RECORD</p>
           <h2 id="project-detail-title">Project Details</h2>
         </div>
+        <img class="modal-brand modal-brand-sm" src="/omega-assets/svg/database-key.svg" alt="" width="36" height="36">
         <button class="icon-close" type="button" data-close="project-detail-modal" aria-label="Close">×</button>
       </header>
       <div class="modal-body" id="project-detail-body">
@@ -960,11 +1284,18 @@
       <header class="modal-head">
         <div>
           <p class="eyebrow">ONE-TIME SECURE REVEAL</p>
-          <h2 id="result-title">Reader Key Generated</h2>
+          <h2 id="result-title">Key Generated</h2>
         </div>
+        <img class="modal-brand" src="/effect-assets/ultra-universal-keygen-logo-v3.svg" alt="" width="40" height="40">
         <button class="icon-close" type="button" data-close="result-modal" aria-label="Close">×</button>
       </header>
       <div class="modal-body result-body">
+        <div class="result-visual" aria-hidden="true">
+          <picture class="omega-pic" data-omega="key-verified">
+            <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/key-verified-animated.webp">
+            <img src="/omega-assets/webp/key-verified.webp" alt="" width="92" height="92">
+          </picture>
+        </div>
         <div id="result-warning" class="alert alert-warn">
           <strong>CRITICAL:</strong> Store this plaintext key right now. It is cryptographically hashed and cannot be retrieved again after closing this dialog.
         </div>
@@ -972,7 +1303,7 @@
         <div id="generated-list" class="key-list" aria-live="polite"></div>
       </div>
       <footer class="modal-actions">
-        <button id="copy-all" class="btn btn-ghost" type="button" data-tip="Copies the one-time plaintext reader key held in this session.">Copy all</button>
+        <button id="copy-all" class="btn btn-ghost" type="button" data-tip="Copies the one-time plaintext key held in this session.">Copy all</button>
         <button id="download-keys-csv" class="btn btn-ghost" type="button" data-tip="Downloads the plaintext key as CSV. Store the file securely; the key cannot be retrieved again.">Download CSV</button>
         <button class="btn btn-primary" type="button" data-close="result-modal">Done</button>
       </footer>
@@ -985,7 +1316,7 @@
       <header class="modal-head">
         <div>
           <p class="eyebrow">KEY RECORD</p>
-          <h2 id="detail-title">Reader Key Details</h2>
+          <h2 id="detail-title">Key Details</h2>
         </div>
         <button class="icon-close" type="button" data-close="detail-modal" aria-label="Close">×</button>
       </header>
@@ -1048,7 +1379,7 @@
       </header>
       <div class="modal-body">
         <div class="alert alert-warn">
-          <strong>PERMANENT:</strong> This removes every NexOra project and its Reader Keys, installations, and device tokens in one transaction. Admin accounts, system settings, audit history, and legacy SMS data are preserved.
+          <strong>PERMANENT:</strong> This removes every NexOra project and its keys, installations, and device tokens in one transaction. Admin accounts, system settings, audit history, and legacy SMS data are preserved.
         </div>
         <p id="delete-all-count" class="muted"></p>
         <label class="field">
@@ -1080,7 +1411,10 @@
     <div class="leave-grid"></div>
     <div class="leave-visual">
       <span class="leave-ring"></span>
-      <img src="/assets/logo.svg" alt="" width="64" height="64">
+      <picture>
+        <source media="(prefers-reduced-motion: reduce)" srcset="/omega-assets/webp/logo-mark.webp">
+        <img src="/effect-assets/ultra-universal-keygen-logo-v3.svg" alt="" width="72" height="72">
+      </picture>
     </div>
     <p class="leave-kicker">OMEGA NEX-ORA / SECURE HANDOFF</p>
     <p class="leave-title">Securing session</p>
