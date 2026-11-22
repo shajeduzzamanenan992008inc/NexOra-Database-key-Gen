@@ -63,6 +63,12 @@
 
 <p align="center"><sub>* Unlimited by design: the platform imposes no arbitrary project or key limits, so capacity is bounded only by infrastructure, policy, and configuration.</sub></p>
 
+<p align="center">
+  <strong>CONTROL PLANE</strong> &nbsp;·&nbsp; <strong>KEY FORGE</strong> &nbsp;·&nbsp; <strong>POLICY ENGINE</strong> &nbsp;·&nbsp; <strong>SECURE API</strong> &nbsp;·&nbsp; <strong>AUDIT TRAIL</strong>
+</p>
+
+<p align="center"><sub>Documentation-first project overview · GitHub-native diagrams · Security-conscious integration boundaries</sub></p>
+
 <table align="center">
   <tr>
     <td align="center"><h3>11</h3><sub>SQL migrations<br />(001–011)</sub></td>
@@ -145,6 +151,9 @@ The repository also contains the **OMEGA NEX-ORA Universal Key Platform** (`/pla
 | **Builder / rights holder** | Shajeduzzaman Enan |
 | **License** | OMEGA NEX-ORA Proprietary Software and Content License |
 
+> [!NOTE]
+> This README describes the repository's documented design and recorded verification results. It is not a substitute for inspecting the current source tree, running the test suite, validating migrations, or reviewing the deployed environment.
+
 ### The NexOra Concept
 
 #### Flowchart 01: The NexOra Concept
@@ -157,9 +166,9 @@ flowchart TB
     U --> P["PROJECT SYSTEM"]:::core
     U --> K["KEY SYSTEM"]:::core
     U --> A["ADMIN SYSTEM"]:::core
-    P --> P1["PROJECT CONTROL<br/>PROJECT POLICY<br/>PROJECT EXPIRY<br/>PROJECT STATUS"]:::core
-    K --> K1["KEY GENERATION<br/>KEY VALIDATION<br/>KEY EXPIRATION<br/>KEY REVOCATION"]:::core
-    A --> A1["DASHBOARD<br/>SETTINGS<br/>MONITORING<br/>DATABASE"]:::core
+    P --> P1["PROJECT CONTROL<br>PROJECT POLICY<br>PROJECT EXPIRY<br>PROJECT STATUS"]:::core
+    K --> K1["KEY GENERATION<br>KEY VALIDATION<br>KEY EXPIRATION<br>KEY REVOCATION"]:::core
+    A --> A1["DASHBOARD<br>SETTINGS<br>MONITORING<br>DATABASE"]:::core
     P1 --> D[("DATABASE ENGINE")]:::data
     K1 --> D
     A1 --> D
@@ -400,7 +409,22 @@ Every flowchart, state diagram, sequence diagram, and ER diagram in this README 
 | **22** | [Core Management Workflow](#flowchart-22-core-management-workflow) | Flowchart | [Admin Dashboard and UX](#admin-dashboard-and-ux) | 12.md · redrawn from the text flow |
 | **23** | [Deployment Workflow](#flowchart-23-deployment-workflow) | Flowchart | [Deployment and Operations](#deployment-and-operations) | 12.md + the README migration gate |
 
-**23 diagrams in total:** every Mermaid diagram from the original README and 12.md, every text-art diagram redrawn as a real flowchart, and new flowcharts for the documented lifecycle, security, and operations flows.
+**23 diagrams in total:** architecture maps, project and key lifecycles, authorization decisions, Reader activation, deletion safety, API guards, automation, import/export, webhook validation, a conceptual ER model, and deployment workflow.
+
+### GitHub Mermaid rendering standard
+
+All diagrams use GitHub's native `mermaid` fenced-code renderer. They are intentionally kept as standalone Markdown code fences (not nested inside HTML tables, `<p>`, or layout containers) so GitHub can detect and render them.
+
+- Use a fenced code block whose language identifier is `mermaid`; close it with the matching fence.
+- Keep Mermaid source at the left margin; do not indent the fence inside lists or blockquotes.
+- Prefer standard Mermaid declarations (`flowchart`, `stateDiagram-v2`, `sequenceDiagram`, and `erDiagram`) and quoted node labels.
+- Avoid embedding Markdown tables or raw HTML around a Mermaid fence.
+- When editing a diagram, validate the Mermaid source and preview the README on GitHub before merging.
+- If a diagram appears as code after a commit, verify that the file is rendered as Markdown, that the fence language is exactly `mermaid`, and that the source has no unmatched quotes, brackets, or subgraph boundaries.
+
+> [!TIP]
+> GitHub renders Mermaid diagrams natively. No external image host, JavaScript embed, or generated screenshot is required. The diagrams remain text-based, reviewable, accessible to source-control diffs, and theme-adaptive in GitHub.
+
 
 <p align="center"><a href="#readme-top">↑ Back to top</a></p>
 
@@ -466,12 +490,12 @@ flowchart TB
 
 ```mermaid
 flowchart TD
-    A["Admin Dashboard<br/>HTML5 · Vanilla JS · CSS"]:::admin -->|"HTTPS · HttpOnly cookie · CSRF"| B["Flask Backend"]:::core
+    A["Admin Dashboard<br>HTML5 · Vanilla JS · CSS"]:::admin -->|"HTTPS · HttpOnly cookie · CSRF"| B["Flask Backend"]:::core
     B --> C["Environment validation"]:::sec
-    B --> D["Super Admin authentication<br/>Argon2id · hashed sessions · rate limits"]:::sec
+    B --> D["Super Admin authentication<br>Argon2id · hashed sessions · rate limits"]:::sec
     B --> E["Project and Reader Key lifecycle"]:::core
-    B --> F["Device credential minting<br/>and verification"]:::core
-    B --> G["Versioned REST API<br/>/api/v1/"]:::core
+    B --> F["Device credential minting<br>and verification"]:::core
+    B --> G["Versioned REST API<br>/api/v1/"]:::core
     G -->|"TLS connection pool · pg8000"| H[("Supabase PostgreSQL")]:::data
     I["Separate Android Reader App"]:::ext -->|"HTTPS · one-time activation"| G
     I -->|"Bearer device credential"| G
@@ -822,9 +846,9 @@ flowchart TD
     G0["GENERATION REQUEST"]:::admin --> G1["VALIDATE PROJECT"]:::core
     G1 --> G2["VALIDATE KEY TYPE"]:::core
     G2 --> G3["VALIDATE POLICY"]:::core
-    G3 --> G4["GENERATE KEY<br/>CSPRNG · key-type aware"]:::sec
-    G4 --> G5["DATABASE INSERT<br/>HMAC digest stored"]:::data
-    G5 --> G6["RETURN RESULT<br/>plaintext revealed once"]:::ext
+    G3 --> G4["GENERATE KEY<br>CSPRNG · key-type aware"]:::sec
+    G4 --> G5["DATABASE INSERT<br>HMAC digest stored"]:::data
+    G5 --> G6["RETURN RESULT<br>plaintext revealed once"]:::ext
     G1 -.->|"invalid project"| GX["REJECT with a safe error"]:::bad
     G2 -.->|"unsupported type"| GX
     G3 -.->|"policy violation"| GX
@@ -900,15 +924,19 @@ The validation engine decides whether a key is authorized. It checks: **key exis
 
 ```mermaid
 flowchart TD
-    A["Validation Request"]:::admin --> B["Identify Project"]:::core
-    B --> C["Identify Key"]:::core
-    C --> D["Check Key Type"]:::core
-    D --> E["Check Project Status"]:::core
-    E --> F["Check Project Expiration"]:::core
-    F --> G["Check Key Status"]:::core
-    G --> H["Check Key Expiration"]:::core
-    H --> I["Check Permissions"]:::sec
-    I --> J["Authorization Result"]:::ext
+    A["Validation Request"]:::admin --> B{"Project exists?"}:::dec
+    B -->|No| X["DENY · safe response"]:::bad
+    B -->|Yes| C{"Key exists and belongs to project?"}:::dec
+    C -->|No| X
+    C -->|Yes| D{"Key type supported?"}:::dec
+    D -->|No| X
+    D -->|Yes| E{"Project active and not expired?"}:::dec
+    E -->|No| X
+    E -->|Yes| F{"Key active and not expired?"}:::dec
+    F -->|No| X
+    F -->|Yes| G{"Required permissions and policy pass?"}:::dec
+    G -->|No| X
+    G -->|Yes| J["AUTHORIZED · return minimal result"]:::data
     classDef admin fill:#0b1a4a,stroke:#00f0ff,stroke-width:2px,color:#e8fcff;
     classDef core fill:#1a0b3a,stroke:#8a5cff,stroke-width:2px,color:#f1ebff;
     classDef data fill:#052e1c,stroke:#3fffa0,stroke-width:2px,color:#d6ffe9;
@@ -998,20 +1026,20 @@ The Reader App is an **independent client** that uses only the public Reader API
 
 ```mermaid
 flowchart TD
-    S1["1 · Admin opens Key Generator"]:::admin --> S2["2 · Enter project name<br/>and select Generate Key"]:::admin
-    S2 --> S3["3 · Backend normalizes the name<br/>case-insensitively"]:::core
-    S3 --> Q1{"Name already used?<br/>including deleted-name tombstones"}:::dec
-    Q1 -->|Yes| R409["5 · 409 with safe metadata<br/>original plaintext key never returned"]:::bad
-    Q1 -->|No| T1["Single transaction:<br/>create project and exactly one Reader Key"]:::core
-    T1 --> T2["4 · Store only the HMAC digest<br/>return plaintext once for copying"]:::sec
+    S1["1 · Admin opens Key Generator"]:::admin --> S2["2 · Enter project name<br>and select Generate Key"]:::admin
+    S2 --> S3["3 · Backend normalizes the name<br>case-insensitively"]:::core
+    S3 --> Q1{"Name already used?<br>including deleted-name tombstones"}:::dec
+    Q1 -->|Yes| R409["409 Conflict · safe metadata only<br>never return an existing plaintext key"]:::bad
+    Q1 -->|No| T1["Single transaction:<br>create project and exactly one Reader Key"]:::core
+    T1 --> T2["4 · Store only the HMAC digest<br>reveal plaintext once for copying"]:::sec
     T2 --> ST1["Reader Key state: GENERATED"]:::data
-    ST1 --> RA["6 · Reader App redeems the key once<br/>POST /reader/activate"]:::ext
-    RA --> ST2["Reader Key state: USED<br/>device credential issued"]:::data
-    T1 --> OPS["Admin project operations<br/>any time after creation"]:::admin
-    OPS --> DA["7 · Deactivate project<br/>blocks new activations and existing device credentials<br/>Reader Key state is not rewritten"]:::sec
-    OPS --> DP["8 · Delete project<br/>one transaction removes project, key,<br/>installations, device tokens and records"]:::bad
-    DP --> AU["Audit event survives<br/>normalized name is tombstoned"]:::sec
-    OPS --> DAP["9 · DELETE ALL PROJECTS<br/>exact phrase and fresh password check"]:::bad
+    ST1 --> RA["6 · Reader App redeems the key once<br>POST /reader/activate"]:::ext
+    RA --> ST2["Reader Key state: USED<br>device credential issued"]:::data
+    T1 --> OPS["Admin project operations<br>any time after creation"]:::admin
+    OPS --> DA["7 · Deactivate project<br>blocks new activations and existing device credentials<br>Reader Key state is not rewritten"]:::sec
+    OPS --> DP["8 · Delete project<br>one transaction removes project, key,<br>installations, device tokens and records"]:::bad
+    DP --> AU["Audit event survives<br>normalized name is tombstoned"]:::sec
+    OPS --> DAP["9 · DELETE ALL PROJECTS<br>exact phrase and fresh password check"]:::bad
     classDef admin fill:#0b1a4a,stroke:#00f0ff,stroke-width:2px,color:#e8fcff;
     classDef core fill:#1a0b3a,stroke:#8a5cff,stroke-width:2px,color:#f1ebff;
     classDef data fill:#052e1c,stroke:#3fffa0,stroke-width:2px,color:#d6ffe9;
@@ -1078,22 +1106,22 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     subgraph ONE["Delete one project"]
-        D1["DELETE /projects/id"]:::admin --> D2{"confirm_project_name<br/>matches?"}:::dec
+        D1["DELETE /projects/id"]:::admin --> D2{"confirm_project_name<br>matches?"}:::dec
         D2 -->|No| DX["Rejected"]:::bad
-        D2 -->|Yes| D3["One transaction removes the project,<br/>Reader Key, installations, device tokens and records"]:::core
+        D2 -->|Yes| D3["One transaction removes the project,<br>Reader Key, installations, device tokens and records"]:::core
         D3 --> D4["Audit event survives"]:::sec
         D3 --> D5["Normalized name is tombstoned"]:::sec
     end
     subgraph ALL["DELETE ALL PROJECTS"]
-        A1["DELETE /projects"]:::admin --> A2{"Exact phrase DELETE ALL PROJECTS<br/>and fresh password check?"}:::dec
+        A1["DELETE /projects"]:::admin --> A2{"Exact phrase DELETE ALL PROJECTS<br>and fresh password check?"}:::dec
         A2 -->|No| AX["Rejected"]:::bad
         A2 -->|Yes| A3["Transactional delete of all NexOra projects"]:::core
-        A3 --> A4["Preserved: admin accounts, settings,<br/>audit history, legacy SMS data"]:::data
+        A3 --> A4["Preserved: admin accounts, settings,<br>audit history, legacy SMS data"]:::data
     end
     subgraph UNI["Universal platform deletion"]
-        U1["Owner-only delete preview<br/>blast-radius counts"]:::admin --> U2{"Name, or exact phrase for delete-all,<br/>and password confirmed?"}:::dec
+        U1["Owner-only delete preview<br>blast-radius counts"]:::admin --> U2{"Name, or exact phrase for delete-all,<br>and password confirmed?"}:::dec
         U2 -->|No| UX["Rejected"]:::bad
-        U2 -->|Yes| U3["Permanent deletion<br/>with audit event"]:::core
+        U2 -->|Yes| U3["Permanent deletion<br>with audit event"]:::core
     end
     classDef admin fill:#0b1a4a,stroke:#00f0ff,stroke-width:2px,color:#e8fcff;
     classDef core fill:#1a0b3a,stroke:#8a5cff,stroke-width:2px,color:#f1ebff;
@@ -1234,18 +1262,18 @@ The API provides controlled access to NexOra functionality.
 
 ```mermaid
 flowchart LR
-    R["Admin request to a<br/>management API route"]:::admin --> T["HTTPS transport"]:::sec
+    R["Admin request to a<br>management API route"]:::admin --> T["HTTPS transport"]:::sec
     T --> L{"Within rate limits?"}:::dec
     L -->|No| X["Reject"]:::bad
-    L -->|Yes| S{"Human admin session?<br/>HttpOnly cookie"}:::dec
+    L -->|Yes| S{"Human admin session?<br>HttpOnly cookie"}:::dec
     S -->|No| X
-    S -->|Yes| C{"CSRF valid?<br/>state-changing requests"}:::dec
+    S -->|Yes| C{"CSRF valid?<br>state-changing requests"}:::dec
     C -->|No| X
-    C -->|Yes| P{"Explicit platform<br/>permission, RBAC?"}:::dec
+    C -->|Yes| P{"Explicit platform<br>permission, RBAC?"}:::dec
     P -->|No| X
-    P -->|Yes| H["Handler runs<br/>server-side filtering and escalation guards"]:::core
-    H --> A["Audit event<br/>with request ID"]:::sec
-    K["Project key client<br/>no browser session"]:::ext -->|"POST /access/authenticate"| KA["Key authentication"]:::core
+    P -->|Yes| H["Handler runs<br>server-side filtering and escalation guards"]:::core
+    H --> A["Audit event<br>with request ID"]:::sec
+    K["Project key client<br>no browser session"]:::ext -->|"POST /access/authenticate"| KA["Key authentication"]:::core
     classDef admin fill:#0b1a4a,stroke:#00f0ff,stroke-width:2px,color:#e8fcff;
     classDef core fill:#1a0b3a,stroke:#8a5cff,stroke-width:2px,color:#f1ebff;
     classDef data fill:#052e1c,stroke:#3fffa0,stroke-width:2px,color:#d6ffe9;
@@ -1314,19 +1342,19 @@ The Flask web process never runs an infinite scheduler loop. One worker at a tim
 
 ```mermaid
 flowchart TD
-    T["Cron · systemd · Windows Task Scheduler"]:::ext --> C["python -m backend.cli<br/>universal-scheduler-run --once"]:::admin
-    C --> L{"PostgreSQL advisory lock<br/>acquired?"}:::dec
-    L -->|No| W["Lock held by another worker<br/>no concurrent sweep"]:::sec
+    T["Cron · systemd · Windows Task Scheduler"]:::ext --> C["python -m backend.cli<br>universal-scheduler-run --once"]:::admin
+    C --> L{"PostgreSQL advisory lock<br>acquired?"}:::dec
+    L -->|No| W["Lock held by another worker<br>no concurrent sweep"]:::sec
     L -->|Yes| S["Bounded sweep"]:::core
-    S --> J1["Universal automation<br/>expiry · cleanup · retry"]:::data
-    S --> J2["Project purge<br/>only when retention or a schedule is configured"]:::data
+    S --> J1["Universal automation<br>expiry · cleanup · retry"]:::data
+    S --> J2["Project purge<br>only when retention or a schedule is configured"]:::data
     S --> J3["Expired-session pruning"]:::data
     J1 --> R["Record run in nexora_automation_runs"]:::sec
     J2 --> R
     J3 --> R
     R --> A["Audit event"]:::sec
     D["--dry-run: preview mode"]:::ext -.-> C
-    ST["universal-scheduler-status:<br/>scheduler status, queue depth, recent runs"]:::ext -.-> R
+    ST["universal-scheduler-status:<br>scheduler status, queue depth, recent runs"]:::ext -.-> R
     classDef admin fill:#0b1a4a,stroke:#00f0ff,stroke-width:2px,color:#e8fcff;
     classDef core fill:#1a0b3a,stroke:#8a5cff,stroke-width:2px,color:#f1ebff;
     classDef data fill:#052e1c,stroke:#3fffa0,stroke-width:2px,color:#d6ffe9;
@@ -1347,15 +1375,15 @@ Project backup, restore, conflict handling, and permanent deletion are documente
 ```mermaid
 flowchart LR
     subgraph EXP["Export"]
-        E1["Export preview<br/>counts and security notice"]:::admin --> E2["Export JSON or ZIP bundle<br/>one, selected or all projects"]:::core
+        E1["Export preview<br>counts and security notice"]:::admin --> E2["Export JSON or ZIP bundle<br>one, selected or all projects"]:::core
     end
     subgraph IMP["Import and restore"]
-        I1["Import preview<br/>validate the bundle without writing"]:::admin --> I2{"Conflict policy<br/>chosen?"}:::dec
+        I1["Import preview<br>validate the bundle without writing"]:::admin --> I2{"Conflict policy<br>chosen?"}:::dec
         I2 -->|Yes| I3["Transactional restore"]:::core
         I3 -->|"on failure"| I4["Rollback"]:::bad
     end
     subgraph REP["Imported-key replacement"]
-        P1["Replacement preview<br/>eligibility and duplicate protection"]:::admin --> P2["Generate independent<br/>replacement credentials"]:::core
+        P1["Replacement preview<br>eligibility and duplicate protection"]:::admin --> P2["Generate independent<br>replacement credentials"]:::core
         P2 --> P3["One-time reveal"]:::sec
         P2 --> P4["History without plaintext"]:::data
     end
@@ -1383,10 +1411,10 @@ flowchart TD
     W2 -->|No| X["Reject"]:::bad
     W2 -->|Yes| W3{"Host resolves?"}:::dec
     W3 -->|No| X
-    W3 -->|Yes| W4{"Private or link-local<br/>address?"}:::dec
+    W3 -->|Yes| W4{"Private or link-local<br>address?"}:::dec
     W4 -->|Yes| X
     W4 -->|No| W5["DNS pinning"]:::sec
-    W5 --> W6["Signed delivery<br/>TLS controls · timeouts · bounded responses"]:::core
+    W5 --> W6["Signed delivery<br>TLS controls · timeouts · bounded responses"]:::core
     W6 --> W7{"Redirect response?"}:::dec
     W7 -->|Yes| X2["Rejected: redirects are not followed"]:::bad
     W7 -->|No| W8["Delivered"]:::data
@@ -1422,7 +1450,7 @@ erDiagram
     KEYS ||--o{ KEY_METADATA : contains
 
     PROJECTS {
-        uuid id
+        uuid id PK
         string name
         string status
         timestamp expires_at
@@ -1430,11 +1458,25 @@ erDiagram
     }
 
     KEYS {
-        uuid id
-        uuid project_id
+        uuid id PK
+        uuid project_id FK
         string key_type
         string status
         timestamp expires_at
+    }
+
+    PROJECT_POLICIES {
+        uuid id PK
+        uuid project_id FK
+        string policy_name
+        json policy_value
+    }
+
+    KEY_METADATA {
+        uuid id PK
+        uuid key_id FK
+        string metadata_name
+        json metadata_value
     }
 ```
 
@@ -2040,11 +2082,11 @@ flowchart TD
     B --> C["Install Dependencies"]:::core
     C --> D["Run Tests"]:::core
     D --> E["Configure Database"]:::core
-    E --> G{"Backup / PITR checkpoint and<br/>migration window approved?"}:::dec
-    G -->|No| H["Hold: do not apply migrations 005–011<br/>to production"]:::bad
+    E --> G{"Backup / PITR checkpoint and<br>migration window approved?"}:::dec
+    G -->|No| H["Hold: do not apply migrations 005–011<br>to production"]:::bad
     G -->|Yes| F["Apply Migrations"]:::data
     F --> I["Deploy Application"]:::core
-    I --> J["Health Check<br/>GET /api/v1/health"]:::sec
+    I --> J["Health Check<br>GET /api/v1/health"]:::sec
     J --> K["Production"]:::ext
     classDef admin fill:#0b1a4a,stroke:#00f0ff,stroke-width:2px,color:#e8fcff;
     classDef core fill:#1a0b3a,stroke:#8a5cff,stroke-width:2px,color:#f1ebff;
