@@ -128,8 +128,11 @@ route (`owner`, `admin`, or `viewer`); destructive operations require `owner`.
 
 ### Project creation is Generate Key
 
-There is no standalone create-project endpoint and no bulk Reader Key endpoint. `POST
-/api/v1/projects/generate-key` creates the project and exactly one key in one transaction.
+Projects can be created standalone with `POST /api/v1/projects`; the Classic
+Universal Key Generator uses that endpoint and then issues one or more keys with
+`POST /api/v1/universal/keys` (`quantity` 1–500). The legacy
+`POST /api/v1/projects/generate-key` remains available and creates the project
+plus exactly one Reader Key in one transaction.
 
 ```http
 POST /api/v1/projects/generate-key
@@ -159,7 +162,10 @@ case/spacing variants and names retired by a permanent deletion) returns `409` w
 
 | Method | Path | Roles | Purpose |
 | --- | --- | --- | --- |
+| `POST` | `/api/v1/projects` | owner, admin | Create a project without a key |
 | `POST` | `/api/v1/projects/generate-key` | owner, admin | Create project + one key |
+| `POST` | `/api/v1/projects/{id}/keys` | owner, admin | Issue another Reader Key |
+| `POST` | `/api/v1/universal/keys` | key:write | Generate single or bulk universal keys |
 | `GET` | `/api/v1/projects` | owner, admin, viewer | List projects with key/installation/auto-delete data |
 | `GET` | `/api/v1/projects/{id}` | owner, admin, viewer | Project detail |
 | `PATCH` | `/api/v1/projects/{id}/status` | owner, admin | `{"status":"active"}` or `{"status":"inactive"}` |
@@ -189,13 +195,25 @@ SMS tables; any error rolls back the whole transaction.
 | `POST` | `/api/v1/reader/heartbeat` | Bearer device credential | Heartbeat |
 | `GET` | `/api/v1/reader/status` | Bearer device credential | Credential/status check |
 
-The activation body is `project_name`, `supabase_url`, `reader_key`, and `device_id`.
+The activation body is `project_name`, `supabase_url`, `reader_key`, and an optional `device_id`.
 `supabase_url` is the public project URL (`https://<ref>.supabase.co`), never a PostgreSQL DSN or
 service-role password. The deprecated `database_url` field is accepted as an alias for older Reader
 builds, but is validated the same way. Activation fails closed with `503
-SERVER_CONFIGURATION_ERROR` when the server has no `SUPABASE_URL`. A key transitions `GENERATED →
-USED` exactly once; later attempts return `409 ACTIVE_INSTALLATION_EXISTS` or `410
-KEY_ALREADY_USED`, and `EXPIRED`/`REVOKED` keys cannot activate.
+SERVER_CONFIGURATION_ERROR` when the server has no `SUPABASE_URL`.
+
+On success the key transitions `GENERATED → USED` exactly once and the response contains a device
+credential that is shown only in that response. The installation stores only an HMAC-SHA256 token
+digest in `reader_installations` and `device_tokens`. A project permits exactly one active
+installation; a second activation returns `409 ACTIVE_INSTALLATION_EXISTS`. Replaying an already
+redeemed key returns `410 KEY_ALREADY_USED`; `KEY_EXPIRED` and `KEY_REVOKED` are terminal. A key
+issued for another project returns `403 KEY_PROJECT_MISMATCH`.
+
+`POST /api/v1/reader/heartbeat` and `GET /api/v1/reader/status` require
+`Authorization: Bearer <device_credential>`. They reject missing, malformed, inactive, or revoked
+credentials with `401 UNAUTHORIZED`. A deactivated project returns `403 PROJECT_INACTIVE`; an
+archived, expired, or deleted project is rejected without exposing another project's data.
+Installation revocation clears the stored token hash, deactivates every token, and writes a
+`reader_installation.revoke` audit event.
 
 ---
 
@@ -436,6 +454,9 @@ action, actor email, target, outcome, IP, user agent and details.
 | `POST /api/keys/revoke`, `/deactivate` | 30 each |
 | `DELETE /api/keys/{id}` | 30 |
 | `GET /api/keys/export` | 10 |
+| `POST /api/v1/reader/activate` | 20 |
+| `POST /api/v1/reader/heartbeat` | 120 |
+| `GET /api/v1/reader/status` | 120 |
 | everything else under `/api/` | 240 |
 
 Exceeding a limit returns `429` with `details.retry_after_seconds` and a `Retry-After` header.
@@ -548,3 +569,25 @@ true. Partial failures are reported per record.
 Project roles are additional grants. They do not change `admin_users.platform_role`,
  cannot grant global-only or Owner permissions, and are enforced server-side in
 addition to the platform role.
+
+---
+
+## Reader API test categories
+
+All Reader tests use the disposable PostgreSQL test database named by
+`TEST_DATABASE_URL` (default `postgresql://postgres@127.0.0.1:55432/nexora_keygen_test`).
+They never use production credentials or external services.
+
+| Category | Command | What it covers |
+| --- | --- | --- |
+| Non-database unit/route tests | `python -m pytest tests/test_unit_keys.py tests/test_nexora_reader_keys.py tests/test_nexora_api_v1.py -q` | Key/device hashing, expiry logic, malformed request validation, authorization guards |
+| Reader lifecycle | `python -m pytest -m reader -q` | Activation, replay, cross-project rejection, device binding, status/heartbeat, installation revocation, concurrency, rate limits |
+| Generator regression | `python -m pytest -m generator -q` | Exact Classic two-request create-project → generate-key flow, bulk, expiry, retry and batch idempotency |
+| Security | `python -m pytest tests/test_auth_security.py tests/test_sms_frontend.py -q` | Session, CSRF, role boundaries, XSS/CSP and secret exposure |
+| Full PostgreSQL suite | `python -m pytest -q -ra` | Every backend/frontend contract, with skip reasons printed |
+
+The 26 tests in `tests/test_sms_auth.py`, `tests/test_sms_keys.py`, and
+`tests/test_sms_reader.py` belong to the optional legacy SMS Reader console and
+skip only because its `sms_reader` package is not present in this repository.
+They are not counted as Reader API passes. The NexOra `/api/v1/reader`
+lifecycle is fully executable without that package.

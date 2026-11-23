@@ -1,6 +1,6 @@
 # NexOra OMEGA — TODO
 
-> Status snapshot: 2026-11-21
+> Status snapshot: 2026-11-22
 > Source: verified completion report and repository checks.
 > Scope: migration 011 was tested against the local test PostgreSQL database only; it has **not** been applied to production.
 > Change control: no commit, push, or deployment was performed as part of this work.
@@ -29,13 +29,17 @@
 - [x] Scheduler worker status, per-job health, and run history.
 - [x] Bounded shutdown animation that starts after session revocation and ends at login.
 - [x] Fixed the 390px reveal-modal overflow; mobile navigation works.
+- [x] Dashboard and footer dividers now use the original `assets/omega-key-assets/svg/divider.svg`; animated WebP divider references were removed from the Classic shell.
+- [x] Restored generator selection feedback: project, key-type and expiry selects replay `is-picked`; key-type changes replay `type-pick`, expiry presets flash, and reduced-motion/lite-mode remain respected.
 
 ### Documentation
 - [x] Added `docs/PROJECT_BACKUP.md`, `docs/SCHEDULER.md`, `docs/SECURITY_WEBHOOKS.md`, and `docs/CUSTOM_ROLES.md`.
 - [x] Updated `README.md` and `docs/API.md` with transfer, roles, scheduler, and migration details.
 
 ### Verified results
-- [x] Full test suite: **282 passed, 26 skipped, 0 failed** (`333.61s`, exit 0).
+- [x] Full test suite: **343 collected, 318 passed, 25 skipped tests plus 1 module-level SMS console skip (26 skip reports), 0 failed** after Reader lifecycle and generator regression coverage. All 26 skip reports are the optional legacy SMS Reader console (25 test-level skips plus one module-level import skip); one SMS database-only constraint test executes and passes. No NexOra Reader API test is skipped.
+- [x] Reader lifecycle: **17 new executable tests** covering activation validation, URL contract, replay/cross-project rejection, device binding, digest-only storage, project states, concurrent activation, one-installation rule, heartbeat/status, installation revocation, rate limiting, and parameterized queries.
+- [x] Generator regression: exact Classic create-project → generate-key flow, bulk quantity, custom/never expiry, retry after failed type validation, and batch idempotency.
 - [x] Imported replacement/project role focused suite: **5 passed, 0 failed**.
 - [x] Responsive Chrome audit: **282 checks passed** across 11 viewports (pre-existing legacy dashboard audit; new platform views were smoke-tested at desktop and mobile navigation only).
 - [x] Authenticated platform smoke: **35 checks passed** against the real local app and test database, covering all 22 views.
@@ -53,7 +57,7 @@
 - [ ] Verify Firefox/Safari and physical mobile devices.
 - [ ] Test a live external webhook endpoint, including real DNS/TLS failure modes.
 - [ ] Run the scheduler as a long-lived cron/systemd/Task Scheduler worker.
-- [ ] Run the optional SMS Reader suite; its 26 tests remain skipped in the current suite.
+- [x] Audited the optional SMS Reader suite: all 26 tests skip because the repository does not contain or install the `sms_reader` console package. They cannot be enabled without implementing an out-of-scope legacy console; the real NexOra `/api/v1/reader` lifecycle is covered instead.
 
 ## Production Deployment (Blocked/Not Authorized)
 
@@ -73,5 +77,5 @@
 - Webhook redirects are always rejected by design; endpoints that require redirects are unsupported.
 - Browser verification covered Chrome only; no physical-device or cross-browser run was performed.
 - No load/performance benchmark was run, so no speedup claim is made.
-- The 26 skipped tests belong to the optional SMS Reader suite.
+- The SMS Reader console produces 26 skip reports (`sms_reader` package absent): 25 skipped test functions plus one module-level import skip. One SMS database-only constraint test does execute. Skips are reported as skips, never as passes. NexOra Reader API coverage is executable and does not depend on that package.
 - Production migration and live infrastructure verification remain outstanding.

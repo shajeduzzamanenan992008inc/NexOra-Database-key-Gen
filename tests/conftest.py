@@ -106,7 +106,11 @@ def app(test_settings):
 def sms_app(app, test_settings):
     """The isolated SMS Reader application, sharing the test database."""
     if not HAS_SMS:
-        pytest.skip("sms_reader module is not installed (out of scope)")
+        pytest.skip(
+            "optional SMS Reader console package sms_reader is not installed; "
+            "the NexOra /api/v1/reader suite is covered by "
+            "tests/test_reader_api_lifecycle.py"
+        )
     config = SmsConfig(
         key_pepper=SMS_PEPPER,
         max_bulk_keys=25,

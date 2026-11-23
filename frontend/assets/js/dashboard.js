@@ -31,6 +31,7 @@ import {
 import { omegaAsset } from "./omega-assets.js";
 import { renderOperations } from "./operations.js";
 import { clearSensitiveState, runShutdownAnimation } from "./shutdown.js";
+import { CustomSelect, initCustomSelects, injectCustomSelectStyles } from "./components/CustomSelect.js";
 
 const VIEW_META = {
   overview: {
@@ -1848,7 +1849,7 @@ function projectExpiryLabel(project) {
   return `${expired ? "Expired" : "Expires"} ${formatDate(project.expires_at)}`;
 }
 
-function updateProjectExpirationPreview() {
+function updateProjectExpirationPreview({ animate = false } = {}) {
   const select = $("#gen-project-expiration-select");
   const field = $("#gen-project-expiration-field");
   const customField = $("#gen-project-expiration-custom-field");
@@ -1859,8 +1860,16 @@ function updateProjectExpirationPreview() {
   if (preview) preview.hidden = !isNew;
   if (!select) return;
   const preset = select.value;
+  const wasCustomHidden = Boolean(customField && customField.hidden);
   if (customField) customField.hidden = !isNew || preset !== "custom";
   if (!preview) return;
+
+  if (animate) {
+    replayMotion(preview, "is-flash", 540);
+    if (isNew && preset === "custom" && wasCustomHidden) {
+      replayMotion(customField, "is-field-in", 320);
+    }
+  }
 
   let text = EXPIRATION_LABELS[preset] || "Never Expires";
   if (preset === "never") text = "Never expires — stored explicitly on the project.";
@@ -1916,7 +1925,7 @@ async function loadGeneratorKeyTypes() {
   updateGeneratorType();
 }
 
-function updateGeneratorType() {
+function updateGeneratorType({ animate = false } = {}) {
   const select = $("#gen-key-type-select");
   const summary = $("#gen-key-type-summary");
   const config = $("#gen-type-config");
@@ -1951,7 +1960,7 @@ function updateGeneratorType() {
     selected: defaultKeyTypePreset(type),
   });
   buildPresetChips();
-  updateExpirationPreview();
+  updateExpirationPreview({ animate });
 
   const permissions = Array.isArray(type.permissions) ? type.permissions.map(String) : [];
   const permissionSection = $("#gen-permissions-section");
@@ -1995,10 +2004,17 @@ function updateGeneratorType() {
   }
   const submitLabel = $("#gen-submit-label");
   if (submitLabel) submitLabel.textContent = `Generate ${type.name || "Key"}`;
+
+  if (animate) {
+    replayMotion(select, "is-picked", 340);
+    replayMotion(summary, "is-picked", 420);
+  }
 }
 
-function setGeneratorMode(mode, { focus = true } = {}) {
-  state.generatorMode = mode === "new" ? "new" : "existing";
+function setGeneratorMode(mode, { focus = true, animate = false } = {}) {
+  const nextMode = mode === "new" ? "new" : "existing";
+  const changed = state.generatorMode !== nextMode;
+  state.generatorMode = nextMode;
   const existingButton = $("#gen-mode-existing");
   const newButton = $("#gen-mode-new");
   const existingField = $("#gen-existing-field");
@@ -2014,6 +2030,9 @@ function setGeneratorMode(mode, { focus = true } = {}) {
   if (newButton) {
     newButton.classList.toggle("is-active", !existing);
     newButton.setAttribute("aria-pressed", String(!existing));
+  }
+  if (animate && changed) {
+    replayMotion(existing ? existingButton : newButton, "is-selected", 300);
   }
   if (existingField) existingField.hidden = !existing;
   if (newField) newField.hidden = existing;
@@ -3933,35 +3952,50 @@ function setupEventListeners() {
   if (generatorForm) generatorForm.addEventListener("submit", handleGenerateKeys);
 
   const modeExisting = $("#gen-mode-existing");
-  if (modeExisting) modeExisting.addEventListener("click", () => setGeneratorMode("existing"));
+  if (modeExisting) {
+    modeExisting.addEventListener("click", () =>
+      setGeneratorMode("existing", { animate: true })
+    );
+  }
   const modeNew = $("#gen-mode-new");
-  if (modeNew) modeNew.addEventListener("click", () => setGeneratorMode("new"));
+  if (modeNew) {
+    modeNew.addEventListener("click", () => setGeneratorMode("new", { animate: true }));
+  }
 
   const generatorProject = $("#gen-project-select");
   if (generatorProject) {
     generatorProject.addEventListener("change", () => {
+      replayMotion(generatorProject, "is-picked", 340);
       loadGeneratorKeyTypes().catch(() => {});
     });
   }
   const keyTypeSelect = $("#gen-key-type-select");
   if (keyTypeSelect) {
-    keyTypeSelect.addEventListener("change", updateGeneratorType);
+    keyTypeSelect.addEventListener("change", () =>
+      updateGeneratorType({ animate: true })
+    );
   }
   const projectExpirySelect = $("#gen-project-expiration-select");
   if (projectExpirySelect) {
-    projectExpirySelect.addEventListener("change", updateProjectExpirationPreview);
+    projectExpirySelect.addEventListener("change", () => {
+      replayMotion(projectExpirySelect, "is-picked", 340);
+      updateProjectExpirationPreview({ animate: true });
+    });
   }
   const projectExpiryCustom = $("#gen-project-expiration-custom");
   if (projectExpiryCustom) {
-    projectExpiryCustom.addEventListener("input", updateProjectExpirationPreview);
+    projectExpiryCustom.addEventListener("input", () =>
+      updateProjectExpirationPreview({ animate: true })
+    );
   }
 
   buildPresetChips();
   const expirationSelect = $("#gen-expiration-select");
   if (expirationSelect) {
-    expirationSelect.addEventListener("change", () =>
-      updateExpirationPreview({ animate: true })
-    );
+    expirationSelect.addEventListener("change", () => {
+      replayMotion(expirationSelect, "is-picked", 340);
+      updateExpirationPreview({ animate: true });
+    });
   }
   const customExpiration = $("#gen-expiration-custom");
   if (customExpiration) {
@@ -3969,6 +4003,24 @@ function setupEventListeners() {
       updateExpirationPreview({ animate: true })
     );
   }
+
+  // Every other platform select replays the shared selection animation on
+  // change (filters, type builder, settings). The four generator selects
+  // above keep their specific replay wiring so feedback stays consistent
+  // without double-firing the same class.
+  const replayHandledIds = new Set([
+    "gen-project-select",
+    "gen-key-type-select",
+    "gen-project-expiration-select",
+    "gen-expiration-select",
+  ]);
+  document.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) return;
+    if (replayHandledIds.has(target.id)) return;
+    if (!target.closest(".field, .select")) return;
+    replayMotion(target, "is-picked", 340);
+  });
 
   const generatorRetry = $("#generator-retry-btn");
   if (generatorRetry) {
@@ -4243,6 +4295,15 @@ async function boot() {
   } catch (error) {
     // Motion is optional; never let it stop the console from wiring up.
   }
+
+  // Initialize custom select components and inject styles
+  try {
+    injectCustomSelectStyles();
+    initCustomSelects();
+  } catch (error) {
+    console.warn('CustomSelect initialization failed:', error);
+  }
+
   dismissBootScreen();
 
   try {

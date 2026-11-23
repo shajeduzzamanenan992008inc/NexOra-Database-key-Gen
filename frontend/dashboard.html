@@ -178,10 +178,7 @@
               <source media="(prefers-reduced-motion: reduce)" srcset="/omega-assets/webp/logo.webp">
               <img class="omega-hero-banner" src="/effect-assets/ultra-universal-keygen.svg" alt="OMEGA Ultra Universal Key Gen — secure database key generation" width="960" height="600">
             </picture>
-            <picture class="omega-pic" data-omega="divider">
-              <source media="(prefers-reduced-motion: no-preference)" srcset="/omega-assets/webp/divider-animated.webp">
-              <img class="omega-hero-divider" src="/omega-assets/webp/divider.webp" alt="" width="800" height="20">
-            </picture>
+            <img class="omega-hero-divider" src="/omega-assets/svg/divider.svg" alt="" width="800" height="20">
           </figure>
         </section>
         <div class="stat-grid">
@@ -425,7 +422,7 @@
 
               <label id="gen-existing-field" class="field span-2">
                 <span class="field-label">Select Project *</span>
-                <select id="gen-project-select">
+                <select id="gen-project-select" data-custom-select data-placeholder="Choose a project…">
                   <option value="">Choose a project…</option>
                 </select>
                 <small class="muted">A project can own unlimited keys. Select one to issue another key.</small>
@@ -439,7 +436,7 @@
 
               <label id="gen-project-expiration-field" class="field span-2" hidden>
                 <span class="field-label">Project Expiration</span>
-                <select id="gen-project-expiration-select">
+                <select id="gen-project-expiration-select" data-custom-select data-placeholder="Project Expiration">
                   <option value="never" selected>Never Expire</option>
                   <option value="1_day">1 Day</option>
                   <option value="7_days">7 Days</option>
@@ -464,7 +461,7 @@
 
               <label class="field span-2">
                 <span class="field-label">Key Type *</span>
-                <select id="gen-key-type-select">
+                <select id="gen-key-type-select" data-custom-select data-placeholder="Key Type">
                   <option value="">Loading key types…</option>
                 </select>
                 <small class="muted" id="gen-key-type-hint">Built-in and project-defined Universal key types.</small>
@@ -500,7 +497,7 @@
 
               <label class="field span-2">
                 <span class="field-label">Key Expiration *</span>
-                <select id="gen-expiration-select">
+                <select id="gen-expiration-select" data-custom-select data-placeholder="Key Expiration">
                   <option value="1_day">1 Day</option>
                   <option value="7_days">7 Days</option>
                   <option value="30_days" selected>30 Days</option>
@@ -602,13 +599,13 @@
             </label>
             <label class="select">
               <span class="sr-only">Filter by project</span>
-              <select id="keys-filter-project">
+              <select id="keys-filter-project" data-custom-select data-placeholder="All Projects">
                 <option value="">All Projects</option>
               </select>
             </label>
             <label class="select">
               <span class="sr-only">Filter by status</span>
-              <select id="keys-filter-status">
+              <select id="keys-filter-status" data-custom-select data-placeholder="All Statuses">
                 <option value="">All Statuses</option>
                 <option value="generated">Unused (Generated)</option>
                 <option value="used">Used (Redeemed)</option>
@@ -618,7 +615,7 @@
             </label>
             <label class="select">
               <span class="sr-only">Filter by expiry</span>
-              <select id="keys-filter-expiry">
+              <select id="keys-filter-expiry" data-custom-select data-placeholder="All Expiries">
                 <option value="">All Expiries</option>
                 <option value="permanent">Permanent</option>
                 <option value="active">Active (Unexpired)</option>
@@ -627,7 +624,7 @@
             </label>
             <label class="select">
               <span class="sr-only">Rows per page</span>
-              <select id="keys-page-size">
+              <select id="keys-page-size" data-custom-select data-placeholder="Rows per page">
                 <option value="15">15 / page</option>
                 <option value="25" selected>25 / page</option>
                 <option value="50">50 / page</option>
@@ -736,7 +733,7 @@
             </label>
             <label class="field">
               <span class="field-label">Project Scope</span>
-              <select id="type-project-select">
+              <select id="type-project-select" data-custom-select data-placeholder="Project Scope">
                 <option value="">Global — available to every project</option>
               </select>
               <small class="muted">Project types are isolated to their owning project.</small>
@@ -756,7 +753,7 @@
             </label>
             <label class="field">
               <span class="field-label">Separator</span>
-              <select id="type-separator-select">
+              <select id="type-separator-select" data-custom-select data-placeholder="Separator">
                 <option value="-">Hyphen (-)</option>
                 <option value="_">Underscore (_)</option>
                 <option value="">None</option>
@@ -797,7 +794,7 @@
             </div>
             <label class="field">
               <span class="field-label">Default Expiration *</span>
-              <select id="type-default-expiry"></select>
+              <select id="type-default-expiry" data-custom-select data-placeholder="Default Expiration"></select>
             </label>
             <label class="field checkbox-field-wrap">
               <input id="type-active-input" type="checkbox" checked>
@@ -868,13 +865,13 @@
             </label>
             <label class="select">
               <span class="sr-only">Filter by project</span>
-              <select id="installations-filter-project">
+              <select id="installations-filter-project" data-custom-select data-placeholder="All Projects">
                 <option value="">All Projects</option>
               </select>
             </label>
             <label class="select">
               <span class="sr-only">Filter by status</span>
-              <select id="installations-filter-status">
+              <select id="installations-filter-status" data-custom-select data-placeholder="All Statuses">
                 <option value="">All Statuses</option>
                 <option value="active">Active</option>
                 <option value="revoked">Revoked</option>
@@ -1088,7 +1085,7 @@
             </label>
             <label class="select">
               <span class="sr-only">Filter action</span>
-              <select id="audit-filter-action">
+              <select id="audit-filter-action" data-custom-select data-placeholder="All Actions">
                 <option value="">All Actions</option>
                 <option value="auth.login">Admin Login</option>
                 <option value="auth.logout">Admin Logout</option>
@@ -1106,7 +1103,7 @@
             </label>
             <label class="select">
               <span class="sr-only">Filter outcome</span>
-              <select id="audit-filter-outcome">
+              <select id="audit-filter-outcome" data-custom-select data-placeholder="All Outcomes">
                 <option value="">All Outcomes</option>
                 <option value="success">Success</option>
                 <option value="failure">Failure</option>
@@ -1220,7 +1217,7 @@
 
             <label class="field">
               <span class="field-label">Display Timezone</span>
-              <select id="setting-timezone">
+              <select id="setting-timezone" data-custom-select data-placeholder="Display Timezone">
                 <option value="UTC" selected>UTC (Coordinated Universal Time)</option>
                 <option value="Asia/Dhaka">Asia/Dhaka (+06:00)</option>
                 <option value="America/New_York">America/New_York (EST/EDT)</option>
@@ -1250,7 +1247,7 @@
       </section>
 
       <footer class="app-foot">
-        <img class="foot-divider" src="/omega-assets/webp/divider.webp" alt="" width="800" height="20">
+        <img class="foot-divider" src="/omega-assets/svg/divider.svg" alt="" width="800" height="20">
         OMEGA NEX-ORA · NexOra Database Key Generator · Production Admin Platform · Server-side Authorization Enforced
       </footer>
     </main>

@@ -45,6 +45,9 @@ RULES: tuple[RateRule, ...] = (
     RateRule("POST", re.compile(r"^/api/keys/[^/]+/revoke$"), 30, 60, "sms-revoke"),
     RateRule("DELETE", re.compile(r"^/api/keys/[^/]+$"), 30, 60, "delete"),
     RateRule("GET", re.compile(r"^/api/keys/export$"), 10, 60, "export"),
+    RateRule("POST", re.compile(r"^/api/v1/reader/activate$"), 20, 60, "v1-reader-activate"),
+    RateRule("POST", re.compile(r"^/api/v1/reader/heartbeat$"), 120, 60, "v1-reader-heartbeat"),
+    RateRule("GET", re.compile(r"^/api/v1/reader/status$"), 120, 60, "v1-reader-status"),
     RateRule("POST", re.compile(r"^/api/reader/redeem$"), 20, 60, "sms-redeem"),
     RateRule(
         "POST", re.compile(r"^/api/reader/authenticate$"), 120, 60, "sms-authenticate"

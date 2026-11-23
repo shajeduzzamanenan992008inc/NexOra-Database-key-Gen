@@ -23,14 +23,13 @@ export function detectsLowPowerDevice() {
     navigator.connection || navigator.mozConnection || navigator.webkitConnection;
   if (connection && connection.saveData === true) return true;
 
-  // Only genuinely constrained devices opt out automatically. A 4-core
-  // laptop is common; treating it as low power silently removed the motion
-  // system for most users.
+  // Only genuinely constrained devices opt out automatically.
+  // Use much stricter thresholds to avoid disabling animations on normal devices.
   const memory = Number(navigator.deviceMemory);
-  if (Number.isFinite(memory) && memory > 0 && memory <= 2) return true;
+  if (Number.isFinite(memory) && memory > 0 && memory <= 1) return true; // ≤1GB RAM only
 
   const cores = Number(navigator.hardwareConcurrency);
-  if (Number.isFinite(cores) && cores > 0 && cores <= 2) return true;
+  if (Number.isFinite(cores) && cores > 0 && cores <= 1) return true; // Single-core only
 
   return false;
 }
@@ -66,7 +65,9 @@ export function setLiteMode(enabled, { persist = true } = {}) {
 
 export function applyLitePreference() {
   const stored = getLitePreference();
-  return setLiteMode(stored === null ? detectsLowPowerDevice() : stored, {
+  // Only use stored preference. Do NOT auto-detect on first visit.
+  // Users must explicitly enable lite mode via Settings.
+  return setLiteMode(stored ?? false, {
     persist: false,
   });
 }

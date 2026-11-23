@@ -16,6 +16,7 @@ APP_PY = (ROOT / "backend" / "app.py").read_text(encoding="utf-8")
 LOGIN_JS = (ROOT / "frontend" / "assets" / "js" / "login.js").read_text(
     encoding="utf-8"
 )
+APP_CSS = (ROOT / "frontend" / "assets" / "app.css").read_text(encoding="utf-8")
 
 
 def test_classic_dashboard_is_the_primary_shell():
@@ -56,6 +57,22 @@ def test_generator_has_one_inline_type_aware_flow():
         "key_type_id: type.id",
     ):
         assert token in DASHBOARD_JS, token
+
+
+def test_dividers_use_the_original_svg_asset():
+    assert DASHBOARD_HTML.count('src="/omega-assets/svg/divider.svg"') >= 2
+    assert "/omega-assets/webp/divider" not in DASHBOARD_HTML
+    assert "/omega-assets/webp/divider-animated.webp" not in DASHBOARD_HTML
+
+
+def test_selector_changes_replay_the_selection_animation_system():
+    assert 'updateGeneratorType({ animate: true })' in DASHBOARD_JS
+    assert 'replayMotion(select, "is-picked", 340)' in DASHBOARD_JS
+    assert 'replayMotion(summary, "is-picked", 420)' in DASHBOARD_JS
+    assert 'replayMotion(generatorProject, "is-picked", 340)' in DASHBOARD_JS
+    assert 'replayMotion(expirationSelect, "is-picked", 340)' in DASHBOARD_JS
+    assert ".field select.is-picked" in APP_CSS
+    assert ".key-type-summary.is-picked" in APP_CSS
 
 
 def test_key_type_builder_and_safe_delete_are_in_the_classic_shell():

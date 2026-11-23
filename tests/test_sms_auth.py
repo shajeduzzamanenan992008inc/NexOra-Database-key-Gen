@@ -9,7 +9,11 @@ try:
     from sms_reader import create_sms_app
     from sms_reader.config import SmsConfig
 except ImportError:
-    pytest.skip("sms_reader not present (out of scope)", allow_module_level=True)
+    pytest.skip(
+        "optional SMS Reader console package sms_reader is not installed; "
+        "NexOra Reader API coverage lives in tests/test_reader_api_lifecycle.py",
+        allow_module_level=True,
+    )
 
 from conftest import (
     ADMIN_EMAIL,

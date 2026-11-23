@@ -47,6 +47,16 @@ def test_all_local_assets_resolve(app, owner):
             assert response.status_code == 200, (path, reference)
 
 
+def test_divider_svg_serves_with_svg_mime_type(app):
+    response = app.test_client().get("/omega-assets/svg/divider.svg")
+    assert response.status_code == 200
+    content_type = response.headers["Content-Type"].split(";")[0]
+    assert content_type == "image/svg+xml", content_type
+    body = response.get_data(as_text=True)
+    assert body.lstrip().startswith("<svg")
+    assert 'viewBox="0 0 800 20"' in body
+
+
 def test_pages_are_csp_compatible_without_inline_code(app, owner):
     pages = {"/": app.test_client(), "/dashboard": owner.client}
     for path, client in pages.items():

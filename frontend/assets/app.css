@@ -1773,7 +1773,9 @@ html.is-lite .key-pill .key-founder-mark {
 .field select,
 .field textarea,
 .search input,
-.select select {
+.select select,
+.generator-config-section > input,
+.generator-config-section > textarea {
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -1793,13 +1795,17 @@ html.is-lite .key-pill .key-founder-mark {
 
 .field input::placeholder,
 .field textarea::placeholder,
-.search input::placeholder { color: #566a88; }
+.search input::placeholder,
+.generator-config-section > input::placeholder,
+.generator-config-section > textarea::placeholder { color: #566a88; }
 
 .field input:focus,
 .field select:focus,
 .field textarea:focus,
 .search input:focus,
-.select select:focus {
+.select select:focus,
+.generator-config-section > input:focus,
+.generator-config-section > textarea:focus {
   outline: none;
   border-color: rgba(55, 226, 255, 0.55);
   box-shadow: 0 0 0 3px rgba(55, 226, 255, 0.12), 0 0 26px rgba(55, 226, 255, 0.07);
@@ -1807,7 +1813,9 @@ html.is-lite .key-pill .key-founder-mark {
 }
 
 .field input.is-invalid,
-.field textarea.is-invalid {
+.field textarea.is-invalid,
+.generator-config-section > input.is-invalid,
+.generator-config-section > textarea.is-invalid {
   border-color: rgba(255, 84, 112, 0.7);
   box-shadow: 0 0 0 3px rgba(255, 84, 112, 0.12);
   animation: shake 0.35s ease both;
@@ -3178,10 +3186,23 @@ body.nav-open { overflow: hidden; }
   background: rgba(55, 226, 255, 0.04);
   min-width: 0;
   overflow-wrap: anywhere;
+  transition:
+    border-color var(--motion-base) var(--ease-out),
+    background var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out);
 }
 
-.expiration-preview strong { color: var(--cyan); font-size: 0.86rem; }
+.expiration-preview strong {
+  color: var(--cyan);
+  font-size: 0.86rem;
+  transition: color var(--motion-base) var(--ease-out);
+}
+.expiration-preview.is-custom {
+  border-color: rgba(255, 200, 87, 0.22);
+  background: rgba(255, 200, 87, 0.045);
+}
 .expiration-preview.is-custom strong { color: var(--amber, #ffc857); }
+.expiration-preview.is-never strong { color: #9af5ff; }
 
 .format-preview {
   display: grid;
@@ -3558,11 +3579,78 @@ body.nav-open { overflow: hidden; }
   font-size: 0.74rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.check-option:hover {
+  border-color: rgba(55, 226, 255, 0.38);
+  background: rgba(55, 226, 255, 0.045);
+  box-shadow: 0 0 14px rgba(55, 226, 255, 0.07);
+}
+
+.check-option:focus-within {
+  border-color: rgba(55, 226, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(55, 226, 255, 0.1), 0 0 18px rgba(55, 226, 255, 0.08);
+}
+
+/* Animate selection when checkbox becomes checked */
+.check-option:has(input:checked) {
+  border-color: rgba(55, 226, 255, 0.42);
+  background: rgba(55, 226, 255, 0.07);
 }
 
 .check-option input {
   margin-top: 2px;
   flex: 0 0 auto;
+}
+
+/* Checkboxes inside selection boxes use the platform checkbox language so
+   the selected-state indicator animates like every other control. */
+.check-option input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid rgba(112, 168, 255, 0.36);
+  border-radius: 6px;
+  background: rgba(3, 9, 18, 0.82);
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.check-option input[type="checkbox"]:hover {
+  border-color: rgba(55, 226, 255, 0.62);
+  box-shadow: 0 0 12px rgba(55, 226, 255, 0.14);
+}
+
+.check-option input[type="checkbox"]:checked {
+  border-color: var(--cyan);
+  background-color: rgba(55, 226, 255, 0.92);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath d='M1 5.2 4.2 8.4 11 1.6' fill='none' stroke='%23031018' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 11px 9px;
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 14px rgba(55, 226, 255, 0.32);
+  animation: check-pop 0.24s var(--ease-out) both;
+}
+
+.check-option input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
 }
 
 .check-option strong {
@@ -3998,9 +4086,13 @@ body.nav-open { overflow: hidden; }
     background: rgba(4, 11, 22, 0.52);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
     animation: fade-up 0.36s var(--ease-out) both;
+    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) ease;
   }
 
-  .responsive-table tbody tr:hover { background: rgba(8, 18, 34, 0.72); }
+  .responsive-table tbody tr:hover {
+    border-color: rgba(55, 226, 255, 0.18);
+    background: rgba(8, 18, 34, 0.72);
+  }
 
   .responsive-table td {
     display: flex;
@@ -4366,26 +4458,8 @@ html.is-paused *::after {
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-delay: 0ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
-  }
-
-  .boot-screen.is-done { transition: none; }
-  .leave-screen { transition: none; }
-  .stat-card:hover,
-  .nav-item:hover,
-  .feature-list li:hover { transform: none; }
-  .cursor-glow { display: none; }
-  .scroll-progress { display: none; }
-  .key-reveal::after { display: none; }
-
-  /* Ambient loops are removed entirely, not run at 0.001ms. */
+  /* Only disable decorative/ambient animations, NOT interaction feedback.
+     Interactive transitions (hover, focus, active) must remain functional. */
   .aurora,
   .starfield,
   .grid-floor::before,
@@ -4397,8 +4471,152 @@ html.is-paused *::after {
   .crypto-core,
   .pulse-dot,
   .empty-icon,
-  .btn-glow::after {
+  .btn-glow::after,
+  .boot-ring,
+  .boot-ring-a,
+  .boot-ring-b,
+  .leave-ring,
+  .omega-core-ring-a,
+  .omega-core-ring-b,
+  .omega-halo,
+  .omega-laser,
+  .omega-sheen,
+  .omega-founder-pulse,
+  .omega-founder-shimmer,
+  .founder-pulse,
+  .founder-ring-breath,
+  .founder-sweep,
+  .scan-pass,
+  .grid-scroll,
+  .aurora-drift,
+  .star-drift,
+  .scanline-drift,
+  .grid-floor-pan,
+  .shimmer,
+  .boot-progress,
+  .boot-breathe,
+  .leave-ring,
+  .float-emblem,
+  .hero-ping,
+  .orb-spin,
+  .orb-pulse,
+  .key-glow,
+  .scan-pass,
+  .success-pop,
+  .shake,
+  .toast-in,
+  .toast-out,
+  .toast-timer,
+  .modal-in,
+  .modal-out,
+  .backdrop-in,
+  .empty-float,
+  .status-blink,
+  .saved-flash,
+  .scroll-glow,
+  .boot-ring,
+  .boot-ring-reverse,
+  .boot-progress,
+  .boot-breathe,
+  .leave-ring,
+  .omega-spin,
+  .omega-spin-reverse,
+  .omega-core-breathe,
+  .omega-sheen,
+  .omega-halo-breathe,
+  .omega-laser-pulse,
+  .omega-founder-pulse,
+  .omega-founder-shimmer,
+  .omega-rise,
+  .view-in,
+  .card-rise,
+  .edge-orbit,
+  .fade-up,
+  .fade-in,
+  .row-in,
+  .expiry-breathe,
+  .nav-item-in,
+  .icon-lock,
+  .nav-activate,
+  .preset-pop,
+  .field-in,
+  .preview-flash,
+  .chip-ring,
+  .segment-in,
+  .surge-sheen,
+  .founder-tier-in,
+  .founder-divider-in,
+  .founder-name-in,
+  .founder-name-sweep,
+  .key-reveal,
+  .shutdown-spin,
+  .shutdown-progress {
     animation: none !important;
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  /* Disable ambient scene entirely */
+  .ambient-scene {
+    display: none;
+  }
+
+  /* Keep interaction transitions functional - only disable on decorative elements */
+  .boot-screen.is-done { transition: none; }
+  .leave-screen { transition: none; }
+  .cursor-glow { display: none; }
+  .scroll-progress { display: none; }
+  .key-reveal::after { display: none; }
+  .stat-card:hover,
+  .nav-item:hover,
+  .feature-list li:hover { transform: none; }
+
+  /* Interactive elements keep their transitions for accessibility */
+  .btn,
+  .field input,
+  .field select,
+  .field textarea,
+  .select select,
+  .generator-config-section > input,
+  .generator-config-section > textarea,
+  .check-option,
+  .check-option input[type="checkbox"],
+  .check-option input[type="radio"],
+  .checkbox-field-wrap,
+  .nav-item,
+  .segmented-btn,
+  .preset-chip,
+  .table-link,
+  .icon-close,
+  .ghost-btn,
+  .btn-primary,
+  .btn-ghost,
+  .btn-danger,
+  .omega-submit,
+  .omega-input input,
+  .omega-eye,
+  .omega-session-btn,
+  .ops-tab {
+    /* Keep transitions enabled for interaction feedback */
+    transition-duration: var(--motion-fast) !important;
+  }
+
+  /* But disable transform animations on hover for reduced motion */
+  .stat-card:hover,
+  .nav-item:hover,
+  .feature-list li:hover,
+  .btn:hover,
+  .btn:active,
+  .nav-item.is-active,
+  .segmented-btn.is-active,
+  .preset-chip.is-active,
+  .check-option:has(input:checked),
+  .checkbox-field-wrap:has(input:checked),
+  .omega-submit:hover,
+  .omega-session-btn:hover,
+  .ops-tab.is-active {
+    transform: none !important;
   }
 }
 
@@ -4447,7 +4665,7 @@ html.is-paused *::after {
   color: var(--cyan);
   border-color: rgba(55, 226, 255, 0.42);
   background: rgba(55, 226, 255, 0.1);
-  animation: chip-ring 0.5s var(--ease-out) both;
+  animation: preset-pop 0.28s var(--ease-out) both;
 }
 
 .preset-chip:focus-visible {
@@ -4472,14 +4690,18 @@ html.is-paused *::after {
 .field input:hover,
 .field select:hover,
 .field textarea:hover,
-.select select:hover {
+.select select:hover,
+.generator-config-section > input:hover,
+.generator-config-section > textarea:hover {
   border-color: rgba(55, 226, 255, 0.3);
 }
 
 .field input:focus,
 .field select:focus,
 .field textarea:focus,
-.select select:focus {
+.select select:focus,
+.generator-config-section > input:focus,
+.generator-config-section > textarea:focus {
   animation: control-focus 0.34s var(--ease-out) both;
 }
 
