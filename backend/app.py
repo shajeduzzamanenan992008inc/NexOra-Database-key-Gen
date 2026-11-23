@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import time
@@ -17,6 +18,7 @@ from .errors import register_error_handlers
 from .security.rate_limit import SlidingWindowLimiter, enforce
 from .security.sessions import find_session
 from .services import AuthService, LicenseService, ensure_initial_admin
+from .services.scheduler_service import SchedulerService
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
@@ -239,5 +241,27 @@ def create_app(settings: Settings | None = None) -> Flask:
         # Legacy browsers request /favicon.ico directly; the SVG is the real
         # icon, so send them to it instead of a second stale image.
         return redirect(url_for("favicon_svg"))
+
+    # Start the automatic expiration/cleanup loop in this process. Expired
+    # keys and projects must be removed even when no external cron exists; a
+    # deployed cron/systemd worker can disable this with SCHEDULER_EMBEDDED=0.
+    # The PostgreSQL advisory lock makes overlapping workers safe. Tests run
+    # with APP_ENV=testing and drive the scheduler explicitly.
+    if settings.scheduler_embedded and settings.environment.lower() != "testing":
+        try:
+            scheduler = SchedulerService(db, settings)
+            app.extensions["scheduler_service"] = scheduler
+            worker = scheduler.start_background_worker()
+            app.extensions["scheduler_worker"] = worker
+            atexit.register(worker.stop)
+            access_log.info(
+                "embedded scheduler worker started interval_seconds=%s",
+                worker.interval_seconds,
+            )
+        except Exception:
+            # Cleanup is important but a thread failure must not prevent the
+            # web process from serving; the next start retries and the
+            # failure is visible in the log.
+            access_log.exception("embedded scheduler worker could not start")
 
     return app

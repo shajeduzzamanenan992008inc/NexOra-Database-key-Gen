@@ -342,6 +342,8 @@ export const api = {
   settings: () => request("/api/v1/settings"),
   updateSettings: (body) =>
     request("/api/v1/settings", { method: "PATCH", body }),
+  timezone: () => request("/api/v1/timezone"),
+  timezones: () => request("/api/v1/timezones"),
 
   // Universal Platform
   universalOverview: () => request("/api/v1/universal/overview"),

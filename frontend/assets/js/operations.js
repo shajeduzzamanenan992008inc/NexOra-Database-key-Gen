@@ -1,4 +1,6 @@
 import { api, ApiProblem } from "./api.js";
+import { initCustomSelects } from "./components/CustomSelect.js";
+import { initCustomDatePickers } from "./components/CustomDatePicker.js";
 import {
   $,
   $$,
@@ -66,7 +68,10 @@ function input(attributes = {}) {
 
 function select(options, attributes = {}) {
   const { value, ...rest } = attributes;
-  const control = el("select", rest);
+  const control = el("select", {
+    "data-custom-select": "true",
+    ...rest,
+  });
   options.forEach(([optionValue, labelText]) => {
     control.append(el("option", { value: optionValue, text: labelText }));
   });
@@ -432,7 +437,7 @@ async function renderApiUsage(root) {
 function webhookForm(events, projects) {
   const project = select(
     [["", "Choose a project"]].concat(projects.map((item) => [item.id, item.project_name])),
-    { required: "" }
+    { required: "", "data-custom-select": true, "data-placeholder": "Choose a project" }
   );
   const name = input({ placeholder: "Order events", maxlength: "100", required: "" });
   const url = input({
@@ -680,7 +685,8 @@ async function renderInbox(root) {
 
 function projectExportCard(projects) {
   const project = select(
-    [["", "Choose a project"]].concat(projects.map((item) => [item.id, item.project_name]))
+    [["", "Choose a project"]].concat(projects.map((item) => [item.id, item.project_name])),
+    { "data-custom-select": true, "data-placeholder": "Choose a project" }
   );
   const download = (format) => {
     if (!project.value) {
@@ -702,10 +708,13 @@ function projectExportCard(projects) {
 
 function projectRestoreCard() {
   const file = el("input", { type: "file", accept: ".json,.zip,application/json,application/zip" });
-  const mode = select([
-    ["keep_existing", "Keep existing / merge"],
-    ["import_as_new", "Import as a new project"],
-  ]);
+  const mode = select(
+    [
+      ["keep_existing", "Keep existing / merge"],
+      ["import_as_new", "Import as a new project"],
+    ],
+    { "data-custom-select": true, "data-placeholder": "Conflict policy" }
+  );
   const newName = input({ placeholder: "Optional imported project name", maxlength: "200" });
   const preview = el("div", { class: "ops-stack" });
   let validated = false;
@@ -784,9 +793,13 @@ function projectRestoreCard() {
 
 function keyImportCard(projects, keyTypes) {
   const project = select(
-    [["", "Choose a project"]].concat(projects.map((item) => [item.id, item.project_name]))
+    [["", "Choose a project"]].concat(projects.map((item) => [item.id, item.project_name])),
+    { "data-custom-select": true, "data-placeholder": "Choose a project" }
   );
-  const type = select(keyTypes.map((item) => [item.id, item.name]));
+  const type = select(keyTypes.map((item) => [item.id, item.name]), {
+    "data-custom-select": true,
+    "data-placeholder": "Key type",
+  });
   const textarea = el("textarea", {
     rows: "6",
     placeholder: "Paste one key per line. Plaintext is sent once for hashing and is never returned.",
@@ -1445,6 +1458,8 @@ export async function renderOperations() {
     const replacements = replacementCard();
     if (replacements) root.append(replacements);
     root.append(staging);
+    initCustomSelects(root);
+    initCustomDatePickers(root);
   } catch (error) {
     clearNode(root);
     root.append(errorPanel("This operations section could not load", error));

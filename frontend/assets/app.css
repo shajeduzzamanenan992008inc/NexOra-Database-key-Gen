@@ -3204,6 +3204,48 @@ body.nav-open { overflow: hidden; }
 .expiration-preview.is-custom strong { color: var(--amber, #ffc857); }
 .expiration-preview.is-never strong { color: #9af5ff; }
 
+/* Global timezone setting: live local-time and UTC-offset preview. */
+.timezone-preview {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  border-radius: 14px;
+  background: rgba(125, 211, 252, 0.045);
+}
+
+.timezone-preview-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.timezone-preview-time {
+  color: var(--cyan);
+  font-size: 1.02rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.timezone-preview-offset {
+  color: var(--cyan);
+  font-variant-numeric: tabular-nums;
+}
+
+.timezone-preview-meta {
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+@media (max-width: 640px) {
+  .timezone-preview-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
 .format-preview {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -4359,7 +4401,7 @@ body.nav-open { overflow: hidden; }
   .modal-head { gap: 10px; }
   .modal-head h2 { font-size: 1.1rem; }
   .icon-close { width: 34px; height: 34px; font-size: 1.2rem; }
-  .modal-actions { flex-direction: column-reverse; }
+  .modal-actions { flex-direction: column-reverse; flex-wrap: nowrap; }
   .modal-actions .btn { width: 100%; flex: 1 1 100%; }
   .record-grid { grid-template-columns: 1fr; }
   .detail-meta { grid-template-columns: 1fr; }
@@ -6687,12 +6729,96 @@ html.is-login body.omega-auth {
 
 @media (max-width: 430px) {
   .omega-hero-points { gap: 6px 12px; }
-  .modal-brand { width: 32px; height: 32px; }
-  .view-glyph { display: none; }
-  .foot-divider { height: 7px; }
+/* -- Expiry urgency indicators & auto-delete cues ----------------------- */
+.expiry-indicator {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.35;
+  transition: color 0.24s ease, border-color 0.24s ease;
+}
+
+.expiry-indicator .expiry-main-text {
+  display: inline;
+}
+
+.expiry-indicator .expiry-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+/* Safe state: plenty of time */
+.expiry-indicator.expiry-safe {
+  color: var(--muted, #94a3b8);
+}
+
+/* Warning state: near expiry (e.g. <= 7 days) -> Amber/Gold */
+.expiry-indicator.expiry-warning {
+  color: #ffc857;
+}
+
+.expiry-indicator.expiry-warning .expiry-badge {
+  color: #ffc857;
+  background: rgba(255, 200, 87, 0.14);
+  border: 1px solid rgba(255, 200, 87, 0.38);
+  box-shadow: 0 0 10px rgba(255, 200, 87, 0.2);
+}
+
+/* Critical state: urgent expiry (e.g. <= 24 hours) -> Red/Coral Pulsing */
+.expiry-indicator.expiry-critical {
+  color: #ff5470;
+  font-weight: 600;
+}
+
+.expiry-indicator.expiry-critical .expiry-badge {
+  color: #fff;
+  background: rgba(255, 84, 112, 0.25);
+  border: 1px solid rgba(255, 84, 112, 0.6);
+  box-shadow: 0 0 12px rgba(255, 84, 112, 0.45);
+  animation: expiry-pulse-badge 2s ease-in-out infinite;
+}
+
+/* Expired state */
+.expiry-indicator.expiry-expired {
+  color: #ff5470;
+  opacity: 0.92;
+}
+
+.expiry-indicator.expiry-expired .expiry-badge {
+  color: #fff;
+  background: rgba(255, 84, 112, 0.85);
+  border: 1px solid #ff5470;
+}
+
+@keyframes expiry-pulse-badge {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 8px rgba(255, 84, 112, 0.3);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 16px rgba(255, 84, 112, 0.65);
+  }
+}
+
+.badge.expiry-pulse {
+  animation: expiry-pulse-badge 2s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .expiry-indicator.expiry-critical .expiry-badge,
+  .badge.expiry-pulse,
   .omega-hero-divider,
   .panel-glyph,
   .view-glyph,

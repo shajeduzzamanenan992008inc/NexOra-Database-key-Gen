@@ -345,6 +345,10 @@ class Settings:
     # ---- Standalone scheduler ----
     scheduler_batch_size: int = 100
     scheduler_interval_seconds: int = 60
+    # Run the scheduler loop inside the application process so expiration
+    # cleanup needs no external cron. Set SCHEDULER_EMBEDDED=0 only when a
+    # dedicated worker is deployed; the advisory lock still serializes them.
+    scheduler_embedded: bool = True
     # ---- Project transfer ----
     project_import_max_bytes: int = 8 * 1024 * 1024
 
@@ -413,6 +417,7 @@ class Settings:
             scheduler_interval_seconds=_int_env(
                 "SCHEDULER_INTERVAL_SECONDS", 60, minimum=5, maximum=86400
             ),
+            scheduler_embedded=_bool_env("SCHEDULER_EMBEDDED", True),
             project_import_max_bytes=_int_env(
                 "PROJECT_IMPORT_MAX_BYTES",
                 8 * 1024 * 1024,

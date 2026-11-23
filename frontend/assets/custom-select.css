@@ -1,0 +1,368 @@
+/* ==========================================================================
+   CustomSelect — NexOra dropdown styling
+   Loaded as a static, same-origin stylesheet so the application
+   Content-Security-Policy (`style-src 'self'`) is respected.
+   ========================================================================== */
+
+.custom-select-wrapper {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.custom-select-wrapper *,
+.custom-select-wrapper *::before,
+.custom-select-wrapper *::after {
+  box-sizing: border-box;
+}
+
+.custom-select-wrapper > select,
+.custom-select-wrapper > select[hidden] {
+  display: none !important;
+}
+
+.custom-select-wrapper.disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.custom-select-trigger {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  margin: 0;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 170, 255, 0.16);
+  background: rgba(3, 8, 17, 0.72);
+  color: var(--text, #eaf3ff);
+  font: inherit;
+  font-size: 0.86rem;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+}
+
+.custom-select-wrapper:not(.disabled) .custom-select-trigger:hover {
+  border-color: rgba(55, 226, 255, 0.3);
+}
+
+.custom-select-wrapper.focused .custom-select-trigger,
+.custom-select-wrapper.open .custom-select-trigger {
+  outline: none;
+  border-color: rgba(55, 226, 255, 0.55);
+  box-shadow:
+    0 0 0 3px rgba(55, 226, 255, 0.12),
+    0 0 26px rgba(55, 226, 255, 0.07);
+  background: rgba(4, 12, 24, 0.92);
+  animation: control-focus 0.34s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.custom-select-wrapper.is-invalid .custom-select-trigger,
+.custom-select-trigger.is-invalid {
+  border-color: rgba(255, 84, 112, 0.7) !important;
+  box-shadow: 0 0 0 3px rgba(255, 84, 112, 0.12) !important;
+  animation: shake 0.35s ease both;
+}
+
+.custom-select-trigger:focus-visible {
+  outline: 2px solid var(--cyan, #37e2ff);
+  outline-offset: 2px;
+}
+
+.custom-select-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim, #a9bcdf);
+}
+
+.custom-select-value.placeholder {
+  color: var(--muted, #7489ac);
+}
+
+.custom-select-arrow {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: var(--muted, #7489ac);
+  transition: transform 0.2s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.custom-select-wrapper.open .custom-select-arrow {
+  transform: rotate(180deg);
+  color: var(--cyan, #37e2ff);
+}
+
+/* ------------------------------------------------------------------ panel */
+
+.custom-select-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  min-width: 100%;
+  max-width: calc(100vw - 24px);
+  border-radius: 12px;
+  border: 1px solid rgba(120, 170, 255, 0.18);
+  background: rgba(3, 8, 17, 0.96);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  box-shadow:
+    0 20px 54px rgba(0, 0, 0, 0.62),
+    0 0 24px rgba(55, 226, 255, 0.08);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  transition:
+    opacity 0.2s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)),
+    transform 0.2s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.custom-select-panel[hidden] {
+  display: none !important;
+}
+
+.custom-select-wrapper.open .custom-select-panel {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Flip the panel above the trigger when there is not enough room below. */
+.custom-select-wrapper.drop-up .custom-select-panel {
+  top: auto;
+  bottom: calc(100% + 6px);
+  transform: translateY(8px);
+}
+
+.custom-select-wrapper.drop-up.open .custom-select-panel {
+  transform: translateY(0);
+}
+
+/* Raise the nearest glass container while a panel is open so dropdowns are
+   not painted underneath sibling cards. */
+.custom-select-layer {
+  z-index: 40;
+}
+
+/* ----------------------------------------------------------------- search */
+
+.custom-select-search-wrapper {
+  padding: 8px;
+  border-bottom: 1px solid rgba(112, 168, 255, 0.12);
+}
+
+.custom-select-search {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(120, 170, 255, 0.16);
+  background: rgba(3, 8, 17, 0.72);
+  color: var(--text, #eaf3ff);
+  font: inherit;
+  font-size: 0.8rem;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.custom-select-search:focus {
+  outline: none;
+  border-color: rgba(55, 226, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(55, 226, 255, 0.12);
+}
+
+/* ----------------------------------------------------------------- options */
+
+.custom-select-options {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 226, 255, 0.3) transparent;
+}
+
+.custom-select-options::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-select-options::-webkit-scrollbar-thumb {
+  background: rgba(55, 226, 255, 0.24);
+  border-radius: 999px;
+}
+
+.custom-select-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  color: var(--text, #eaf3ff);
+  font-size: 0.82rem;
+  cursor: pointer;
+  outline: none;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.custom-select-option:hover:not(.disabled),
+.custom-select-option.focused:not(.disabled) {
+  background: rgba(55, 226, 255, 0.07);
+  color: var(--cyan, #37e2ff);
+}
+
+.custom-select-option:active:not(.disabled) {
+  background: rgba(55, 226, 255, 0.12);
+}
+
+.custom-select-option.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--muted, #7489ac);
+}
+
+.custom-select-option.selected {
+  background: rgba(55, 226, 255, 0.09);
+  color: var(--cyan-soft, #9af5ff);
+}
+
+.custom-select-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-select-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--cyan, #37e2ff);
+}
+
+.custom-select-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--muted, #7489ac);
+  font-size: 0.78rem;
+}
+
+.custom-select-wrapper.disabled .custom-select-trigger {
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- motion */
+
+@keyframes custom-select-option-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes custom-select-picked {
+  0% {
+    transform: scale(1);
+    border-color: rgba(120, 170, 255, 0.18);
+    box-shadow: 0 0 0 0 rgba(55, 226, 255, 0);
+  }
+  50% {
+    transform: scale(0.985);
+    border-color: rgba(55, 226, 255, 0.72);
+    box-shadow: 0 0 0 3px rgba(55, 226, 255, 0.14), 0 0 22px rgba(55, 226, 255, 0.12);
+  }
+  100% {
+    transform: scale(1);
+    border-color: rgba(120, 170, 255, 0.18);
+    box-shadow: 0 0 0 0 rgba(55, 226, 255, 0);
+  }
+}
+
+.toolbar .select .custom-select-wrapper,
+.toolbar .custom-select-wrapper {
+  min-width: 148px;
+}
+
+.custom-select-wrapper.open .custom-select-option {
+  animation: custom-select-option-in 0.2s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.custom-select-wrapper.open .custom-select-option:nth-child(1) { animation-delay: 0ms; }
+.custom-select-wrapper.open .custom-select-option:nth-child(2) { animation-delay: 20ms; }
+.custom-select-wrapper.open .custom-select-option:nth-child(3) { animation-delay: 40ms; }
+.custom-select-wrapper.open .custom-select-option:nth-child(4) { animation-delay: 60ms; }
+.custom-select-wrapper.open .custom-select-option:nth-child(5) { animation-delay: 80ms; }
+.custom-select-wrapper.open .custom-select-option:nth-child(6) { animation-delay: 100ms; }
+.custom-select-wrapper.open .custom-select-option:nth-child(7) { animation-delay: 120ms; }
+.custom-select-wrapper.open .custom-select-option:nth-child(8) { animation-delay: 140ms; }
+
+.custom-select-trigger.is-picked {
+  animation: custom-select-picked 0.34s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+/* -------------------------------------------------------- reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  .custom-select-panel,
+  .custom-select-trigger,
+  .custom-select-arrow,
+  .custom-select-option {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+  }
+}
+
+/* --------------------------------------------------------------- lite mode */
+
+html.is-lite .custom-select-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(3, 8, 17, 1);
+}
+
+/* ----------------------------------------------------------- small screens */
+
+@media (max-width: 640px) {
+  .custom-select-options {
+    max-height: min(260px, 45vh);
+  }
+
+  .custom-select-panel {
+    max-width: calc(100vw - 16px);
+  }
+}

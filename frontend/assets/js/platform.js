@@ -18,6 +18,20 @@ import {
 import { dismissBootScreen, initMotion, isLiteMode, setLiteMode } from "./motion.js";
 import { omegaAsset, omegaPicture } from "./omega-assets.js";
 import { secureSignOut } from "./shutdown.js";
+import { initCustomSelects, injectCustomSelectStyles } from "./components/CustomSelect.js";
+import { initCustomDatePickers, injectCustomDatePickerStyles } from "./components/CustomDatePicker.js";
+import {
+  applyTimezoneConfig,
+  formatDateInZone,
+  formatLocalInput,
+  formatUtcOffset,
+  getTimezoneOffsetSeconds,
+  initTimezone,
+  localInputToUtcIso,
+  refreshTimezone,
+  subscribeTimezone,
+  toLocalInputValue,
+} from "./timezone.js";
 
 initMotion();
 
@@ -188,7 +202,10 @@ function input(attributes = {}) {
 
 function select(options, attributes = {}) {
   const { value, ...rest } = attributes;
-  const node = el("select", rest);
+  const node = el("select", {
+    "data-custom-select": "true",
+    ...rest,
+  });
   options.forEach(([optionValue, label]) => node.append(el("option", { value: optionValue, text: label })));
   if (value !== undefined && value !== null) node.value = value;
   return node;
@@ -285,11 +302,7 @@ function typeCopy(type) {
 }
 
 function localDateTimeValue(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (part) => String(part).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return toLocalInputValue(value);
 }
 
 function expiryLabel(preset, value) {
@@ -298,8 +311,8 @@ function expiryLabel(preset, value) {
   if (preset === "custom") {
     const raw = String(value || "").trim();
     if (!raw) return "Choose a future date and time.";
-    const date = new Date(raw);
-    return Number.isNaN(date.getTime()) ? "Invalid date and time." : `Expires ${date.toLocaleString()}`;
+    const formatted = formatLocalInput(raw);
+    return formatted ? `Expires ${formatted}` : "Invalid or nonexistent local date and time.";
   }
   return EXPIRY_PRESETS.find(([key]) => key === preset)?.[1] || "Server-computed expiration";
 }
@@ -308,16 +321,83 @@ function expiryValidation(preset, value) {
   if (preset !== "custom") return null;
   const raw = String(value || "").trim();
   if (!raw) return "Choose a custom expiration date and time.";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return "Enter a valid custom expiration date and time.";
-  if (date.getTime() <= Date.now()) return "The custom expiration must be in the future.";
+  let iso = null;
+  try {
+    iso = localInputToUtcIso(raw);
+  } catch (error) {
+    return error.message;
+  }
+  if (!iso) return "Enter a valid custom expiration date and time.";
+  if (new Date(iso).getTime() <= Date.now()) {
+    return "The custom expiration must be in the future.";
+  }
   return null;
+}
+
+function getExpiryUrgency(dateValue) {
+  if (!dateValue) return { urgency: "never", msRemaining: Infinity };
+  const targetTime = new Date(dateValue).getTime();
+  if (Number.isNaN(targetTime)) return { urgency: "unknown", msRemaining: Infinity };
+  const now = Date.now();
+  const msRemaining = targetTime - now;
+
+  if (msRemaining <= 0) {
+    return { urgency: "expired", msRemaining };
+  }
+  if (msRemaining <= 24 * 60 * 60 * 1000) {
+    return { urgency: "critical", msRemaining };
+  }
+  if (msRemaining <= 7 * 24 * 60 * 60 * 1000) {
+    return { urgency: "warning", msRemaining };
+  }
+  return { urgency: "safe", msRemaining };
 }
 
 function expiryStatus(project) {
   if (!project || !project.expires_at) return "Never expires";
-  const expired = project.effective_status === "expired" || new Date(project.expires_at).getTime() <= Date.now();
-  return `${expired ? "Expired" : "Expires"} ${formatDate(project.expires_at)}`;
+  const { urgency, msRemaining } = getExpiryUrgency(project.expires_at);
+  const formatted = formatDate(project.expires_at);
+
+  let urgencyTag = "";
+  let prefix = "Expires";
+  if (urgency === "expired" || project.effective_status === "expired") {
+    prefix = "Expired";
+    urgencyTag = "EXPIRED";
+  } else if (urgency === "critical") {
+    const hours = Math.max(1, Math.ceil(msRemaining / (1000 * 60 * 60)));
+    urgencyTag = `${hours}h left`;
+  } else if (urgency === "warning") {
+    const days = Math.ceil(msRemaining / (1000 * 60 * 60 * 24));
+    urgencyTag = `${days}d left`;
+  }
+
+  const node = el("span", { class: `expiry-indicator expiry-${urgency}` }, [
+    el("span", { class: "expiry-main-text", text: `${prefix} ${formatted}` }),
+    urgencyTag ? el("span", { class: "expiry-badge", text: urgencyTag }) : null,
+  ]);
+  node.toString = () => `${prefix} ${formatted}`;
+  return node;
+}
+
+function keyExpiryCell(key) {
+  if (!key || !key.expires_at || key.is_permanent || key.expiration_preset === "never") return "Never";
+  const { urgency, msRemaining } = getExpiryUrgency(key.expires_at);
+  const formatted = formatDate(key.expires_at);
+  let urgencyTag = "";
+  if (urgency === "expired") urgencyTag = "EXPIRED";
+  else if (urgency === "critical") {
+    const hours = Math.max(1, Math.ceil(msRemaining / (1000 * 60 * 60)));
+    urgencyTag = `${hours}h left`;
+  } else if (urgency === "warning") {
+    const days = Math.ceil(msRemaining / (1000 * 60 * 60 * 24));
+    urgencyTag = `${days}d left`;
+  }
+  const node = el("span", { class: `expiry-indicator expiry-${urgency}` }, [
+    el("span", { class: "expiry-main-text", text: formatted }),
+    urgencyTag ? el("span", { class: "expiry-badge", text: urgencyTag }) : null,
+  ]);
+  node.toString = () => formatted;
+  return node;
 }
 
 function renderExpiryPreview(previewNode, preset, value) {
@@ -608,7 +688,13 @@ function newProjectForm() {
     setButtonBusy(submit, true, "Creating…");
     try {
       const body = { expiration: preset.value };
-      if (preset.value === "custom") body.expires_at = new Date(custom.value).toISOString();
+      if (preset.value === "custom") {
+        try {
+          body.expires_at = localInputToUtcIso(custom.value);
+        } catch (error) {
+          return toast(error.message, { type: "error" });
+        }
+      }
       await api.createProject(name.value.trim(), body);
       toast("Project created.", { type: "success" });
       closeSecretDialog();
@@ -743,7 +829,7 @@ async function showProjectDetails(project) {
           cell(el("span", { class: "mono", text: key.key_hint })),
           cell(pill(key.key_type_id, "info")),
           cell(statusBadge(key.status)),
-          cell(key.expires_at ? formatDate(key.expires_at) : "Never"),
+          cell(keyExpiryCell(key)),
           cell(button("Details", () => showKeyDetails(key.id)), "align-right"),
         ])),
         "No keys in this project"
@@ -884,12 +970,6 @@ function editProject(project) {
     ? "inactive"
     : (project.status === "expired" ? "expired" : "active");
   const status = select([["active", "Active"], ["inactive", "Inactive"]], { value: storedStatus === "inactive" ? "inactive" : "active" });
-  const autoDeleteInitial = localDateTimeValue(project.auto_delete_at);
-  const autoDelete = input({
-    type: "datetime-local",
-    value: autoDeleteInitial,
-    "aria-label": "Scheduled project deletion",
-  });
   const hasExpiry = Boolean(project.expires_at);
   const preset = select([
     ...(hasExpiry ? [["keep", "Keep current expiration"]] : []),
@@ -922,15 +1002,10 @@ function editProject(project) {
       }
       if (preset.value !== "keep") {
         body.expiration_preset = preset.value;
-        body.expires_at = preset.value === "custom" ? new Date(custom.value).toISOString() : null;
+        body.expires_at = preset.value === "custom" ? localInputToUtcIso(custom.value) : null;
       }
       await api.updateUniversalProject(project.id, body);
-      if (autoDelete.value !== autoDeleteInitial) {
-        await api.setProjectAutoDelete(
-          project.id,
-          autoDelete.value ? new Date(autoDelete.value).toISOString() : null,
-        );
-      }
+      // auto_delete_at is always identical to expires_at (set by backend)
       toast("Project updated.", { type: "success" });
       closeSecretDialog();
       showView("projects", { reload: true });
@@ -945,13 +1020,12 @@ function editProject(project) {
     field("Project expiration", preset, "Choose ‘Keep current expiration’ to edit other fields without changing this date."),
     customField,
     preview,
-    field("Scheduled auto-delete (local time)", autoDelete, "Optional. Empty disables scheduled deletion. Deletion only runs when the server scheduler executes."),
     el("div", { class: "span-2 expiry-current" }, [
       node("span", "muted", "Current expiration"),
       statusBadge(project.effective_status || project.status),
       node("span", "", expiryStatus(project)),
     ]),
-    el("p", { class: "muted span-2", text: "Project expiry blocks project authentication. Existing key expiry timestamps are preserved." }),
+    el("p", { class: "muted span-2", text: "Project expiry and auto-delete are always the same date. When a project expires it is automatically removed from the database." }),
     el("div", { class: "span-2 card-actions" }, [submit]),
   ]);
   form.addEventListener("submit", (event) => {
@@ -1111,7 +1185,7 @@ async function renderGenerator(root) {
         label: label.value.trim(),
         notes: notes.value,
         expiration_preset: expiration.value,
-        expires_at: expiration.value === "custom" ? new Date(expires.value).toISOString() : null,
+        expires_at: expiration.value === "custom" ? localInputToUtcIso(expires.value) : null,
         tags: split(tags.value),
         permissions: permissions.value.trim() ? split(permissions.value) : undefined,
         scopes: scopes.value.trim() ? split(scopes.value) : undefined,
@@ -1359,7 +1433,7 @@ async function loadKeysTable(tbody, filters) {
         cell(pill(key.key_type_id, "info")),
         cell(statusBadge(key.status)),
         cell(`${key.usage_count || 0}${key.max_usage ? ` / ${key.max_usage}` : ""}`),
-        cell(key.expires_at ? formatDate(key.expires_at) : "Never"),
+        cell(keyExpiryCell(key)),
         cell(formatDate(key.created_at, { time: false })),
         cell(el("div", { class: "row-actions" }, [
           button("Details", () => showKeyDetails(key.id)),
@@ -1455,7 +1529,7 @@ function editKeyExpiration(key) {
     try {
       await api.updateUniversalKey(key.id, {
         expiration_preset: preset.value,
-        expires_at: preset.value === "custom" ? new Date(custom.value).toISOString() : null,
+        expires_at: preset.value === "custom" ? localInputToUtcIso(custom.value) : null,
       });
       toast("Key expiration updated.", { type: "success" });
       closeSecretDialog();
@@ -1518,7 +1592,7 @@ async function editKey(key) {
       };
       if (preset.value !== "keep") {
         body.expiration_preset = preset.value;
-        body.expires_at = preset.value === "custom" ? new Date(custom.value).toISOString() : null;
+        body.expires_at = preset.value === "custom" ? localInputToUtcIso(custom.value) : null;
       }
       await api.updateUniversalKey(key.id, body);
       toast("Key updated.", { type: "success" });
@@ -2742,43 +2816,119 @@ async function renderHealth(root) {
 }
 
 let liteButton = null;
+let timezonePreviewTimer = 0;
+
+function startTimezonePreviewTimer(update) {
+  window.clearInterval(timezonePreviewTimer);
+  timezonePreviewTimer = window.setInterval(() => {
+    const select = $("#setting-timezone-select");
+    if (!select || !select.isConnected) {
+      window.clearInterval(timezonePreviewTimer);
+      return;
+    }
+    update();
+  }, 1000);
+}
 
 async function renderSettings(root) {
-  const [prefs, session, system] = await Promise.all([
+  const [prefs, session, system, zoneData] = await Promise.all([
     api.notificationPreferences(),
     api.session(),
     api.settings(),
+    api.timezones().catch(() => ({ timezones: [] })),
   ]);
   const preferences = prefs.preferences || {};
   const canEditSystem = state.user?.role === "owner";
+  const timezoneOptions = Array.isArray(zoneData.timezones) ? zoneData.timezones.slice() : [];
+  const currentZone = system.display_timezone || "UTC";
+  if (!timezoneOptions.some((zone) => zone.id === currentZone)) {
+    timezoneOptions.unshift({
+      id: currentZone,
+      offset: formatUtcOffset(getTimezoneOffsetSeconds(new Date(), currentZone)),
+      abbreviation: currentZone,
+    });
+  }
+  timezoneOptions.sort((a, b) => {
+    if (a.id === "UTC") return -1;
+    if (b.id === "UTC") return 1;
+    return a.id.localeCompare(b.id);
+  });
+  const timezoneSelect = el("select", {
+    id: "setting-timezone-select",
+    "data-custom-select": "true",
+    "data-searchable": "true",
+    "data-placeholder": "Search timezones",
+    "aria-label": "Global display timezone",
+  });
+  timezoneOptions.forEach((zone) => {
+    timezoneSelect.append(
+      el("option", { value: zone.id, text: `${zone.id} · ${zone.offset}` })
+    );
+  });
+  timezoneSelect.value = currentZone;
+  const timezonePreview = el("div", {
+    class: "timezone-preview span-2",
+    "aria-live": "polite",
+  });
+  const updateTimezonePreview = () => {
+    const name = timezoneSelect.value || "UTC";
+    const option = timezoneOptions.find((zone) => zone.id === name);
+    const now = new Date();
+    const offset = option ? option.offset : formatUtcOffset(getTimezoneOffsetSeconds(now, name));
+    clearNode(timezonePreview);
+    timezonePreview.append(
+      el("div", { class: "timezone-preview-row" }, [
+        node("span", "muted", "Current local time"),
+        el("strong", { class: "timezone-preview-time", text: formatDateInZone(now, name, { time: true, seconds: true }) }),
+      ]),
+      el("div", { class: "timezone-preview-row" }, [
+        node("span", "muted", "UTC offset"),
+        el("strong", { class: "timezone-preview-offset", text: offset }),
+      ]),
+      el("p", {
+        class: "muted timezone-preview-meta",
+        text: `IANA ${name}${name === "UTC" ? " · canonical default" : ""}`,
+      })
+    );
+  };
+  timezoneSelect.addEventListener("change", updateTimezonePreview);
+  updateTimezonePreview();
+  startTimezonePreviewTimer(updateTimezonePreview);
   const keyPrefix = input({ value: system.key_prefix || "", maxlength: "12" });
   const defaultExpiry = input({ type: "number", min: "1", max: "3650", value: String(system.default_key_expiry_days ?? 30) });
   const maxBulk = input({ type: "number", min: "1", max: "5000", value: String(system.max_bulk_keys ?? 500) });
   const heartbeat = input({ type: "number", min: "30", max: "86400", value: String(system.heartbeat_interval_seconds ?? 300) });
   const rateLimits = input({ value: system.api_rate_limits || "60/min" });
-  const timezone = input({ value: system.display_timezone || "UTC" });
   const autoDelete = input({ type: "number", min: "0", max: "3650", value: String(system.auto_delete_days ?? 0) });
   const maintenance = el("input", { type: "checkbox", checked: Boolean(system.maintenance_mode) });
   const saveSystem = button("Save system settings", async () => {
     setButtonBusy(saveSystem, true, "Saving…");
     try {
-      await api.updateSettings({
+      const saved = await api.updateSettings({
         key_prefix: keyPrefix.value.trim(),
         default_key_expiry_days: Number(defaultExpiry.value),
         max_bulk_keys: Number(maxBulk.value),
         heartbeat_interval_seconds: Number(heartbeat.value),
         api_rate_limits: rateLimits.value.trim(),
-        display_timezone: timezone.value.trim() || "UTC",
+        display_timezone: timezoneSelect.value || "UTC",
         maintenance_mode: maintenance.checked,
         auto_delete_days: Number(autoDelete.value),
       });
+      applyTimezoneConfig(saved);
+      await refreshTimezone().catch(() => {});
       toast("System settings updated.", { type: "success" });
       showView("settings", { reload: true });
     } catch (error) { fail(error, "System settings update failed."); }
     finally { setButtonBusy(saveSystem, false); }
   }, "btn btn-primary btn-sm");
-  [keyPrefix, defaultExpiry, maxBulk, heartbeat, rateLimits, timezone, autoDelete, maintenance].forEach((control) => { control.disabled = !canEditSystem; });
+  const resetTimezone = button("Restore UTC", () => {
+    timezoneSelect.value = "UTC";
+    updateTimezonePreview();
+    saveSystem.click();
+  }, "btn btn-ghost btn-sm");
+  [keyPrefix, defaultExpiry, maxBulk, heartbeat, rateLimits, timezoneSelect, autoDelete, maintenance].forEach((control) => { control.disabled = !canEditSystem; });
   saveSystem.disabled = !canEditSystem;
+  resetTimezone.disabled = !canEditSystem;
   const checks = el("div", { class: "check-grid" }, Object.entries(preferences).map(([key, value]) =>
     el("label", { class: "check" }, [
       el("input", { type: "checkbox", checked: value ? "checked" : null, value: key }),
@@ -2808,11 +2958,12 @@ async function renderSettings(root) {
         field("Maximum bulk keys", maxBulk),
         field("Heartbeat interval (seconds)", heartbeat),
         field("API rate limits", rateLimits),
-        field("Display timezone", timezone),
+        field("Global timezone", timezoneSelect, "Search the full IANA database. Display and custom date/time input use this zone."),
+        timezonePreview,
         field("Auto-delete days", autoDelete, "0 disables scheduled project deletion."),
         el("label", { class: "check" }, [maintenance, el("span", { text: " Maintenance mode" })]),
-        el("p", { class: "muted span-2", text: canEditSystem ? "System changes are audited server-side." : "Owner role required to change system configuration. Values are read-only for this account." }),
-        el("div", { class: "span-2 card-actions" }, [saveSystem]),
+        el("p", { class: "muted span-2", text: canEditSystem ? "System changes are audited server-side. Stored timestamps remain canonical UTC; this setting only changes display and local input interpretation." : "Owner role required to change system configuration. Values are read-only for this account." }),
+        el("div", { class: "span-2 card-actions" }, [saveSystem, resetTimezone]),
       ])),
       card("Notification events", [checks, el("div", { class: "card-actions" }, [savePrefs])]),
       card("Session and display", [
@@ -3034,6 +3185,12 @@ export async function showView(name, { updateHash = true, reload = true } = {}) 
     if (token !== renderToken) return;
     clearNode(root);
     root.append(fragment);
+    try {
+      initCustomSelects(root);
+      initCustomDatePickers(root);
+    } catch (e) {
+      // non-fatal
+    }
     announce(`${VIEWS[view][0]} loaded.`);
   } catch (error) {
     if (token !== renderToken) return;
@@ -3058,6 +3215,14 @@ function closeMobileNav(restoreFocus = true) {
 async function bootstrap() {
   initMotion();
   try {
+    injectCustomSelectStyles();
+    initCustomSelects();
+    injectCustomDatePickerStyles();
+    initCustomDatePickers();
+  } catch (error) {
+    // CustomSelect is non-fatal
+  }
+  try {
     const session = await api.session();
     state.user = session.user;
     setCsrfToken(session.csrf_token);
@@ -3067,6 +3232,11 @@ async function bootstrap() {
     redirectToLogin();
     return;
   }
+  await initTimezone();
+  subscribeTimezone(() => {
+    if (!state.user || state.view === "settings") return;
+    showView(state.view, { updateHash: false });
+  });
   await loadHealth();
   const hash = window.location.hash.replace("#", "");
   await showView(hash || "overview", { updateHash: false });

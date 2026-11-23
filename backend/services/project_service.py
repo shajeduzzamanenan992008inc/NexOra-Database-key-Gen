@@ -13,6 +13,7 @@ Production-oriented service enforcing:
 from __future__ import annotations
 
 import json
+import logging
 import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
@@ -32,6 +33,11 @@ from ..security.keys import (
     normalize_project_name,
 )
 from ..serialization import utcnow
+from ..timezone import (
+    DEFAULT_TIMEZONE,
+    TimezoneError,
+    validate_timezone,
+)
 
 
 EXPIRATION_PRESETS: dict[str, tuple[str, timedelta]] = {
@@ -44,6 +50,8 @@ EXPIRATION_PRESETS: dict[str, tuple[str, timedelta]] = {
 EXPIRATION_CUSTOM = "custom"
 EXPIRATION_NEVER = "never"
 EXPIRATION_CHOICES = tuple(EXPIRATION_PRESETS) + (EXPIRATION_CUSTOM, EXPIRATION_NEVER)
+
+LOG = logging.getLogger("nexora.project_service")
 
 
 def expiration_label(preset: str | None) -> str:
@@ -150,6 +158,23 @@ class ProjectService:
         except Exception:
             return 0
         return value if 0 <= value <= 3650 else 0
+
+    def _setting_int(
+        self, key: str, default: int, minimum: int, maximum: int
+    ) -> int:
+        """Read a bounded integer from ``system_settings`` safely."""
+        try:
+            row = self.db.fetch_one(
+                "SELECT value FROM system_settings WHERE key = %s", (key,)
+            )
+            value = int((row or {}).get("value") or default)
+        except Exception:
+            return default
+        return max(minimum, min(maximum, value))
+
+    def get_expired_key_retention_days(self) -> int:
+        """Days an expired key is kept before hard deletion (0 = at expiry)."""
+        return self._setting_int("nexora.expired_key_retention_days", 0, 0, 365)
 
     def _resolve_expiration(
         self,
@@ -302,10 +327,10 @@ class ProjectService:
             expiration, expires_at, now
         )
         project_id = uuid4()
-        auto_delete_days = self.get_auto_delete_days()
-        auto_delete_at = (
-            now + timedelta(days=auto_delete_days) if auto_delete_days > 0 else None
-        )
+        if never_expires or resolved_expires_at is None:
+            auto_delete_at = None
+        else:
+            auto_delete_at = resolved_expires_at
 
         try:
             with self.db.cursor() as cursor:
@@ -397,7 +422,11 @@ class ProjectService:
                 else "active"
             ),
             "auto_delete_at": auto_delete_at.isoformat() if auto_delete_at else None,
-            "days_remaining": auto_delete_days if auto_delete_at else None,
+            "days_remaining": (
+                int(max(0, math.ceil((auto_delete_at - now).total_seconds() / 86400)))
+                if auto_delete_at
+                else None
+            ),
             "auto_delete_due": False,
             "total_keys": 0,
             "available_keys": 0,
@@ -438,10 +467,10 @@ class ProjectService:
         preset, resolved_expires_at, is_permanent = self._resolve_expiration(
             expiration, expires_at, now
         )
-        auto_delete_days = self.get_auto_delete_days()
-        auto_delete_at = (
-            now + timedelta(days=auto_delete_days) if auto_delete_days > 0 else None
-        )
+        if is_permanent or resolved_expires_at is None:
+            auto_delete_at = None
+        else:
+            auto_delete_at = resolved_expires_at
         project_id = uuid4()
 
         try:
@@ -467,8 +496,9 @@ class ProjectService:
                     """
                     INSERT INTO nexora_projects
                         (id, project_name, project_name_normalized, database_url_ref,
-                         status, auto_delete_at, created_at, updated_at, created_by)
-                    VALUES (%s, %s, %s, '', 'active', %s, %s, %s, %s)
+                         status, expires_at, never_expires, auto_delete_at,
+                         created_at, updated_at, created_by)
+                    VALUES (%s, %s, %s, '', 'active', %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (project_name_normalized) WHERE deleted_at IS NULL
                     DO NOTHING
                     RETURNING id
@@ -477,6 +507,8 @@ class ProjectService:
                         str(project_id),
                         display_name,
                         normalized,
+                        resolved_expires_at,
+                        is_permanent,
                         auto_delete_at,
                         now,
                         now,
@@ -581,7 +613,8 @@ class ProjectService:
         with self.db.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, project_name, project_name_normalized, status, deleted_at
+                SELECT id, project_name, project_name_normalized, status, deleted_at,
+                       expires_at, never_expires
                 FROM nexora_projects
                 WHERE id = %s
                 FOR UPDATE
@@ -591,6 +624,10 @@ class ProjectService:
             row = cursor.fetchone()
             if not row or row[4] is not None:
                 raise ApiError(404, "NOT_FOUND", "Project not found.")
+            if row[3] != "active":
+                raise ApiError(403, "PROJECT_INACTIVE", "Project is not active.")
+            if row[5] is not None and not row[6] and row[5] <= now:
+                raise ApiError(403, "PROJECT_EXPIRED", "Project has expired.")
 
             key = self._insert_reader_key(
                 cursor,
@@ -691,15 +728,15 @@ class ProjectService:
                        THEN 'expired'
                      ELSE p.status
                    END AS effective_status,
-                   p.auto_delete_at,
-                   CASE WHEN p.auto_delete_at IS NULL THEN NULL
+                   COALESCE(p.auto_delete_at, p.expires_at) AS auto_delete_at,
+                   CASE WHEN COALESCE(p.auto_delete_at, p.expires_at) IS NULL THEN NULL
                         ELSE GREATEST(
                             0,
-                            CEIL(EXTRACT(EPOCH FROM (p.auto_delete_at - now())) / 86400)
+                            CEIL(EXTRACT(EPOCH FROM (COALESCE(p.auto_delete_at, p.expires_at) - now())) / 86400)
                         )::int
                    END AS days_remaining,
-                   CASE WHEN p.auto_delete_at IS NULL THEN false
-                        WHEN p.auto_delete_at <= now() THEN true
+                   CASE WHEN COALESCE(p.auto_delete_at, p.expires_at) IS NULL THEN false
+                        WHEN COALESCE(p.auto_delete_at, p.expires_at) <= now() THEN true
                         ELSE false
                    END AS auto_delete_due,
                    stats.total_keys, stats.available_keys, stats.used_keys,
@@ -777,15 +814,15 @@ class ProjectService:
                        THEN 'expired'
                      ELSE p.status
                    END AS effective_status,
-                   p.auto_delete_at,
-                   CASE WHEN p.auto_delete_at IS NULL THEN NULL
+                   COALESCE(p.auto_delete_at, p.expires_at) AS auto_delete_at,
+                   CASE WHEN COALESCE(p.auto_delete_at, p.expires_at) IS NULL THEN NULL
                         ELSE GREATEST(
                             0,
-                            CEIL(EXTRACT(EPOCH FROM (p.auto_delete_at - now())) / 86400)
+                            CEIL(EXTRACT(EPOCH FROM (COALESCE(p.auto_delete_at, p.expires_at) - now())) / 86400)
                         )::int
                    END AS days_remaining,
-                   CASE WHEN p.auto_delete_at IS NULL THEN false
-                        WHEN p.auto_delete_at <= now() THEN true
+                   CASE WHEN COALESCE(p.auto_delete_at, p.expires_at) IS NULL THEN false
+                        WHEN COALESCE(p.auto_delete_at, p.expires_at) <= now() THEN true
                         ELSE false
                    END AS auto_delete_due,
                    stats.total_keys, stats.available_keys, stats.used_keys,
@@ -900,14 +937,16 @@ class ProjectService:
                 )
 
         now = utcnow()
+        expires_at = auto_delete_at
+        never_expires = auto_delete_at is None
         with self.db.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE nexora_projects
-                SET auto_delete_at = %s, updated_at = %s
+                SET auto_delete_at = %s, expires_at = %s, never_expires = %s, updated_at = %s
                 WHERE id = %s AND deleted_at IS NULL
                 """,
-                (auto_delete_at, now, project_id),
+                (auto_delete_at, expires_at, never_expires, now, project_id),
             )
             self._write_audit(
                 cursor,
@@ -935,6 +974,7 @@ class ProjectService:
         actor_id: UUID | str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        source: str = "manual",
     ) -> dict[str, Any]:
         """Permanently delete one project and every project-owned record.
 
@@ -1016,6 +1056,7 @@ class ProjectService:
             installation_count = int(related[0]) if related else 0
             device_token_count = int(related[1]) if related else 0
 
+            deleted_at = utcnow()
             snapshot = {
                 "project_id": str(row[0]),
                 "project_name": row[1],
@@ -1042,6 +1083,8 @@ class ProjectService:
                 user_agent=user_agent,
                 details={
                     "mode": "permanent",
+                    "source": source,
+                    "deleted_at": deleted_at.isoformat(),
                     "snapshot": snapshot,
                     "key_count": key_count,
                     "installation_count": installation_count,
@@ -1058,6 +1101,9 @@ class ProjectService:
                 (str(row[0]),),
             )
             cursor.execute(
+                "DELETE FROM nexora_devices WHERE project_id = %s", (str(row[0]),)
+            )
+            cursor.execute(
                 "DELETE FROM reader_keys WHERE project_id = %s", (str(row[0]),)
             )
             cursor.execute(
@@ -1069,6 +1115,7 @@ class ProjectService:
                 ("reader_keys", "project_id"),
                 ("reader_installations", "project_id"),
                 ("device_tokens", "project_id"),
+                ("nexora_devices", "project_id"),
             ):
                 cursor.execute(
                     f"SELECT COUNT(*) FROM {table} WHERE {column} = %s",
@@ -1158,9 +1205,12 @@ class ProjectService:
     def purge_due_projects(self, *, limit: int = 100) -> dict[str, Any]:
         """Hard-delete projects whose configured auto-delete date has passed.
 
-        Intended for a server-side scheduler (``python -m backend.cli
-        purge-expired-projects``). Each project is deleted in its own
-        transaction with its own audit event.
+        ``expires_at`` is the canonical auto-delete instant for projects, so a
+        project becomes eligible exactly when it expires. A project with
+        ``never_expires = true`` and no explicit ``auto_delete_at`` is never
+        deleted; an explicit deletion schedule always wins. Each project is
+        deleted in its own transaction with its own strict audit event; one
+        failure never rolls back or stops the rest of the batch.
         """
         limit = max(1, min(1000, int(limit)))
         rows = self.db.fetch_all(
@@ -1168,23 +1218,195 @@ class ProjectService:
             SELECT id, project_name
             FROM nexora_projects
             WHERE deleted_at IS NULL
-              AND auto_delete_at IS NOT NULL
-              AND auto_delete_at <= now()
-            ORDER BY auto_delete_at ASC
+              AND (COALESCE(never_expires, false) = false
+                   OR auto_delete_at IS NOT NULL)
+              AND (
+                  (auto_delete_at IS NOT NULL AND auto_delete_at <= now())
+                  OR
+                  (expires_at IS NOT NULL AND expires_at <= now())
+              )
+            ORDER BY COALESCE(auto_delete_at, expires_at) ASC
             LIMIT %s
             """,
             (limit,),
         )
         deleted: list[str] = []
+        failed: list[str] = []
         for row in rows:
             try:
-                result = self.hard_delete_project(str(row["id"]))
+                result = self.hard_delete_project(
+                    str(row["id"]), source="auto_delete"
+                )
                 deleted.append(result["project_name"])
             except ApiError as exc:
                 if exc.status == 404:
+                    # Already deleted by another worker: idempotent success.
                     continue
-                raise
-        return {"deleted_count": len(deleted), "project_names": deleted}
+                failed.append(str(row["id"]))
+                LOG.warning(
+                    "due project purge failed project_id=%s error=%s",
+                    row["id"],
+                    type(exc).__name__,
+                )
+            except Exception as exc:
+                failed.append(str(row["id"]))
+                LOG.exception(
+                    "due project purge failed project_id=%s error=%s",
+                    row["id"],
+                    type(exc).__name__,
+                )
+        return {
+            "deleted_count": len(deleted),
+            "project_names": deleted,
+            "failed_count": len(failed),
+            "failed_ids": failed[:20],
+        }
+
+    def _purge_one_expired_key(
+        self, key_id: str, *, retention_days: int
+    ) -> bool:
+        """Delete one due key and its credentials inside one transaction.
+
+        The row is locked and re-checked before deletion, so a concurrent
+        revocation or an extended expiration always wins over cleanup. The
+        strict audit row is written in the same transaction: a deletion can
+        never commit without its audit trail.
+        """
+        now = utcnow()
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, project_id, key_hint, status, expires_at,
+                       (expires_at IS NOT NULL
+                        AND expires_at <= now() - (%s || ' days')::interval) AS due
+                  FROM reader_keys
+                 WHERE id = %s
+                 FOR UPDATE
+                """,
+                (str(retention_days), key_id),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+            if row[5] is not True or row[3] == "revoked":
+                return False
+            cursor.execute(
+                "SELECT is_permanent, expiration_preset FROM reader_keys WHERE id = %s",
+                (key_id,),
+            )
+            state = cursor.fetchone()
+            if not state or bool(state[0]) or state[1] == "never":
+                return False
+
+            self._write_audit(
+                cursor,
+                action="reader_key.auto_delete",
+                target_type="reader_key",
+                target_id=key_id,
+                project_id=str(row[1]),
+                outcome="success",
+                details={
+                    "entity_type": "reader_key",
+                    "entity_id": key_id,
+                    "project_id": str(row[1]),
+                    "key_hint": row[2],
+                    "status_at_deletion": row[3],
+                    "expires_at": row[4].isoformat() if row[4] else None,
+                    "deleted_at": now.isoformat(),
+                    "retention_days": retention_days,
+                    "reason": "expiration_auto_delete",
+                    "result": "deleted",
+                },
+                strict=True,
+            )
+
+            cursor.execute(
+                """
+                DELETE FROM device_tokens
+                 WHERE installation_id IN (
+                       SELECT id FROM reader_installations
+                        WHERE reader_key_id = %s
+                 )
+                """,
+                (key_id,),
+            )
+            cursor.execute(
+                "DELETE FROM reader_installations WHERE reader_key_id = %s",
+                (key_id,),
+            )
+            cursor.execute(
+                "DELETE FROM nexora_devices WHERE key_id = %s", (key_id,)
+            )
+            cursor.execute(
+                """
+                DELETE FROM reader_keys
+                 WHERE id = %s
+                   AND status <> 'revoked'
+                   AND COALESCE(is_permanent, false) = false
+                   AND expiration_preset <> 'never'
+                   AND expires_at IS NOT NULL
+                   AND expires_at <= now() - (%s || ' days')::interval
+                """,
+                (key_id, str(retention_days)),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(
+                    "Expired key deletion could not be verified; transaction rolled back."
+                )
+        return True
+
+    def purge_expired_keys(
+        self, *, limit: int = 100, retention_days: int | None = None
+    ) -> dict[str, Any]:
+        """Hard-delete keys whose expiration instant is due.
+
+        The key's ``expires_at`` value is its auto-delete instant. Keys marked
+        ``never``/permanent, revoked keys, and any key whose expiration was
+        extended are never deleted. A failed key rolls back only its own
+        transaction and is retried by the next sweep.
+        """
+        limit = max(1, min(1000, int(limit)))
+        retention = (
+            self.get_expired_key_retention_days()
+            if retention_days is None
+            else max(0, min(365, int(retention_days)))
+        )
+        rows = self.db.fetch_all(
+            """
+            SELECT id
+              FROM reader_keys
+             WHERE COALESCE(is_permanent, false) = false
+               AND expiration_preset <> 'never'
+               AND expires_at IS NOT NULL
+               AND expires_at <= now() - (%s || ' days')::interval
+               AND revoked_at IS NULL
+               AND status <> 'revoked'
+             ORDER BY expires_at ASC
+             LIMIT %s
+            """,
+            (str(retention), limit),
+        )
+        deleted: list[str] = []
+        failed: list[str] = []
+        for row in rows:
+            key_id = str(row["id"])
+            try:
+                if self._purge_one_expired_key(key_id, retention_days=retention):
+                    deleted.append(key_id)
+            except Exception as exc:
+                failed.append(key_id)
+                LOG.exception(
+                    "expired key purge failed key_id=%s error=%s",
+                    key_id,
+                    type(exc).__name__,
+                )
+        return {
+            "deleted_count": len(deleted),
+            "deleted_ids": deleted[:100],
+            "failed_count": len(failed),
+            "failed_ids": failed[:20],
+            "retention_days": retention,
+        }
 
     # ------------------------------------------------------------------------
     # Reader Key Management
@@ -2224,6 +2446,14 @@ class ProjectService:
             "SELECT key, value, description FROM system_settings WHERE is_secret = false"
         )
         settings_map = {r["key"]: r["value"] for r in rows}
+        try:
+            display_timezone = validate_timezone(
+                settings_map.get("nexora.display_timezone") or DEFAULT_TIMEZONE
+            )
+        except TimezoneError:
+            # A legacy free-text value must never break the settings screen or
+            # an API response. The effective fallback is always UTC.
+            display_timezone = DEFAULT_TIMEZONE
         return {
             "key_prefix": settings_map.get("nexora.key_prefix", "NXR"),
             "default_key_expiry_days": int(settings_map.get("nexora.default_key_expiry_days", "30")),
@@ -2231,7 +2461,8 @@ class ProjectService:
             "heartbeat_interval_seconds": int(settings_map.get("nexora.heartbeat_interval_seconds", "300")),
             "api_rate_limits": settings_map.get("nexora.api_rate_limits", "60/min"),
             "maintenance_mode": settings_map.get("nexora.maintenance_mode", "false").lower() == "true",
-            "display_timezone": settings_map.get("nexora.display_timezone", "UTC"),
+            "display_timezone": display_timezone,
+            "default_timezone": DEFAULT_TIMEZONE,
             "auto_delete_days": int(settings_map.get("nexora.auto_delete_days", "0") or 0),
             "version": getattr(self.settings, "version", "1.0.0"),
         }
@@ -2284,6 +2515,11 @@ class ProjectService:
                     str_val = str(val).strip()
                     if user_key == "key_prefix" and not 1 <= len(str_val) <= 12:
                         raise ValidationError({user_key: "Prefix must be 1 to 12 characters."})
+                    if user_key == "display_timezone":
+                        try:
+                            str_val = validate_timezone(str_val or DEFAULT_TIMEZONE)
+                        except TimezoneError as exc:
+                            raise ValidationError({user_key: str(exc)}) from None
                     validated_updates[db_key] = str_val
 
         with self.db.cursor() as cursor:

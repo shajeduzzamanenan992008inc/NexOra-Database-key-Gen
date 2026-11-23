@@ -24,6 +24,7 @@ from ..helpers import (
     auth_service,
     pagination_args,
     request_meta,
+    request_timezone,
     role_service,
     scheduler_service,
     settings,
@@ -95,7 +96,12 @@ def _parse_datetime(value: Any, field: str) -> datetime | None:
     if value in (None, ""):
         return None
     payload = Payload({"value": value})
-    parsed = payload.datetime_utc("value", required=False, allow_null=True)
+    parsed = payload.datetime_utc(
+        "value",
+        required=False,
+        allow_null=True,
+        timezone=request_timezone(),
+    )
     if payload.errors or parsed is None:
         raise ValidationError({field: "Use an ISO-8601 timestamp with timezone."})
     return parsed
@@ -563,7 +569,12 @@ def universal_key_generate():
     max_usage = None
     if body.get("max_usage") is not None:
         max_usage = payload.integer("max_usage", required=False, minimum=1)
-    expires_at = payload.datetime_utc("expires_at", required=False, allow_null=True)
+    expires_at = payload.datetime_utc(
+        "expires_at",
+        required=False,
+        allow_null=True,
+        timezone=request_timezone(),
+    )
     batch_id = payload.string(
         "batch_id", required=False, min_length=36, max_length=36, default=""
     )

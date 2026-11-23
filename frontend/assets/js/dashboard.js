@@ -31,7 +31,22 @@ import {
 import { omegaAsset } from "./omega-assets.js";
 import { renderOperations } from "./operations.js";
 import { clearSensitiveState, runShutdownAnimation } from "./shutdown.js";
-import { CustomSelect, initCustomSelects, injectCustomSelectStyles } from "./components/CustomSelect.js";
+import { CustomSelect, initCustomSelects, injectCustomSelectStyles, refreshCustomSelects } from "./components/CustomSelect.js";
+import { CustomDatePicker, initCustomDatePickers, injectCustomDatePickerStyles } from "./components/CustomDatePicker.js";
+import {
+  applyTimezoneConfig,
+  formatDateInZone,
+  formatLocalInput,
+  formatUtcOffset,
+  getTimezoneOffsetSeconds,
+  initTimezone,
+  localDateEndOfDayToUtcIso,
+  localInputToUtcIso,
+  refreshTimezone,
+  subscribeTimezone,
+  toLocalDateValue,
+  toLocalInputValue,
+} from "./timezone.js";
 
 const VIEW_META = {
   overview: {
@@ -660,18 +675,61 @@ async function loadProjects() {
   }
 }
 
+function getExpiryUrgency(dateValue) {
+  if (!dateValue) return { urgency: "never", msRemaining: Infinity };
+  const targetTime = new Date(dateValue).getTime();
+  if (Number.isNaN(targetTime)) return { urgency: "unknown", msRemaining: Infinity };
+  const now = Date.now();
+  const msRemaining = targetTime - now;
+
+  if (msRemaining <= 0) {
+    return { urgency: "expired", msRemaining };
+  }
+  // Within 24 hours -> Critical (Red / Pulsing)
+  if (msRemaining <= 24 * 60 * 60 * 1000) {
+    return { urgency: "critical", msRemaining };
+  }
+  // Within 7 days -> Warning (Amber / Gold)
+  if (msRemaining <= 7 * 24 * 60 * 60 * 1000) {
+    return { urgency: "warning", msRemaining };
+  }
+  return { urgency: "safe", msRemaining };
+}
+
 function autoDeleteDateLabel(project) {
-  return project.auto_delete_at
-    ? formatDate(project.auto_delete_at, { time: false })
-    : "No Auto Delete Scheduled";
+  const target = project.auto_delete_at || project.expires_at;
+  if (!target) return "No Auto Delete Scheduled";
+  const { urgency } = getExpiryUrgency(target);
+  const node = el("span", { class: `expiry-indicator expiry-${urgency}` }, [
+    el("span", { class: "expiry-main-text", text: formatDate(target, { time: false }) }),
+  ]);
+  node.toString = () => formatDate(target, { time: false });
+  return node;
 }
 
 function remainingDaysLabel(project) {
-  if (!project.auto_delete_at) return "—";
-  if (project.auto_delete_due) return "Due now";
-  const days = Number(project.days_remaining);
-  if (!Number.isFinite(days)) return "—";
-  return `${days} day${days === 1 ? "" : "s"}`;
+  const target = project.auto_delete_at || project.expires_at;
+  if (!target) return "—";
+  const { urgency, msRemaining } = getExpiryUrgency(target);
+  if (urgency === "expired" || project.auto_delete_due) {
+    const node = el("span", { class: "badge badge-danger", text: "Due now" });
+    node.toString = () => "Due now";
+    return node;
+  }
+  const days = Number(project.days_remaining) || Math.max(0, Math.ceil(msRemaining / (86400 * 1000)));
+  const text = `${days} day${days === 1 ? "" : "s"}`;
+  if (urgency === "critical") {
+    const hours = Math.max(1, Math.ceil(msRemaining / (3600 * 1000)));
+    const node = el("span", { class: "badge badge-danger expiry-pulse", text: `${hours}h left` });
+    node.toString = () => `${hours}h left`;
+    return node;
+  }
+  if (urgency === "warning") {
+    const node = el("span", { class: "badge badge-warn", text });
+    node.toString = () => text;
+    return node;
+  }
+  return text;
 }
 
 function renderProjectsTable(projects) {
@@ -783,13 +841,16 @@ async function viewProjectDetails(projectId) {
       id: "project-auto-delete-input",
       "aria-label": "Auto delete date",
     });
-    if (project.auto_delete_at) {
-      dateInput.value = new Date(project.auto_delete_at).toISOString().slice(0, 10);
+    const targetAutoDelete = project.auto_delete_at || project.expires_at;
+    if (targetAutoDelete) {
+      dateInput.value = toLocalDateValue(targetAutoDelete);
     }
 
     const expirySelect = el("select", {
       id: "project-expiry-select",
       "aria-label": "Project expiration",
+      "data-custom-select": true,
+      "data-placeholder": "Project expiration",
     });
     rebuildExpirationSelect(expirySelect, PROJECT_EXPIRY_PRESETS, {
       includeKeep: Boolean(project.expires_at),
@@ -814,7 +875,7 @@ async function viewProjectDetails(projectId) {
       if (expirySelect.value === "never") text = "Never expires.";
       else if (custom) {
         text = expiryCustom.value
-          ? `Expires ${new Date(expiryCustom.value).toLocaleString()}`
+          ? `Expires ${formatLocalInput(expiryCustom.value)}`
           : "Choose a project expiration date and time.";
       } else if (expirySelect.value !== "keep") {
         text = EXPIRATION_LABELS[expirySelect.value] || expirySelect.value;
@@ -842,7 +903,7 @@ async function viewProjectDetails(projectId) {
       expiryPreview,
       el("p", {
         class: "muted",
-        text: "Project expiry is independent of key expiry. An expired project blocks authentication until its expiration is extended or removed.",
+        text: "Project expiration and automatic permanent deletion are identical. When this project expires, it is automatically purged from the database.",
       }),
     ]);
 
@@ -1026,12 +1087,16 @@ async function saveProjectExpiration(project, preset, customValue) {
 
   let expiresAt = null;
   if (preset === "custom") {
-    const parsed = customValue ? new Date(customValue) : null;
-    if (!parsed || Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
+    try {
+      expiresAt = customValue ? localInputToUtcIso(customValue) : null;
+    } catch (error) {
+      toast(error.message, { type: "error" });
+      return;
+    }
+    if (!expiresAt || new Date(expiresAt).getTime() <= Date.now()) {
       toast("Choose a future custom project expiration.", { type: "error" });
       return;
     }
-    expiresAt = parsed.toISOString();
   }
 
   try {
@@ -1042,7 +1107,7 @@ async function saveProjectExpiration(project, preset, customValue) {
     toast(
       preset === "never"
         ? `'${project.project_name}' will never expire.`
-        : `Project expiration updated for '${project.project_name}'.`,
+        : `Project expiration and auto-delete scheduled for '${project.project_name}'.`,
       { type: "success" }
     );
     closeDialog($("#project-detail-modal"));
@@ -1056,12 +1121,16 @@ async function saveProjectExpiration(project, preset, customValue) {
 async function saveProjectAutoDelete(project, dateText) {
   let iso = null;
   if (dateText) {
-    const local = new Date(`${dateText}T23:59:59`);
-    if (Number.isNaN(local.getTime())) {
+    try {
+      iso = localDateEndOfDayToUtcIso(dateText);
+    } catch (error) {
+      toast(error.message, { type: "error" });
+      return;
+    }
+    if (!iso) {
       toast("Choose a valid date.", { type: "error" });
       return;
     }
-    iso = local.toISOString();
   }
 
   try {
@@ -1132,7 +1201,28 @@ function expirationText(key) {
   if (!key) return "—";
   if (key.is_permanent || key.expiration_preset === "never") return "Never expires";
   const label = EXPIRATION_LABELS[key.expiration_preset] || "Expires";
-  return key.expires_at ? `${label} · ${formatDate(key.expires_at)}` : label;
+  if (!key.expires_at) return label;
+
+  const { urgency, msRemaining } = getExpiryUrgency(key.expires_at);
+  const formatted = formatDate(key.expires_at);
+
+  let urgencyTag = "";
+  if (urgency === "expired") {
+    urgencyTag = "EXPIRED";
+  } else if (urgency === "critical") {
+    const hours = Math.max(1, Math.ceil(msRemaining / (1000 * 60 * 60)));
+    urgencyTag = `${hours}h left`;
+  } else if (urgency === "warning") {
+    const days = Math.ceil(msRemaining / (1000 * 60 * 60 * 24));
+    urgencyTag = `${days}d left`;
+  }
+
+  const node = el("span", { class: `expiry-indicator expiry-${urgency}` }, [
+    el("span", { class: "expiry-main-text", text: `${label} · ${formatted}` }),
+    urgencyTag ? el("span", { class: "expiry-badge", text: urgencyTag }) : null,
+  ]);
+  node.toString = () => `${label} · ${formatted}`;
+  return node;
 }
 
 async function loadGeneratorProjects() {
@@ -1835,18 +1925,33 @@ function readMetadataValues() {
 }
 
 function localDateTimeValue(iso) {
-  if (!iso) return "";
-  const value = new Date(iso);
-  if (Number.isNaN(value.getTime())) return "";
-  const pad = (part) => String(part).padStart(2, "0");
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
+  return toLocalInputValue(iso);
 }
 
 function projectExpiryLabel(project) {
   if (!project || !project.expires_at) return "Never expires";
-  const expired =
-    project.effective_status === "expired" || new Date(project.expires_at).getTime() <= Date.now();
-  return `${expired ? "Expired" : "Expires"} ${formatDate(project.expires_at)}`;
+  const { urgency, msRemaining } = getExpiryUrgency(project.expires_at);
+  const formatted = formatDate(project.expires_at);
+
+  let urgencyTag = "";
+  let prefix = "Expires";
+  if (urgency === "expired" || project.effective_status === "expired") {
+    prefix = "Expired";
+    urgencyTag = "EXPIRED";
+  } else if (urgency === "critical") {
+    const hours = Math.max(1, Math.ceil(msRemaining / (1000 * 60 * 60)));
+    urgencyTag = `${hours}h left`;
+  } else if (urgency === "warning") {
+    const days = Math.ceil(msRemaining / (1000 * 60 * 60 * 24));
+    urgencyTag = `${days}d left`;
+  }
+
+  const node = el("span", { class: `expiry-indicator expiry-${urgency}` }, [
+    el("span", { class: "expiry-main-text", text: `${prefix} ${formatted}` }),
+    urgencyTag ? el("span", { class: "expiry-badge", text: urgencyTag }) : null,
+  ]);
+  node.toString = () => `${prefix} ${formatted}`;
+  return node;
 }
 
 function updateProjectExpirationPreview({ animate = false } = {}) {
@@ -1875,7 +1980,7 @@ function updateProjectExpirationPreview({ animate = false } = {}) {
   if (preset === "never") text = "Never expires — stored explicitly on the project.";
   if (preset === "custom") {
     text = customInput && customInput.value
-      ? `Expires ${new Date(customInput.value).toLocaleString()}`
+      ? `Expires ${formatLocalInput(customInput.value)}`
       : "Choose a project expiration date and time.";
   }
   clearNode(preview);
@@ -2085,7 +2190,7 @@ function updateExpirationPreview({ animate = false } = {}) {
   } else if (isCustom) {
     const value = customInput ? customInput.value : "";
     text = value
-      ? `Expires ${new Date(value).toLocaleString()}`
+      ? `Expires ${formatLocalInput(value)}`
       : "Choose a date and time below.";
   }
   if (preview) {
@@ -2219,8 +2324,17 @@ async function handleGenerateKeys(event) {
   let expiresAt = null;
   if (expiration === "custom") {
     const raw = customInput ? customInput.value : "";
-    const parsed = raw ? new Date(raw) : null;
-    if (!parsed || Number.isNaN(parsed.getTime())) {
+    try {
+      expiresAt = raw ? localInputToUtcIso(raw) : null;
+    } catch (error) {
+      setToneMessage(errorNode, error.message, "error");
+      if (customInput) {
+        customInput.classList.add("is-invalid");
+        customInput.focus();
+      }
+      return;
+    }
+    if (!expiresAt) {
       setToneMessage(errorNode, "Choose a valid custom expiration date and time.", "error");
       if (customInput) {
         customInput.classList.add("is-invalid");
@@ -2228,7 +2342,7 @@ async function handleGenerateKeys(event) {
       }
       return;
     }
-    if (parsed.getTime() <= Date.now()) {
+    if (new Date(expiresAt).getTime() <= Date.now()) {
       setToneMessage(errorNode, "The custom expiration must be in the future.", "error");
       if (customInput) {
         customInput.classList.add("is-invalid");
@@ -2236,7 +2350,6 @@ async function handleGenerateKeys(event) {
       }
       return;
     }
-    expiresAt = parsed.toISOString();
   }
 
   let projectExpiration = "never";
@@ -2245,8 +2358,14 @@ async function handleGenerateKeys(event) {
     projectExpiration = projectExpirationSelect ? projectExpirationSelect.value : "never";
     if (projectExpiration === "custom") {
       const raw = projectCustomInput ? projectCustomInput.value : "";
-      const parsed = raw ? new Date(raw) : null;
-      if (!parsed || Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
+      try {
+        projectExpiresAt = raw ? localInputToUtcIso(raw) : null;
+      } catch (error) {
+        setToneMessage(errorNode, error.message, "error");
+        if (projectCustomInput) projectCustomInput.focus();
+        return;
+      }
+      if (!projectExpiresAt || new Date(projectExpiresAt).getTime() <= Date.now()) {
         setToneMessage(
           errorNode,
           "Choose a future custom project expiration date and time.",
@@ -2258,7 +2377,6 @@ async function handleGenerateKeys(event) {
         }
         return;
       }
-      projectExpiresAt = parsed.toISOString();
     }
   }
 
@@ -2751,6 +2869,8 @@ function buildKeyEditSection(key, type) {
   const expirySelect = el("select", {
     id: "key-expiry-select",
     "aria-label": "Key expiration",
+    "data-custom-select": true,
+    "data-placeholder": "Key expiration",
   });
   rebuildExpirationSelect(expirySelect, keyTypePresets(type), {
     includeKeep: true,
@@ -2775,7 +2895,7 @@ function buildKeyEditSection(key, type) {
     if (expirySelect.value === "never") text = "Never expires.";
     else if (custom) {
       text = customInput.value
-        ? `Expires ${new Date(customInput.value).toLocaleString()}`
+        ? `Expires ${formatLocalInput(customInput.value)}`
         : "Choose a key expiration date and time.";
     }
     clearNode(expiryPreview);
@@ -2928,12 +3048,16 @@ async function saveKeyEdits(
   const preset = expirySelect.value;
   let expiresAt = null;
   if (preset === "custom") {
-    const parsed = customInput.value ? new Date(customInput.value) : null;
-    if (!parsed || Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
+    try {
+      expiresAt = customInput.value ? localInputToUtcIso(customInput.value) : null;
+    } catch (error) {
+      setToneMessage(errorNode, error.message, "error");
+      return;
+    }
+    if (!expiresAt || new Date(expiresAt).getTime() <= Date.now()) {
       setToneMessage(errorNode, "Choose a future custom expiration.", "error");
       return;
     }
-    expiresAt = parsed.toISOString();
   }
   let metadata = {};
   try {
@@ -3425,6 +3549,57 @@ function viewLogDetails(item) {
 
 /* --------------------------------------------------------------- settings */
 
+let timezoneOptionsCache = null;
+let timezonePreviewTimer = 0;
+
+async function loadTimezoneOptions() {
+  if (timezoneOptionsCache) return timezoneOptionsCache;
+  try {
+    const data = await api.timezones();
+    timezoneOptionsCache = Array.isArray(data.timezones) ? data.timezones : [];
+  } catch {
+    timezoneOptionsCache = [];
+  }
+  return timezoneOptionsCache;
+}
+
+function updateTimezonePreview() {
+  const select = $("#setting-timezone");
+  const preview = $("#timezone-preview");
+  if (!select || !preview) return;
+  const name = select.value || "UTC";
+  const option = (timezoneOptionsCache || []).find((zone) => zone.id === name);
+  const now = new Date();
+  const offset = option ? option.offset : formatUtcOffset(getTimezoneOffsetSeconds(now, name));
+  clearNode(preview);
+  preview.append(
+    el("div", { class: "timezone-preview-row" }, [
+      el("span", { class: "muted", text: "Current local time" }),
+      el("strong", { class: "timezone-preview-time", text: formatDateInZone(now, name, { time: true, seconds: true }) }),
+    ]),
+    el("div", { class: "timezone-preview-row" }, [
+      el("span", { class: "muted", text: "UTC offset" }),
+      el("strong", { class: "timezone-preview-offset", text: offset }),
+    ]),
+    el("p", {
+      class: "muted timezone-preview-meta",
+      text: `IANA ${name}${name === "UTC" ? " · canonical default" : ""}`,
+    })
+  );
+}
+
+function startTimezonePreview() {
+  window.clearInterval(timezonePreviewTimer);
+  timezonePreviewTimer = window.setInterval(() => {
+    const select = $("#setting-timezone");
+    if (!select || !select.isConnected) {
+      window.clearInterval(timezonePreviewTimer);
+      return;
+    }
+    updateTimezonePreview();
+  }, 1000);
+}
+
 async function loadSettings() {
   const data = await api.settings();
   state.settingsData = data;
@@ -3445,7 +3620,26 @@ async function loadSettings() {
   if (rateLimits) rateLimits.value = data.api_rate_limits || "60/min";
 
   const timezone = $("#setting-timezone");
-  if (timezone) timezone.value = data.display_timezone || "UTC";
+  if (timezone) {
+    const zones = await loadTimezoneOptions();
+    const current = data.display_timezone || "UTC";
+    if (!zones.some((zone) => zone.id === current)) {
+      zones.unshift({
+        id: current,
+        offset: formatUtcOffset(getTimezoneOffsetSeconds(new Date(), current)),
+      });
+    }
+    timezone.replaceChildren();
+    zones.forEach((zone) => {
+      timezone.append(
+        el("option", { value: zone.id, text: `${zone.id} · ${zone.offset}` })
+      );
+    });
+    timezone.value = current;
+    refreshCustomSelects(timezone);
+    updateTimezonePreview();
+    startTimezonePreview();
+  }
 
   const maintenance = $("#setting-maintenance-mode");
   if (maintenance) maintenance.checked = Boolean(data.maintenance_mode);
@@ -3491,7 +3685,9 @@ async function handleSaveSettings(event) {
   setToneMessage(message, "Saving configuration…", "info");
 
   try {
-    await api.updateSettings(updates);
+    const saved = await api.updateSettings(updates);
+    applyTimezoneConfig(saved);
+    await refreshTimezone().catch(() => {});
     setToneMessage(message, "System settings updated successfully.", "success");
     toast("System settings updated successfully.", { type: "success" });
     const panel = $(".form-panel-contained");
@@ -4163,6 +4359,23 @@ function setupEventListeners() {
   const settingsForm = $("#system-settings-form");
   if (settingsForm) settingsForm.addEventListener("submit", handleSaveSettings);
 
+  const timezoneSelect = $("#setting-timezone");
+  if (timezoneSelect) {
+    timezoneSelect.addEventListener("change", updateTimezonePreview);
+  }
+
+  const resetTimezone = $("#reset-timezone-btn");
+  if (resetTimezone) {
+    resetTimezone.addEventListener("click", () => {
+      const select = $("#setting-timezone");
+      if (!select) return;
+      select.value = "UTC";
+      updateTimezonePreview();
+      const form = $("#system-settings-form");
+      if (form) form.requestSubmit();
+    });
+  }
+
   const copyAll = $("#copy-all");
   if (copyAll) {
     copyAll.addEventListener("click", () => {
@@ -4296,12 +4509,14 @@ async function boot() {
     // Motion is optional; never let it stop the console from wiring up.
   }
 
-  // Initialize custom select components and inject styles
+  // Initialize custom select and date picker components and inject styles
   try {
     injectCustomSelectStyles();
     initCustomSelects();
+    injectCustomDatePickerStyles();
+    initCustomDatePickers();
   } catch (error) {
-    console.warn('CustomSelect initialization failed:', error);
+    console.warn('Component initialization failed:', error);
   }
 
   dismissBootScreen();
@@ -4331,6 +4546,11 @@ async function boot() {
     setCsrfToken(session.csrf_token);
     state.user = session.user;
     applyIdentity();
+    await initTimezone();
+    subscribeTimezone(() => {
+      if (!state.user) return;
+      if (state.view !== "settings") loadViewData(state.view).catch(() => {});
+    });
     sessionReady = true;
   } catch (error) {
     if (error instanceof ApiProblem && error.status === 401) {

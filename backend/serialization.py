@@ -11,7 +11,14 @@ from uuid import UUID
 def jsonable(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
-    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+    if isinstance(value, dt.datetime):
+        # PostgreSQL timestamptz values arrive in the database session's
+        # timezone. Serialize every aware instant as canonical UTC so API
+        # consumers never receive an installation-dependent offset.
+        if value.tzinfo is not None:
+            value = value.astimezone(dt.timezone.utc)
+        return value.isoformat()
+    if isinstance(value, (dt.date, dt.time)):
         return value.isoformat()
     if isinstance(value, dt.timedelta):
         return value.total_seconds()

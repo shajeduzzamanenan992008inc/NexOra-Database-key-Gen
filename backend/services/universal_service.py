@@ -1104,8 +1104,8 @@ class UniversalService:
                     UPDATE nexora_projects
                        SET project_name = %s, project_name_normalized = %s,
                            description = %s, project_type = %s, status = %s,
-                           expires_at = %s, never_expires = %s, settings = %s::jsonb,
-                           updated_at = %s
+                           expires_at = %s, never_expires = %s, auto_delete_at = %s,
+                           settings = %s::jsonb, updated_at = %s
                      WHERE id = %s AND deleted_at IS NULL
                     """,
                     (
@@ -1116,6 +1116,7 @@ class UniversalService:
                         status,
                         resolved_expires,
                         never,
+                        resolved_expires,
                         json.dumps(settings_value),
                         now,
                         project_id,

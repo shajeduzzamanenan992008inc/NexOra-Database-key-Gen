@@ -14,7 +14,7 @@ from ...security.decorators import require_auth
 from ...serialization import jsonable
 from ...services.audit import audit
 from ...validation import Payload, require_json
-from ..helpers import auth_service, project_service, request_meta
+from ..helpers import auth_service, project_service, request_meta, request_timezone
 
 bp = Blueprint("v1_projects", __name__)
 
@@ -43,7 +43,10 @@ def generate_project_key():
         "expiration", required=False, max_length=20, default="never"
     )
     expires_at = payload.datetime_utc(
-        "expires_at", required=False, allow_null=True
+        "expires_at",
+        required=False,
+        allow_null=True,
+        timezone=request_timezone(),
     )
     payload.finish()
 
@@ -72,7 +75,10 @@ def create_project():
         "expiration", required=False, max_length=20, default="never"
     )
     expires_at = payload.datetime_utc(
-        "expires_at", required=False, allow_null=True
+        "expires_at",
+        required=False,
+        allow_null=True,
+        timezone=request_timezone(),
     )
     payload.finish()
 
@@ -98,7 +104,10 @@ def generate_key_for_project(project_id: str):
         "expiration", required=False, max_length=20, default="never"
     )
     expires_at = payload.datetime_utc(
-        "expires_at", required=False, allow_null=True
+        "expires_at",
+        required=False,
+        allow_null=True,
+        timezone=request_timezone(),
     )
     payload.finish()
 
@@ -169,8 +178,10 @@ def set_project_auto_delete(project_id: str):
     """Configure or clear a project's scheduled hard-delete date.
 
     Send ``{"auto_delete_at": "2026-12-16T23:59:59Z"}`` to schedule deletion or
-    ``{"auto_delete_at": null}`` to disable it. Automatic deletion only happens
-    when the server-side scheduler command runs and the date is due.
+    ``{"auto_delete_at": null}`` to disable it. The date is stored as
+    ``expires_at`` as well: that instant is both the expiry and the automatic
+    deletion time. The embedded scheduler (or a deployed cron worker) deletes
+    the project and its records once the instant passes.
     """
     payload = Payload(require_json(request))
     if not payload.has("auto_delete_at"):
@@ -180,7 +191,10 @@ def set_project_auto_delete(project_id: str):
         )
         payload.finish()
     auto_delete_at = payload.datetime_utc(
-        "auto_delete_at", required=False, allow_null=True
+        "auto_delete_at",
+        required=False,
+        allow_null=True,
+        timezone=request_timezone(),
     )
     payload.finish()
 

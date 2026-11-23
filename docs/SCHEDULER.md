@@ -1,13 +1,17 @@
-# Standalone Automation Scheduler
+# Automation Scheduler
 
 Status: implemented and tested against the local PostgreSQL test database.
-Nothing was deployed and no production schedule was created.
+The application starts the worker automatically; no production schedule is
+created by this repository.
 
 ## Architecture
 
-The Flask web process never runs an infinite automation loop. A separate worker
-process invokes `SchedulerService` through the CLI, cron, systemd, or Windows
-Task Scheduler.
+The application process starts one embedded daemon worker after the Flask app
+is built. It is the same `SchedulerService` used by the CLI, not a second
+scheduler. Deployments that prefer an external process set
+`SCHEDULER_EMBEDDED=0` and run the CLI from cron, systemd, or Windows Task
+Scheduler. The database advisory lock makes either mode safe, including
+overlapping web workers.
 
 Each sweep:
 
@@ -21,16 +25,40 @@ Each sweep:
 If another worker holds the lock, the sweep returns `status: "skipped"` instead
 of running duplicate work. Jobs are idempotent UPDATE/DELETE operations or
 bounded batches. Webhook retries keep the existing attempt ceiling and backoff.
+A failed sweep is recorded and the loop continues on the next interval.
+
+## Expiration lifecycle
+
+`expires_at` is the canonical instant for both expiry and automatic deletion:
+
+* `reader_keys.expires_at` — the key is rejected at that instant and then
+  hard-deleted according to `nexora.expired_key_retention_days` (default `0`,
+  meaning at expiry). `never`/permanent keys with no explicit deletion
+  timestamp are never deleted.
+* `nexora_projects.expires_at = nexora_projects.auto_delete_at` — the project
+  and its keys, installations, device tokens and devices are deleted at that
+  instant. A `never_expires = true` project with no `auto_delete_at` is never
+  deleted; an explicit `auto_delete_at` is honored as its deletion schedule.
+
+Enforcement does not wait for a sweep: authentication, activation and key
+generation check the timestamps first. The sweep only removes records that are
+already unusable. Each deletion is a separate transaction with a strict audit
+row (`reader_key.auto_delete` or `project.delete`); a failed deletion rolls
+back only its own transaction and is retried next sweep. Plaintext keys are
+never logged.
 
 ## Jobs
 
 | Job | Work |
 |---|---|
-| `automation` | The established universal automation sweep: expirations, retention, notification processing, and webhook delivery retries. |
-| `project_purge` | Permanently deletes projects whose `auto_delete_at` is due, using the existing `ProjectService.purge_due_projects` batch. |
+| `automation` | The established universal automation sweep: project/key expiration, expired-key deletion, project purge, notification processing, and webhook delivery retries. |
+| `project_purge` | Permanently deletes due projects through `ProjectService.purge_due_projects`, including related records. |
+| `key_purge` | Permanently deletes due keys through `ProjectService.purge_expired_keys`, including installations, device tokens and device bindings. |
 | `sessions` | Removes administrator sessions that expired or were revoked more than one day ago. |
 
-All jobs run by default. Select a subset with `--jobs`.
+All jobs run by default. Select a subset with `--jobs`. The `automation` job
+also performs both purges, so the dedicated purge jobs are idempotent
+supplements for external schedulers that want a smaller scope.
 
 ## Commands
 
@@ -67,6 +95,7 @@ one ledger row.
 
 | Variable | Default | Range / meaning |
 |---|---|---|
+| `SCHEDULER_EMBEDDED` | `1` | Start the in-process worker. Set `0` when a dedicated cron/systemd worker is deployed. |
 | `SCHEDULER_BATCH_SIZE` | `100` | 1–1000 records per purge batch. |
 | `SCHEDULER_INTERVAL_SECONDS` | `60` | 5–86400; default interval reported by status. |
 | `SCHEDULER_WORKER_ID` | `cli` | Safe worker label stored with the run. |
@@ -77,7 +106,13 @@ one ledger row.
 The CLI `--interval` flag controls loop mode. Set the environment variable in the
 worker's service definition so status and operations agree.
 
-## Cron
+## External worker (optional)
+
+Set `SCHEDULER_EMBEDDED=0` in the web service first, then install one of the
+following. Running both is safe (the advisory lock serializes them) but the
+external worker is redundant while the embedded worker is enabled.
+
+### Cron
 
 ```cron
 * * * * * cd /srv/nexora && /srv/nexora/.venv/bin/python -m backend.cli universal-scheduler-run --once >> /var/log/nexora-scheduler.log 2>&1
@@ -135,9 +170,12 @@ serialize them.
 
 ## Production checklist
 
-1. Apply migration 011 through the approved migration process.
-2. Configure the worker environment with the same `DATABASE_URL` and secret
-   settings as the web service, using a secret manager.
-3. Run `universal-scheduler-status` and one `--dry-run` sweep.
-4. Install exactly one schedule/supervisor per environment.
+1. Apply migrations through the approved migration process.
+2. Leave `SCHEDULER_EMBEDDED=1` (default) unless an external worker is
+   deliberately deployed; in that case set it to `0` in the web service.
+3. Confirm startup logs contain `embedded scheduler worker started`, then run
+   `universal-scheduler-status` and one `--dry-run` sweep.
+4. Confirm at least one successful run and that `last_success` advances.
 5. Alert on failed runs, missing recent success, and a growing webhook queue.
+6. Configure `nexora.expired_key_retention_days` only if expired keys must be
+   kept for a support window; `0` deletes them at expiry.

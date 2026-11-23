@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, jsonify
 
+from ...timezone import timezone_payload
+
 bp = Blueprint("v1_health", __name__)
 
 
@@ -12,6 +14,7 @@ def health():
     db = current_app.extensions["db"]
     database_ok = db.ping()
     settings = current_app.extensions["settings"]
+    zone = timezone_payload(db)
 
     return (
         jsonify(
@@ -21,6 +24,9 @@ def health():
                 "version": settings.version,
                 "api_version": "v1",
                 "service": "nexora-admin-backend",
+                "timezone": zone["timezone"],
+                "utc_offset": zone["utc_offset"],
+                "local_time": zone["local_time"],
             }
         ),
         200 if database_ok else 503,

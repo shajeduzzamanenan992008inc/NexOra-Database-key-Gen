@@ -12,6 +12,8 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/omega-assets/webp/favicon.webp" type="image/webp" sizes="128x128">
   <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" id="custom-select-styles" href="/assets/custom-select.css">
+  <link rel="stylesheet" id="custom-date-picker-styles" href="/assets/custom-date-picker.css">
 </head>
 <body class="app-page">
   <a class="skip-link" href="#main-content">Skip to console content</a>
@@ -450,7 +452,7 @@
 
               <label id="gen-project-expiration-custom-field" class="field span-2" hidden>
                 <span class="field-label">Custom Project Expiration *</span>
-                <input id="gen-project-expiration-custom" type="datetime-local">
+                <input id="gen-project-expiration-custom" type="datetime-local" data-custom-date>
                 <small class="muted">Local date and time; stored and enforced in UTC. Must be in the future.</small>
               </label>
 
@@ -512,7 +514,7 @@
 
               <label id="gen-custom-expiration-field" class="field span-2" hidden>
                 <span class="field-label">Custom Expiration Date &amp; Time *</span>
-                <input id="gen-expiration-custom" type="datetime-local">
+                <input id="gen-expiration-custom" type="datetime-local" data-custom-date>
                 <small class="muted">Your local date and time; stored and enforced in UTC. Must be in the future.</small>
               </label>
 
@@ -1216,14 +1218,14 @@
             </label>
 
             <label class="field">
-              <span class="field-label">Display Timezone</span>
-              <select id="setting-timezone" data-custom-select data-placeholder="Display Timezone">
-                <option value="UTC" selected>UTC (Coordinated Universal Time)</option>
-                <option value="Asia/Dhaka">Asia/Dhaka (+06:00)</option>
-                <option value="America/New_York">America/New_York (EST/EDT)</option>
-                <option value="Europe/London">Europe/London (GMT/BST)</option>
+              <span class="field-label">Global Timezone</span>
+              <select id="setting-timezone" data-custom-select data-searchable="true" data-placeholder="Search timezones" aria-label="Global display timezone">
+                <option value="UTC" selected>UTC · UTC+00:00</option>
               </select>
+              <small class="muted">Search the full IANA timezone database. Display and custom date/time input use this zone; every stored timestamp remains UTC.</small>
             </label>
+
+            <div id="timezone-preview" class="timezone-preview span-2" aria-live="polite"></div>
 
             <label class="field span-2 checkbox-field-wrap">
               <input id="setting-maintenance-mode" type="checkbox">
@@ -1240,6 +1242,9 @@
               <button id="save-settings-btn" class="btn btn-primary btn-glow" type="submit">
                 <span class="btn-label">Save Configuration</span>
                 <span class="spinner" hidden aria-hidden="true"></span>
+              </button>
+              <button id="reset-timezone-btn" class="btn btn-ghost" type="button">
+                <span class="btn-label">Restore UTC</span>
               </button>
             </div>
           </form>

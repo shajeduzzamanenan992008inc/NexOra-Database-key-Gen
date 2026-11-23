@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask import Response, current_app, request
+from flask import Response, current_app, g, request
 
 from ..errors import ApiError
 from ..serialization import isoformat
+from ..timezone import get_configured_timezone
 from ..services.auth_service import AuthService
 from ..services.license_service import LicenseService
 from ..services.project_service import ProjectService
@@ -84,6 +85,21 @@ def request_meta() -> tuple[str, str]:
     return client_ip(request, cfg.trust_proxy), user_agent(request)
 
 
+def request_timezone() -> str:
+    """Resolve the effective timezone once per request.
+
+    A short request-scoped cache keeps several date fields in one request
+    consistent while still observing a setting saved by another request.
+    """
+
+    cached = getattr(g, "nexora_timezone", None)
+    if cached:
+        return cached
+    name = get_configured_timezone(current_app.extensions["db"])
+    g.nexora_timezone = name
+    return name
+
+
 def attach_session_cookie(response: Response, token: str, max_age: int) -> None:
     cfg = settings()
     response.set_cookie(
@@ -139,7 +155,9 @@ def optional_datetime(name: str):
     from ..errors import ValidationError
 
     payload = Payload({"value": request.args.get(name)})
-    parsed = payload.datetime_utc("value", required=True)
+    parsed = payload.datetime_utc(
+        "value", required=True, timezone=request_timezone()
+    )
     if parsed is None:
         raise ValidationError({name: payload.errors.get("value", "Invalid date.")})
     return parsed

@@ -470,6 +470,80 @@ class TestAutoDelete:
             == 200
         )
 
+    def test_project_expiration_and_auto_delete_are_identical(self, app, owner):
+        # 1. Project created with expiration preset has identical expires_at and auto_delete_at
+        created = owner.post(
+            "/api/v1/projects",
+            {"project_name": "Synced Project Expiration", "expiration": "30_days"},
+        )
+        assert created.status_code == 201
+        p = created.get_json()["project"]
+        assert p["expires_at"] is not None
+        assert p["auto_delete_at"] is not None
+        assert p["expires_at"] == p["auto_delete_at"]
+
+        # 2. Updating auto_delete_at synchronizes expires_at
+        new_date = "2099-06-15T12:00:00Z"
+        updated = owner.patch(
+            f"/api/v1/projects/{p['id']}/auto-delete",
+            {"auto_delete_at": new_date},
+        )
+        assert updated.status_code == 200
+        up = updated.get_json()["project"]
+        assert up["auto_delete_at"] is not None
+        assert up["auto_delete_at"] == up["expires_at"]
+
+        # 3. Clearing auto_delete_at clears expires_at
+        cleared = owner.patch(
+            f"/api/v1/projects/{p['id']}/auto-delete",
+            {"auto_delete_at": None},
+        )
+        assert cleared.status_code == 200
+        cp = cleared.get_json()["project"]
+        assert cp["auto_delete_at"] is None
+        assert cp["expires_at"] is None
+        assert cp["never_expires"] is True
+
+    def test_expired_project_and_expired_keys_are_purged(self, app, owner):
+        from backend.services.webhook_service import WebhookService
+
+        created = generate_ok(owner, "Auto Purge Test Project")
+        project_id = created["project"]["id"]
+        key_id = created["reader_key"]["id"]
+
+        # Expire both project and key in the database
+        db = app.extensions["db"]
+        db.execute(
+            """
+            UPDATE nexora_projects
+               SET expires_at = now() - interval '2 hours',
+                   auto_delete_at = now() - interval '2 hours'
+             WHERE id = %s
+            """,
+            (project_id,),
+        )
+        db.execute(
+            """
+            UPDATE reader_keys
+               SET expires_at = now() - interval '2 hours',
+                   expiration_preset = 'custom',
+                   status = 'expired',
+                   is_permanent = false
+             WHERE id = %s
+            """,
+            (key_id,),
+        )
+
+        # Automation run deletes expired keys and expired projects
+        wh_service = WebhookService(db, app.extensions["settings"])
+        result = wh_service.run_automation(dry_run=False)
+        assert result["status"] == "success"
+
+        # Verify project is hard-deleted from database
+        assert owner.get(f"/api/v1/projects/{project_id}").status_code == 404
+        assert db.fetch_value("SELECT id FROM nexora_projects WHERE id = %s", (project_id,)) is None
+        assert db.fetch_value("SELECT id FROM reader_keys WHERE id = %s", (key_id,)) is None
+
 
 # ---------------------------------------------------------------------------
 # Phase 6 — Permanent single delete

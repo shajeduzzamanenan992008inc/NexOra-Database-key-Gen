@@ -25,6 +25,7 @@ from .helpers import (
     optional_datetime,
     pagination_args,
     request_meta,
+    request_timezone,
     settings,
 )
 
@@ -86,7 +87,7 @@ def _generate(payload: Payload, *, quantity: int) -> dict[str, Any]:
     max_activations = payload.integer(
         "max_activations", default=1, minimum=1, maximum=10000
     )
-    expires_at = payload.datetime_utc("expires_at")
+    expires_at = payload.datetime_utc("expires_at", timezone=request_timezone())
     label = payload.string("label", default="", max_length=80)
     metadata = _metadata_from(payload)
     payload.finish()
@@ -270,7 +271,7 @@ def update_key(key_id):
         )
     if payload.has("expires_at"):
         changes["expires_at"] = payload.datetime_utc(
-            "expires_at", allow_null=True
+            "expires_at", allow_null=True, timezone=request_timezone()
         )
     if payload.has("label"):
         changes["label"] = payload.string("label", max_length=80) or ""

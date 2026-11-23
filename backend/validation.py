@@ -6,7 +6,6 @@ including status, activation limits, timestamps, roles, and identifiers.
 
 from __future__ import annotations
 
-import datetime as dt
 import re
 from typing import Any, Iterable
 from uuid import UUID
@@ -14,6 +13,7 @@ from uuid import UUID
 from flask import Request
 
 from .errors import ApiError, ValidationError
+from .timezone import DEFAULT_TIMEZONE, TimezoneError, parse_datetime
 
 _EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}$")
 
@@ -215,7 +215,8 @@ class Payload:
         required: bool = False,
         date_is_end_of_day: bool = True,
         allow_null: bool = False,
-    ) -> dt.datetime | None:
+        timezone: str | None = None,
+    ):
         if name not in self.data:
             if required:
                 self.errors[name] = "This field is required."
@@ -231,24 +232,15 @@ class Payload:
             self.errors[name] = "Must be an ISO-8601 date or timestamp."
             return None
 
-        text = value.strip()
         try:
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
-                date = dt.date.fromisoformat(text)
-                if date_is_end_of_day:
-                    return dt.datetime.combine(
-                        date, dt.time(23, 59, 59, 999999), tzinfo=dt.timezone.utc
-                    )
-                return dt.datetime.combine(
-                    date, dt.time(0, 0, 0), tzinfo=dt.timezone.utc
-                )
-            parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            self.errors[name] = "Must be an ISO-8601 date or timestamp."
+            return parse_datetime(
+                value,
+                timezone or DEFAULT_TIMEZONE,
+                date_is_end_of_day=date_is_end_of_day,
+            )
+        except TimezoneError as exc:
+            self.errors[name] = str(exc)
             return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.timezone.utc)
-        return parsed.astimezone(dt.timezone.utc)
 
     def reject_unknown(self, allowed: Iterable[str]) -> None:
         allowed_set = set(allowed)

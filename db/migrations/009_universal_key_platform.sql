@@ -483,13 +483,11 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $nexora_platform_role$
 BEGIN
-    IF NEW.platform_role IS NULL OR NEW.platform_role = '' THEN
-        NEW.platform_role := CASE NEW.role
-            WHEN 'owner' THEN 'owner'
-            WHEN 'admin' THEN 'administrator'
-            ELSE 'read_only'
-        END;
-    END IF;
+    NEW.platform_role := CASE NEW.role
+        WHEN 'owner' THEN 'owner'
+        WHEN 'admin' THEN 'administrator'
+        ELSE 'read_only'
+    END;
     RETURN NEW;
 END
 $nexora_platform_role$;

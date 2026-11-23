@@ -718,7 +718,7 @@ class WebhookService:
     def _automation_preview(self) -> dict[str, Any]:
         """Count the work a real run would perform without modifying rows."""
 
-        retention = self._setting_int("nexora.expired_key_retention_days", 7, 0, 365)
+        retention = self._setting_int("nexora.expired_key_retention_days", 0, 0, 365)
         inactive_days = self._setting_int("nexora.inactive_device_days", 30, 0, 3650)
         return {
             "dry_run": True,
@@ -747,9 +747,11 @@ class WebhookService:
                 self.db.fetch_value(
                     """
                     SELECT COUNT(*)::int FROM reader_keys
-                     WHERE status = 'expired' AND expires_at IS NOT NULL
+                     WHERE status <> 'revoked' AND revoked_at IS NULL
+                       AND expires_at IS NOT NULL
                        AND expires_at <= now() - (%s || ' days')::interval
                        AND COALESCE(is_permanent, false) = false
+                       AND expiration_preset <> 'never'
                     """,
                     (str(retention),),
                 )
@@ -877,6 +879,12 @@ class WebhookService:
                 """
             )
             details["projects_expired"] = expired_projects
+            from .project_service import ProjectService
+
+            projects = ProjectService(self.db, self.settings)
+            purged = projects.purge_due_projects()
+            details["projects_purged"] = purged.get("deleted_count", 0)
+            details["projects_purge_failed"] = purged.get("failed_count", 0)
             self.db.execute(
                 """
                 UPDATE reader_keys k
@@ -898,42 +906,14 @@ class WebhookService:
             )
             details["keys_expired"] = expire_keys
 
-            retention = self._setting_int(
-                "nexora.expired_key_retention_days", 7, 0, 365
+            retention = projects.get_expired_key_retention_days()
+            cleaned = projects.purge_expired_keys(limit=250, retention_days=retention)
+            details["expired_keys_cleaned"] = int(
+                cleaned.get("deleted_count") or 0
             )
-            expired_ids = [
-                str(row["id"])
-                for row in self.db.fetch_all(
-                    """
-                    SELECT id FROM reader_keys
-                     WHERE status = 'expired' AND expires_at IS NOT NULL
-                       AND expires_at <= now() - (%s || ' days')::interval
-                       AND COALESCE(is_permanent, false) = false
-                     ORDER BY expires_at ASC LIMIT 250
-                    """,
-                    (str(retention),),
-                )
-            ]
-            cleaned = 0
-            for key_id in expired_ids:
-                with self.db.cursor() as cursor:
-                    cursor.execute(
-                        "DELETE FROM device_tokens WHERE installation_id IN (SELECT id FROM reader_installations WHERE reader_key_id = %s)",
-                        (key_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM reader_installations WHERE reader_key_id = %s",
-                        (key_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM nexora_devices WHERE key_id = %s", (key_id,)
-                    )
-                    cursor.execute(
-                        "DELETE FROM reader_keys WHERE id = %s AND status = 'expired'",
-                        (key_id,),
-                    )
-                    cleaned += cursor.rowcount
-            details["expired_keys_cleaned"] = cleaned
+            details["expired_key_purge_failed"] = int(
+                cleaned.get("failed_count") or 0
+            )
             details["retention_days"] = retention
 
             inactive_days = self._setting_int("nexora.inactive_device_days", 30, 0, 3650)

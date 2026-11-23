@@ -35,7 +35,75 @@ LOG = logging.getLogger("nexora.scheduler")
 
 # Stable 64-bit advisory lock key. "NEXP" in ASCII.
 SCHEDULER_LOCK_KEY = 0x4E455850
-JOBS = ("automation", "project_purge", "sessions")
+JOBS = ("automation", "project_purge", "key_purge", "sessions")
+
+
+class SchedulerWorker:
+    """In-process daemon thread that runs the existing scheduler loop.
+
+    The worker is a transport for :class:`SchedulerService`, not a second
+    scheduler: every sweep still uses the same advisory lock, jobs, ledger and
+    audit trail. ``stop`` sets the loop's event and joins so shutdown is
+    graceful; a missed or failed sweep is retried by the next iteration.
+    """
+
+    def __init__(
+        self,
+        service: "SchedulerService",
+        *,
+        interval_seconds: int = 60,
+        jobs: Iterable[str] | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> None:
+        self.service = service
+        self.interval_seconds = max(5, min(86400, int(interval_seconds)))
+        self.jobs = tuple(jobs) if jobs else None
+        self.stop_event = stop_event or threading.Event()
+        self.first_sweep = threading.Event()
+        self.sweeps = 0
+        self.last_result: dict[str, Any] = {}
+        self.final_result: dict[str, Any] = {}
+        self.thread = threading.Thread(
+            target=self._run, name="nexora-scheduler", daemon=True
+        )
+        self._started = False
+
+    def _on_sweep(self, result: dict[str, Any]) -> None:
+        self.sweeps += 1
+        self.last_result = result or {}
+        self.first_sweep.set()
+
+    def _run(self) -> None:
+        try:
+            self.final_result = self.service.run_forever(
+                interval_seconds=self.interval_seconds,
+                jobs=self.jobs,
+                stop_event=self.stop_event,
+                on_sweep=self._on_sweep,
+            )
+        except Exception as exc:  # pragma: no cover - defensive thread guard
+            LOG.exception("embedded scheduler worker crashed")
+            self.final_result = {
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+            }
+            self.first_sweep.set()
+
+    def start(self) -> "SchedulerWorker":
+        if not self._started:
+            self.thread.start()
+            self._started = True
+        return self
+
+    def stop(self, timeout: float = 5.0) -> dict[str, Any]:
+        self.stop_event.set()
+        if self.thread.is_alive() and self.thread is not threading.current_thread():
+            self.thread.join(timeout)
+        return {"running": self.running, "sweeps": self.sweeps}
+
+    @property
+    def running(self) -> bool:
+        return self.thread.is_alive()
 
 
 class SchedulerService:
@@ -44,6 +112,7 @@ class SchedulerService:
         self.settings = settings
         self.webhooks = WebhookService(db, settings)
         self.projects = ProjectService(db, settings)
+        self.worker: SchedulerWorker | None = None
 
     # ------------------------------------------------------------------ utils
     def _batch_size(self, value: int | None = None) -> int:
@@ -146,8 +215,10 @@ class SchedulerService:
                 self.db.fetch_value(
                     """
                     SELECT COUNT(*)::int FROM nexora_projects
-                     WHERE deleted_at IS NULL AND auto_delete_at IS NOT NULL
-                       AND auto_delete_at <= now()
+                     WHERE deleted_at IS NULL AND (
+                        (auto_delete_at IS NOT NULL AND auto_delete_at <= now())
+                        OR (expires_at IS NOT NULL AND expires_at <= now())
+                     )
                     """
                 )
                 or 0
@@ -156,7 +227,41 @@ class SchedulerService:
         result = self.projects.purge_due_projects(limit=limit)
         return {
             "projects_deleted": int(result.get("deleted_count") or 0),
+            "projects_failed": int(result.get("failed_count") or 0),
             "projects_due": 0,
+        }
+
+    def _purge_keys(self, *, dry_run: bool, limit: int) -> dict[str, int]:
+        retention = self.projects.get_expired_key_retention_days()
+        if dry_run:
+            due = int(
+                self.db.fetch_value(
+                    """
+                    SELECT COUNT(*)::int FROM reader_keys
+                     WHERE COALESCE(is_permanent, false) = false
+                       AND expiration_preset <> 'never'
+                       AND expires_at IS NOT NULL
+                       AND expires_at <= now() - (%s || ' days')::interval
+                       AND revoked_at IS NULL
+                       AND status <> 'revoked'
+                    """,
+                    (str(retention),),
+                )
+                or 0
+            )
+            return {
+                "keys_due": due,
+                "keys_deleted": 0,
+                "keys_failed": 0,
+                "retention_days": retention,
+            }
+        result = self.projects.purge_expired_keys(
+            limit=limit, retention_days=retention
+        )
+        return {
+            "keys_deleted": int(result.get("deleted_count") or 0),
+            "keys_failed": int(result.get("failed_count") or 0),
+            "retention_days": retention,
         }
 
     # ------------------------------------------------------------------- run
@@ -192,6 +297,10 @@ class SchedulerService:
                     )
                 if "project_purge" in selected:
                     details["project_purge"] = self._purge(
+                        dry_run=dry_run, limit=limit
+                    )
+                if "key_purge" in selected:
+                    details["key_purge"] = self._purge_keys(
                         dry_run=dry_run, limit=limit
                     )
                 if "sessions" in selected:
@@ -266,6 +375,7 @@ class SchedulerService:
         max_iterations: int | None = None,
         dry_run: bool = False,
         stop_event: threading.Event | None = None,
+        on_sweep: Any = None,
     ) -> dict[str, Any]:
         """Run sweeps until stopped, bounded by an optional iteration limit."""
         interval = max(5, min(86400, int(interval_seconds)))
@@ -280,6 +390,11 @@ class SchedulerService:
                     break
                 iterations += 1
                 last = self.run_once(jobs=jobs, dry_run=dry_run)
+                if on_sweep is not None:
+                    try:
+                        on_sweep(last)
+                    except Exception:
+                        LOG.exception("scheduler sweep callback failed")
                 if last.get("status") == "failed":
                     failures += 1
                 if max_iterations is not None and iterations >= max(1, max_iterations):
@@ -302,6 +417,39 @@ class SchedulerService:
             "last": last,
         }
 
+    def start_background_worker(
+        self,
+        *,
+        interval_seconds: int | None = None,
+        jobs: Iterable[str] | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> SchedulerWorker:
+        """Start the automatic cleanup loop in this process.
+
+        Callers that deploy a separate cron/systemd worker can set
+        ``SCHEDULER_EMBEDDED=0``; the advisory lock still makes both modes safe
+        if they overlap. The returned worker exposes ``first_sweep`` for
+        startup verification and ``stop`` for graceful shutdown.
+        """
+        interval = (
+            int(interval_seconds)
+            if interval_seconds is not None
+            else int(getattr(self.settings, "scheduler_interval_seconds", 60) or 60)
+        )
+        worker = SchedulerWorker(
+            self,
+            interval_seconds=interval,
+            jobs=jobs,
+            stop_event=stop_event,
+        )
+        self.worker = worker
+        LOG.info(
+            "embedded scheduler worker starting interval_seconds=%s jobs=%s",
+            worker.interval_seconds,
+            ",".join(worker.jobs or JOBS),
+        )
+        return worker.start()
+
     # ---------------------------------------------------------------- status
     @staticmethod
     def _run_metrics(run: dict[str, Any]) -> dict[str, int]:
@@ -311,12 +459,14 @@ class SchedulerService:
             return {"processed": 0, "failed": 0}
         automation = details.get("automation")
         project_purge = details.get("project_purge") or {}
+        key_purge = details.get("key_purge") or {}
         sessions = details.get("sessions") or {}
         processed = 0
         failed = 0
         if isinstance(automation, dict):
             for key in (
                 "projects_expired",
+                "projects_purged",
                 "keys_expired",
                 "expired_keys_cleaned",
                 "devices_deactivated",
@@ -324,6 +474,8 @@ class SchedulerService:
                 "project_expiry_notifications",
             ):
                 processed += int(automation.get(key) or 0)
+            failed += int(automation.get("projects_purge_failed") or 0)
+            failed += int(automation.get("expired_key_purge_failed") or 0)
             webhooks = automation.get("webhooks") or {}
             if isinstance(webhooks, dict):
                 processed += sum(
@@ -332,6 +484,9 @@ class SchedulerService:
                 )
                 failed += int(webhooks.get("failed") or 0)
         processed += int(project_purge.get("projects_deleted") or 0)
+        processed += int(key_purge.get("keys_deleted") or 0)
+        failed += int(project_purge.get("projects_failed") or 0)
+        failed += int(key_purge.get("keys_failed") or 0)
         processed += int(sessions.get("sessions_pruned") or 0)
         return {"processed": processed, "failed": failed}
 
@@ -349,11 +504,18 @@ class SchedulerService:
             SELECT
               (SELECT COUNT(*)::int FROM nexora_projects WHERE deleted_at IS NULL) AS projects,
               (SELECT COUNT(*)::int FROM reader_keys) AS keys,
+              (SELECT COUNT(*)::int FROM reader_keys
+                WHERE COALESCE(is_permanent, false) = false
+                  AND expiration_preset <> 'never'
+                  AND expires_at IS NOT NULL AND expires_at <= now()
+                  AND revoked_at IS NULL AND status <> 'revoked') AS keys_due,
               (SELECT COUNT(*)::int FROM nexora_webhook_deliveries
                 WHERE status IN ('pending','failed')) AS webhook_queue,
               (SELECT COUNT(*)::int FROM nexora_projects
-                WHERE deleted_at IS NULL AND auto_delete_at IS NOT NULL
-                  AND auto_delete_at <= now()) AS projects_due,
+                WHERE deleted_at IS NULL AND (
+                  (auto_delete_at IS NOT NULL AND auto_delete_at <= now())
+                  OR (expires_at IS NOT NULL AND expires_at <= now())
+                )) AS projects_due,
               (SELECT COUNT(*)::int FROM nexora_notifications
                 WHERE read_at IS NULL) AS unread_notifications,
               (SELECT COUNT(*)::int FROM nexora_webhook_deliveries
@@ -417,6 +579,8 @@ class SchedulerService:
             "jobs": list(JOBS),
             "lock_key": SCHEDULER_LOCK_KEY,
             "lock_held": lock_held,
+            "embedded_worker": bool(self.worker),
+            "embedded_running": bool(self.worker and self.worker.running),
             "worker_status": worker_status,
             "interval_seconds": interval,
             "batch_size": self._batch_size(),

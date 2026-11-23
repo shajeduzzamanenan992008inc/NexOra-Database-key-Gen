@@ -65,7 +65,7 @@
 
 <table align="center">
   <tr>
-    <td align="center"><h3>11</h3><sub>SQL migrations<br />(001–011)</sub></td>
+    <td align="center"><h3>12</h3><sub>SQL migrations<br />(001–012)</sub></td>
     <td align="center"><h3>20</h3><sub>built-in<br />key types</sub></td>
     <td align="center"><h3>22</h3><sub>platform console<br />views</sub></td>
     <td align="center"><h3>11</h3><sub>viewports in the<br />responsive audit</sub></td>
@@ -379,7 +379,7 @@ python -m pytest -v             # run the test suite
 ```
 
 > [!IMPORTANT]
-> Migrations **005–011** require an approved backup/PITR checkpoint and migration window before they touch production. See [Migrations](#migrations) and [Flowchart 23](#flowchart-23-deployment-workflow). Verify the real entry point and variable names against your checkout.
+> Migrations **005–012** require an approved backup/PITR checkpoint and migration window before they touch production. See [Migrations](#migrations) and [Flowchart 23](#flowchart-23-deployment-workflow). Verify the real entry point and variable names against your checkout.
 
 <p align="center"><img src="./assets/omega-key-assets/svg/divider.svg" alt="" width="100%" /></p>
 
@@ -767,7 +767,7 @@ stateDiagram-v2
 ```
 
 > [!NOTE]
-> The legacy dashboard API sets a project to `active` or `inactive` (`PATCH /projects/<id>/status`). Deactivating a project blocks new activations and existing device credentials. The universal platform adds archiving, which also blocks the project's keys. Project-level auto-delete is a timezone-aware deletion timestamp and stays disabled until a retention period or project schedule is configured.
+> The legacy dashboard API sets a project to `active` or `inactive` (`PATCH /projects/<id>/status`). Deactivating a project blocks new activations and existing device credentials. The universal platform adds archiving, which also blocks the project's keys. Project-level auto-delete is a timezone-aware deletion timestamp: at that instant the project, its keys, and dependent records become due for hard deletion. `never_expires` projects without an explicit timestamp are never deleted.
 
 <p align="center"><img src="./assets/omega-key-assets/svg/divider.svg" alt="" width="100%" /></p>
 
@@ -1473,23 +1473,20 @@ These examples are illustrative. The actual API response contract must be docume
 
 ### Scheduled Cleanup and Automation
 
-Automatic deletion remains **disabled** until an administrator configures a retention period (`auto_delete_days > 0`) and/or a project-level schedule.
+Expiration and automatic deletion use one instant per record. For a key, `expires_at` is both the time it stops authenticating and the time it becomes eligible for hard deletion. For a project, `expires_at` and `auto_delete_at` are kept identical, so the project expires and becomes due at the same moment. `Never` keys and `never_expires` projects without an explicit deletion timestamp are never automatically deleted; an explicit due timestamp is honored as the deletion schedule.
 
-The existing server-side cleanup command:
+Automatic cleanup is **on by default**. The application starts one embedded, lock-protected scheduler worker after startup; no cron entry is required. Each sweep expires due records, hard-deletes them with their installations, device tokens, devices and project-owned records, prunes old sessions, and retries webhooks. Enforcement happens before the sweep too: an expired key or project cannot activate, authenticate or generate new keys while deletion is pending.
 
-```bash
-python -m backend.cli purge-expired-projects --limit 100
-```
-
-For universal automation, project purge, and expired-session pruning, run the standalone lock-protected scheduler:
+Operators can run the same scheduler explicitly, inspect it, or disable the embedded worker when a dedicated process is preferred:
 
 ```bash
 python -m backend.cli universal-scheduler-run --once
 python -m backend.cli universal-scheduler-run --once --dry-run
 python -m backend.cli universal-scheduler-status
+python -m backend.cli purge-expired-projects --limit 100
 ```
 
-The Flask web process never runs an infinite scheduler loop. One worker at a time is protected by a PostgreSQL advisory lock; every sweep is bounded, recorded in `nexora_automation_runs`, and audited. Cron, systemd, Windows Task Scheduler, retry policy, monitoring, and failure recovery are documented in [`docs/SCHEDULER.md`](docs/SCHEDULER.md).
+Set `SCHEDULER_EMBEDDED=0` in the web service if cron/systemd/Windows Task Scheduler owns the worker. One worker at a time is protected by a PostgreSQL advisory lock; every sweep is bounded, recorded in `nexora_automation_runs`, and audited. Deletion policy is stored in `system_settings` (`nexora.expired_key_retention_days`, default `0`). Cron, systemd, retry policy, monitoring, and failure recovery are documented in [`docs/SCHEDULER.md`](docs/SCHEDULER.md).
 
 #### Flowchart 18: Scheduler Run
 
@@ -1498,15 +1495,18 @@ The Flask web process never runs an infinite scheduler loop. One worker at a tim
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 flowchart TD
-    T["Cron · systemd · Windows Task Scheduler"] nx14e01@--> C["python -m backend.cli<br/>universal-scheduler-run --once"]
+    T["Embedded worker<br/>on by default"] nx14e01@--> C["SchedulerService<br/>same loop for CLI/cron"]
+    T2["Optional cron · systemd · Task Scheduler<br/>SCHEDULER_EMBEDDED=0"] -.-> C
     C nx14e02@--> L{"PostgreSQL advisory lock<br/>acquired?"}
     L -->|No| W["Lock held by another worker<br/>no concurrent sweep"]
     L nx14e03@-->|Yes| S["Bounded sweep"]
     S nx14e04@--> J1["Universal automation<br/>expiry · cleanup · retry"]
-    S nx14e05@--> J2["Project purge<br/>only when retention or a schedule is configured"]
+    S nx14e05@--> J2["Project purge<br/>due expires_at = auto_delete_at"]
+    S nx14e07@--> J4["Key purge<br/>due expires_at"]
     S nx14e06@--> J3["Expired-session pruning"]
     J1 nx14e07@--> R["Record run in nexora_automation_runs"]
     J2 --> R
+    J4 --> R
     J3 --> R
     R nx14e08@--> A["Audit event"]
     D["--dry-run: preview mode"] -.-> C
@@ -1689,13 +1689,14 @@ The PostgreSQL schema is managed through `db/migrations/` and applied **in order
 | `009_universal_key_platform.sql` | Adds universal project metadata, permission catalogue, 20 built-in key types, extended keys, devices, API usage, webhooks, notifications, automation, platform roles, audit request IDs, indexes, and RLS. |
 | `010_project_transfer_roles_scheduler.sql` | Adds custom platform roles, imported key/device metadata, scheduler ledger fields, and project-transfer support indexes. |
 | `011_project_roles_imported_replacements.sql` | Adds project-scoped roles, project role assignments, and imported-key replacement history. |
+| `012_timezone_setting.sql` | Seeds `nexora.display_timezone = 'UTC'` only when the setting is absent; existing values are never overwritten. |
 
 ```bash
 python -m backend.cli migrate
 ```
 
 > [!CAUTION]
-> **Production migration gate:** migrations **005–011** require an approved backup/PITR checkpoint and migration window. Do not apply them to production until that approval is complete. Migrations 009–011 were applied only to a dedicated local test database during this work.
+> **Production migration gate:** migrations **005–012** require an approved backup/PITR checkpoint and migration window. Do not apply them to production until that approval is complete. Migration 012 is additive and seeds only the missing UTC timezone default; it does not rewrite timestamps. Migrations 009–012 were applied only to dedicated local test and disposable browser-check databases during this work.
 
 **Migration principles:** maintain schema history · apply migrations in order · validate migrations · avoid destructive operations · preserve existing data where required · test migration compatibility.
 
@@ -2145,6 +2146,17 @@ All **42 files** shipped in `assets/` are listed here and linked.
 
 NexOra uses **environment-based configuration** across eight categories: application · database · authentication · security · API · logging · deployment · runtime.
 
+### Global Timezone
+
+The administrator-selected timezone is a **database-backed setting**, not an environment variable. It is stored in `system_settings` under `nexora.display_timezone` and defaults to `UTC`; migration `012_timezone_setting.sql` seeds that value only when the row is absent.
+
+- **Canonical storage:** PostgreSQL `timestamptz` values and API payloads remain UTC. Changing the setting never rewrites historical rows.
+- **Backend:** `backend/timezone.py` is the single source for IANA validation, UTC conversion, DST handling, and timezone metadata. Naive and date-only input is interpreted in the configured zone; explicit offsets are authoritative. Nonexistent spring-forward wall-clock times are rejected, and ambiguous fall-back times resolve to their first occurrence. Expiration checks compare aware UTC datetimes.
+- **Frontend:** `frontend/assets/js/timezone.js` formats through `Intl.DateTimeFormat` with an explicit `timeZone`. `ui.js` delegates its legacy `formatDate` helper to this service, so existing views inherit the configured zone. `datetime-local` values pass through `localInputToUtcIso()` before submission instead of the browser timezone.
+- **Endpoints:** `GET /api/v1/timezone` returns the effective zone and offset; `GET /api/v1/timezones` lists the IANA catalog; `/api/v1/health` reports timezone metadata. API timestamp serialization itself stays UTC.
+- **Settings UI:** Classic Platform Settings → Global timezone provides a searchable IANA picker, live local-time and UTC-offset preview, save, and Restore UTC.
+- **Dependency:** `tzdata` supplies the IANA database on Windows; Linux images normally provide it as a system package.
+
 ### Environment Variables
 
 Create a local `.env` from `.env.example`. **Never commit the resulting `.env`.**
@@ -2207,7 +2219,7 @@ Actual versions come from the repository's dependency configuration.
 ```text
 .
 ├── backend/                  # Flask application, services, and /api/v1 routes
-├── db/migrations/            # Forward-only PostgreSQL migrations (001–011)
+├── db/migrations/            # Forward-only PostgreSQL migrations (001–012)
 ├── frontend/                 # Login, dashboard, and /platform console
 ├── assets/                   # Visual assets
 │   ├── effect/               # Hero emblem and key-forge banner
@@ -2358,7 +2370,7 @@ Compatibility depends on the actual implementation. The intended targets are mod
 - [ ] Confirm RLS policies using a non-owner database role.
 - [ ] Confirm no service-role/database secret reaches browser or Reader client code.
 - [ ] Test key redemption, duplicate names, revocation, deactivation, deletion, and rollback paths.
-- [ ] Approve the backup/PITR migration gate before migrations 005–011.
+- [ ] Approve the backup/PITR migration gate before migrations 005–012.
 - [ ] Verify universal key generation, project expiry, hard revocation, RBAC, and webhook signing.
 - [ ] Configure scheduled cleanup only after retention requirements are approved.
 - [ ] Enable GitHub repository access and default-branch protections.
@@ -2569,7 +2581,7 @@ Development prioritizes, in order: **1.** Security · **2.** Reliability · **3.
 ## Known Boundaries
 
 - This repository covers the Admin system and backend API surface; the Android Reader App is separate.
-- Migrations 009–011 were applied only to the dedicated local test database, not production.
+- Migrations 009–012 were applied only to dedicated local test and disposable browser-check databases, not production.
 - External webhook delivery, cross-browser behavior, and production load were not tested. See [`docs/UNIVERSAL_PLATFORM_REPORT.md`](docs/UNIVERSAL_PLATFORM_REPORT.md) for the complete tested/not-tested boundary.
 - Test figures are reproduced from the previous documentation and were not re-run for this update.
 - The hero banner (`assets/effect/ultra-universal-keygen.svg`) and the `assets/branding/` SVGs animate continuously and do not yet include a `prefers-reduced-motion` rule; the OMEGA KEY kit and the effect emblem do.

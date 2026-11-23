@@ -91,6 +91,39 @@ def style(page, selector, prop):
     )
 
 
+def custom_select(page, select_id: str, value: str, timeout: int = 10_000) -> None:
+    """Select an option in a CustomSelect-enhanced dropdown.
+
+    If the custom trigger exists (native select was successfully initialized),
+    we open the panel via the trigger and click the matching option element
+    scoped strictly to this select's panel.
+    Otherwise we fall back to Playwright's native select_option() so the script
+    still works on plain <select> elements.
+    """
+    trigger_sel = f"#{select_id}-custom-trigger"
+    panel_sel = f"#{select_id}-custom-panel"
+    if page.locator(trigger_sel).count() > 0:
+        # Open the custom panel
+        page.click(trigger_sel)
+        page.wait_for_timeout(80)
+        # Click the matching option scoped specifically to this dropdown's panel
+        option_sel = f"{panel_sel} [data-value='{value}'].custom-select-option:not(.disabled)"
+        page.wait_for_selector(option_sel, state="visible", timeout=timeout)
+        page.click(option_sel)
+        page.wait_for_timeout(60)
+    else:
+        # Fallback: native <select>
+        page.select_option(f"#{select_id}", value)
+
+
+def select_value(page, select_id: str) -> str:
+    """Read the current value of a select (custom or native)."""
+    return page.evaluate(
+        "(id) => { const el = document.querySelector('#' + id); return el ? el.value : ''; }",
+        select_id,
+    )
+
+
 def main() -> int:
     settings = _settings()
     app = create_app(settings)
@@ -226,18 +259,34 @@ def main() -> int:
                 page.wait_for_timeout(80)
 
             # -- Selects: focus animation + hover transition -----------------
-            page.focus("#gen-expiration-select")
+            expiry_target = (
+                "#gen-expiration-select-custom-trigger"
+                if page.locator("#gen-expiration-select-custom-trigger").count() > 0
+                else "#gen-expiration-select"
+            )
+            page.focus(expiry_target)
             page.wait_for_timeout(60)
-            anim = style(page, "#gen-expiration-select", "animationName")
-            trans = style(page, "#gen-expiration-select", "transitionProperty")
-            check(anim and "control-focus" in anim, f"expiry select focus animation runs ({anim})")
-            check(trans and "border-color" in trans, "expiry select has smooth border transition")
+            anim = (
+                style(page, expiry_target, "animationName")
+                or style(page, "#gen-expiration-select", "animationName")
+            )
+            trans = (
+                style(page, expiry_target, "transitionProperty")
+                or style(page, "#gen-expiration-select", "transitionProperty")
+            )
+            check(anim and ("control-focus" in anim or "custom-select" in anim), f"expiry select focus animation runs ({anim})")
+            check(trans and ("border-color" in trans or "all" in trans), "expiry select has smooth border transition")
 
             # Project select is only visible in "existing" mode
-            before = style(page, "#gen-project-select", "borderColor")
-            page.hover("#gen-project-select")
+            proj_target = (
+                "#gen-project-select-custom-trigger"
+                if page.locator("#gen-project-select-custom-trigger").count() > 0
+                else "#gen-project-select"
+            )
+            before = style(page, proj_target, "borderColor")
+            page.hover(proj_target)
             page.wait_for_timeout(320)
-            after = style(page, "#gen-project-select", "borderColor")
+            after = style(page, proj_target, "borderColor")
             check(before != after, "project select border transitions on hover")
 
             # -- Scopes free input (reader type has no scope checklist) -------
@@ -266,7 +315,7 @@ def main() -> int:
             check(label_anim and "check-pop" in label_anim, f"selection box border animates when selected ({label_anim})")
 
             # -- Preset chips + expiry preview flash -------------------------
-            page.select_option("#gen-key-type-select", "reader")
+            custom_select(page, "gen-key-type-select", "reader")
             page.wait_for_timeout(250)
             chip_trans = style(page, "#gen-expiration-presets .preset-chip", "transitionProperty")
             check(chip_trans and "border-color" in chip_trans, "preset chip transitions on hover")
@@ -279,18 +328,18 @@ def main() -> int:
             check(preview_anim and "preview-flash" in preview_anim, f"expiry preview flashes on change ({preview_anim})")
             check(chip_anim and "preset-pop" in chip_anim, f"selected preset chip pops ({chip_anim})")
             check(
-                page.input_value("#gen-expiration-select") == "90_days",
+                select_value(page, "gen-expiration-select") == "90_days",
                 "preset chip drives the expiration select",
             )
 
             # -- Key-type switch replays the summary animation ---------------
-            page.select_option("#gen-key-type-select", "license")
+            custom_select(page, "gen-key-type-select", "license")
             page.wait_for_timeout(60)
             summary_anim = style(page, "#gen-key-type-summary", "animationName")
             check(summary_anim and "type-pick" in summary_anim, f"key-type summary replays pick animation ({summary_anim})")
 
             # -- Segmented mode switch ----------------------------------------
-            page.select_option("#gen-key-type-select", "reader")
+            custom_select(page, "gen-key-type-select", "reader")
             page.wait_for_timeout(120)
             page.click("#gen-mode-new")
             page.wait_for_timeout(60)
@@ -305,18 +354,19 @@ def main() -> int:
             error_text = page.inner_text("#generator-error")
             check("Select an existing project" in error_text, "empty project shows a clear validation message")
             check(
-                "is-invalid" in (page.get_attribute("#gen-project-select", "class") or ""),
+                "is-invalid" in (page.get_attribute("#gen-project-select", "class") or "")
+                or "is-invalid" in (page.get_attribute("#gen-project-select-wrapper", "class") or ""),
                 "invalid project select shows the error state",
             )
-            check(page.input_value("#gen-key-type-select") == "reader", "form data preserved after failed submit")
+            check(select_value(page, "gen-key-type-select") == "reader", "form data preserved after failed submit")
 
             # -- Real key creation (single, New Project mode) -----------------
             page.click("#gen-mode-new")
             page.wait_for_timeout(80)
             project_name = f"{PROJECT_PREFIX} Single {uuid.uuid4().hex[:8]}"
             page.fill("#gen-project-name-input", project_name)
-            page.select_option("#gen-key-type-select", "reader")
-            page.select_option("#gen-expiration-select", "30_days")
+            custom_select(page, "gen-key-type-select", "reader")
+            custom_select(page, "gen-expiration-select", "30_days")
             page.click("#generate-keys-btn")
             busy = page.evaluate("() => document.querySelector('#generate-keys-btn').disabled")
             check(busy, "Generate button disables while the request is processing")
@@ -368,7 +418,7 @@ def main() -> int:
             page.wait_for_timeout(80)
             dup_name = f"{PROJECT_PREFIX} Double {uuid.uuid4().hex[:8]}"
             page.fill("#gen-project-name-input", dup_name)
-            page.select_option("#gen-key-type-select", "reader")
+            custom_select(page, "gen-key-type-select", "reader")
             page.evaluate(
                 """
                 () => {

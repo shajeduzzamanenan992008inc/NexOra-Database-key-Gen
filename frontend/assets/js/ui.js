@@ -1,3 +1,5 @@
+import { formatDate as formatDateInTimezone } from "./timezone.js";
+
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
@@ -250,16 +252,9 @@ export function setButtonBusy(button, busy, busyLabel = "Working…") {
   }
 }
 
-export function formatDate(value, { time = true } = {}) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  const options = { year: "numeric", month: "short", day: "2-digit" };
-  if (time) {
-    options.hour = "2-digit";
-    options.minute = "2-digit";
-  }
-  return new Intl.DateTimeFormat(undefined, options).format(date);
+export function formatDate(value, options = {}) {
+  // All date display flows through the single configured-timezone service.
+  return formatDateInTimezone(value, options);
 }
 
 export function formatRelative(value) {
