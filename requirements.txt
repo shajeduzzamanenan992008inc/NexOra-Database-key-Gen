@@ -4,4 +4,4 @@ pg8000>=1.31,<2
 python-dotenv>=1.0,<2
 waitress>=3.0,<4
 # IANA timezone database for hosts without a system zoneinfo tree (Windows).
-tzdata>=2024.1
+tzdata>=2026.6
