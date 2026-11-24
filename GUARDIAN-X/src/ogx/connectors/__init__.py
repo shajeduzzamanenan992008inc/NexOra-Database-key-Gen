@@ -1,1 +1,0 @@
-"""Platform-neutral repository connectors."""

@@ -1,23 +1,221 @@
 {
   "schemaVersion": 1,
   "project": {
-    "name": "CHANGE-ME",
-    "description": "Describe the software product or repository.",
-    "type": "auto",
-    "criticality": "normal",
-    "languages": ["auto"],
-    "platforms": ["auto"],
-    "deploymentTargets": []
+    "name": "NexOra Database Key Generator",
+    "description": "OMEGA NEX-ORA admin control plane for projects, universal/license/reader keys, activation, devices, expiration cleanup, signed webhooks, roles, audit history, and versioned Reader APIs.",
+    "type": "web-application",
+    "criticality": "high",
+    "languages": [
+      "Python",
+      "JavaScript",
+      "HTML",
+      "CSS",
+      "SQL"
+    ],
+    "platforms": [
+      "Windows",
+      "Linux",
+      "macOS",
+      "modern desktop browsers",
+      "modern mobile browsers"
+    ],
+    "deploymentTargets": [
+      "Waitress WSGI",
+      "Supabase PostgreSQL"
+    ],
+    "repository": "https://github.com/shajeduzzamanenan992008inc/NexOra-Database-key-Gen",
+    "architecture": "Flask application factory; blueprinted /api/v1 and legacy admin routes; service layer; pg8000 PostgreSQL access; static HTML/vanilla-JS/CSS admin console; embedded advisory-lock scheduler.",
+    "framework": "Flask 3.1",
+    "pythonVersion": "3.11+ (CI uses 3.12)",
+    "database": "PostgreSQL 13+ / Supabase PostgreSQL",
+    "entrypoints": [
+      "wsgi.py",
+      "run.py",
+      "run_sms.py",
+      "wsgi_sms.py",
+      "backend/app.py"
+    ],
+    "versionSource": "backend/__init__.py"
   },
   "governance": {
-    "dataClassification": ["unclassified"],
+    "dataClassification": [
+      "authentication-secret",
+      "password-hash",
+      "admin-session",
+      "license-key",
+      "reader-activation-key",
+      "device-credential",
+      "device-identifier",
+      "webhook-signing-secret",
+      "audit-log",
+      "project-metadata",
+      "minimal-reader-telemetry"
+    ],
     "securityBaseline": "strict",
     "accessibilityRequired": true,
-    "changeApprovalRequiredForProduction": true
+    "changeApprovalRequiredForProduction": true,
+    "sensitiveData": [
+      "SECRET_KEY, KEY_PEPPER, SMS_KEY_PEPPER",
+      "ADMIN_PASSWORD_HASH and session tokens",
+      "DATABASE_URL, database CA material and Supabase service-role key",
+      "plaintext keys (one-time administrator reveal only)",
+      "device bearer credentials, heartbeat/device identifiers",
+      "webhook signing secrets and delivery payloads",
+      "audit records and authentication metadata"
+    ],
+    "protectedPaths": [
+      "backend/api/auth.py",
+      "backend/api/keys.py",
+      "backend/api/v1/keys.py",
+      "backend/security/",
+      "backend/services/auth_service.py",
+      "backend/services/license_service.py",
+      "backend/services/project_service.py",
+      "backend/services/project_transfer_service.py",
+      "backend/services/role_service.py",
+      "backend/services/scheduler_service.py",
+      "backend/services/universal_service.py",
+      "backend/services/webhook_security.py",
+      "backend/services/webhook_service.py",
+      "backend/services/audit.py",
+      "backend/app.py",
+      "backend/config.py",
+      "backend/db.py",
+      "backend/migrations.py",
+      "db/migrations/",
+      "wsgi.py",
+      "run.py",
+      "run_sms.py",
+      "wsgi_sms.py",
+      "frontend/assets/app.css",
+      "frontend/assets/js/api.js",
+      "frontend/assets/js/dashboard.js",
+      "frontend/assets/js/components/CustomSelect.js",
+      "frontend/assets/js/components/CustomDatePicker.js",
+      "frontend/dashboard.html",
+      "frontend/index.html",
+      ".github/workflows/",
+      ".github/project-profile.json",
+      "requirements.txt",
+      "requirements-dev.txt",
+      "pytest.ini",
+      ".env.example",
+      ".gitignore",
+      "README.md",
+      "GUARDIAN-X/init.py",
+      "GUARDIAN-X/shield.toml",
+      "GUARDIAN-X/core/ogx/"
+    ],
+    "approvalRules": [
+      "Explicit human approval is required before changing authentication, authorization, session, key, activation, device, webhook, audit, scheduler, migration, CI, or secret-handling behavior.",
+      "Explicit human approval is required before any commit, push, release, deployment, production migration, or production data operation.",
+      "Never weaken or delete an existing security test; fix the root cause or report the failure.",
+      "Do not change applied migrations; add a new forward-only migration."
+    ]
+  },
+  "scope": {
+    "repositoryRoot": ".",
+    "excludedProjects": [
+      {
+        "name": "Android Reader App",
+        "reason": "Separate repository. It consumes the Reader API; it must not be implemented inside this repository."
+      }
+    ],
+    "criticalComponents": [
+      "backend/api (REST and admin HTTP boundaries)",
+      "backend/security (authentication, sessions, key hashing, rate limiting)",
+      "backend/services/project_service.py (project and key lifecycle)",
+      "backend/services/scheduler_service.py (expiration, cleanup, webhook retries)",
+      "backend/services/universal_service.py (universal keys, roles, webhooks, automation)",
+      "db/migrations (schema and data invariants)",
+      "frontend (administrator console and UI contracts)",
+      ".github/workflows (read-only CI, security and dependency review)",
+      "GUARDIAN-X (project protection and analysis tool; governed self-change only)"
+    ],
+    "databaseRules": [
+      "Use only a disposable TEST_DATABASE_URL for automated tests.",
+      "Never access, migrate, reset, or delete production data without explicit authorization.",
+      "Preserve audit history and applied migration files.",
+      "Use parameterized SQL and explicit transactions for lifecycle operations."
+    ]
   },
   "ci": {
     "enabled": true,
-    "noChecksPolicy": "warn",
-    "checks": []
+    "noChecksPolicy": "fail",
+    "checks": [
+      {
+        "name": "Python compile",
+        "command": [
+          "python",
+          "-m",
+          "compileall",
+          "-q",
+          "backend",
+          "tests",
+          "scripts"
+        ],
+        "timeoutSeconds": 300
+      },
+      {
+        "name": "Timezone and frontend contract tests",
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/test_timezone.py",
+          "tests/test_ui_animation_contract.py",
+          "tests/test_classic_universal_ui_contract.py",
+          "-q",
+          "-ra"
+        ],
+        "timeoutSeconds": 900
+      },
+      {
+        "name": "Expiration automatic-cleanup tests",
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/test_expiration_automatic_cleanup.py",
+          "-q",
+          "-ra"
+        ],
+        "timeoutSeconds": 900
+      },
+      {
+        "name": "Guardian-X host integration tests",
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/test_guardian_x_integration.py",
+          "-q",
+          "-ra"
+        ],
+        "timeoutSeconds": 900
+      }
+    ]
+  },
+  "verification": {
+    "requiresPostgres": true,
+    "testDatabaseVariable": "TEST_DATABASE_URL",
+    "fullSuiteCommand": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-ra"
+    ],
+    "guardianStatusCommand": [
+      "python",
+      "scripts/guardian_x_status.py",
+      "--verify",
+      "--local"
+    ],
+    "documentation": [
+      "docs/GUARDIAN_X_INTEGRATION.md",
+      "docs/TEST_REPORT.md",
+      "TODO.md"
+    ]
   }
 }
