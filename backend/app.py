@@ -137,10 +137,11 @@ def create_app(settings: Settings | None = None) -> Flask:
         elapsed_ms = (
             time.perf_counter() - getattr(g, "request_started", time.perf_counter())
         ) * 1000
+        safe_method = _sanitize_log_value(request.method)
         safe_path = _sanitize_log_value(request.path)
         access_log.info(
             "%s %s %s %.1fms request_id=%s",
-            request.method,
+            safe_method,
             safe_path,
             response.status_code,
             elapsed_ms,
