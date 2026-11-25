@@ -61,9 +61,11 @@ def cmd_hash_password(args: argparse.Namespace) -> int:
     password = _read_password(args)
     problems = password_problems(password, args.email or "")
     if problems:
-        print("The password does not meet the administrator policy:", file=sys.stderr)
-        for problem in problems:
-            print(f"  - {problem}", file=sys.stderr)
+        print(
+            "The password does not meet the administrator policy. "
+            f"{len(problems)} requirement(s) were not satisfied.",
+            file=sys.stderr,
+        )
         return 1
     # The hash is not a credential by itself, but print nothing else so the
     # value can be redirected straight into a secret manager or .env file.
