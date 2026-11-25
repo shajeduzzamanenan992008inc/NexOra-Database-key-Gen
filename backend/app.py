@@ -43,6 +43,10 @@ CSP = (
 access_log = logging.getLogger("nexora.access")
 
 
+def _sanitize_log_value(value: object) -> str:
+    return str(value).replace("\r", "").replace("\n", "")
+
+
 def _configure_logging() -> None:
     if logging.getLogger().handlers:
         return
@@ -133,10 +137,11 @@ def create_app(settings: Settings | None = None) -> Flask:
         elapsed_ms = (
             time.perf_counter() - getattr(g, "request_started", time.perf_counter())
         ) * 1000
+        safe_path = _sanitize_log_value(request.path)
         access_log.info(
             "%s %s %s %.1fms request_id=%s",
             request.method,
-            request.path,
+            safe_path,
             response.status_code,
             elapsed_ms,
             getattr(g, "request_id", "-"),
