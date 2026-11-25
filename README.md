@@ -188,6 +188,7 @@ flowchart TB
     class E nxExternal;
     class nx01e01,nx01e02,nx01e03,nx01e04,nx01e05 nxAnimated;
     class nx01e06,nx01e07,nx01e08,nx01e09,nx01e10,nx01e11 nxAnimatedSoft;
+
 ```
 
 ### Vision and Mission
@@ -391,9 +392,9 @@ python -m pytest -v             # run the test suite
 
 Every flowchart, state diagram, sequence diagram, and ER diagram in this README is listed below. Each one lives next to the topic it explains.
 
-**OMEGA ULTRA visual system:** all diagrams share a dark-neon base theme. Cyan marks primary control paths, blue marks processing, violet marks decisions, emerald marks successful outcomes and data stores, crimson marks rejection/destructive paths, and amber marks warnings. The 18 flowcharts use animated dashed edges on their primary paths; animation is presentation-only and does not alter the workflow logic. Renderers that suppress SVG animation still show the complete static diagram and its colors.
+**OMEGA ULTRA visual system:** all diagrams share a dark-neon base theme. Cyan marks primary control paths, blue marks processing, violet marks decisions, emerald marks successful outcomes and data stores, crimson marks rejection/destructive paths, and amber marks warnings. All 22 flowchart blocks use animated dashed edges on their intended primary paths; animation is presentation-only and does not alter the workflow logic. Renderers that suppress SVG animation still show the complete static diagram and its colors.
 
-> **Renderer compatibility:** flowchart edge animation uses Mermaid edge IDs and the documented `classDef` animation properties. Mermaid renderer versions and host security policies can affect whether SVG animation is shown. On GitHub, check its active Mermaid version with an `info` Mermaid block as described in the [GitHub diagram documentation](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams). The optional moving-dot `step` syntax is Mermaid 12.3.0+; this README uses the class-based animation path instead to avoid requiring that newer feature. See the official [Mermaid flowchart styling and animation reference](https://mermaid.js.org/syntax/flowchart.html).
+> **Renderer compatibility:** flowchart edge animation requires Mermaid v11.5.0 or newer and uses Mermaid edge IDs with native `animate` metadata or the documented `classDef` animation properties. Mermaid renderer versions and host security policies can affect whether SVG animation is shown. On GitHub, check its active Mermaid version with an `info` Mermaid block as described in the [GitHub diagram documentation](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams). The optional moving-dot `step` syntax is Mermaid 12.3.0+; this README uses the class-based animation path instead to avoid requiring that newer feature. See the official [Mermaid flowchart styling and animation reference](https://mermaid.js.org/syntax/flowchart.html).
 
 | # | Diagram | Type | Section | Origin |
 |---|---|---|---|---|
@@ -403,15 +404,15 @@ Every flowchart, state diagram, sequence diagram, and ER diagram in this README 
 | **04** | [High-Level Architecture](#flowchart-04-high-level-architecture) | Flowchart | [Architecture](#architecture) | 12.md |
 | **05** | [Universal Navigation Map](#flowchart-05-universal-navigation-map) | Flowchart | [Architecture](#architecture) | 12.md · redrawn from the text tree |
 | **06** | [Project Configuration Model](#flowchart-06-project-configuration-model) | Flowchart | [Project Management](#project-management) | 12.md · redrawn from the text tree |
-| **07** | [Project Lifecycle](#flowchart-07-project-lifecycle) | State diagram | [Project Management](#project-management) | 12.md |
+| **07** | [Project Lifecycle](#flowchart-07-project-lifecycle) | Flowchart (lifecycle) | [Project Management](#project-management) | 12.md |
 | **08** | [Universal Key Architecture](#flowchart-08-universal-key-architecture) | Flowchart | [Key Management](#key-management) | 12.md |
 | **09** | [Key Generation Workflow](#flowchart-09-key-generation-workflow) | Flowchart | [Key Management](#key-management) | 12.md · redrawn from the text flow |
-| **10** | [Key Lifecycle](#flowchart-10-key-lifecycle) | State diagram | [Key Management](#key-management) | 12.md |
+| **10** | [Key Lifecycle](#flowchart-10-key-lifecycle) | Flowchart (lifecycle) | [Key Management](#key-management) | 12.md |
 | **11** | [Validation Workflow](#flowchart-11-validation-workflow) | Flowchart | [Validation and Authorization](#validation-and-authorization) | 12.md |
 | **12** | [Authorization Decision](#flowchart-12-authorization-decision) | Flowchart | [Validation and Authorization](#validation-and-authorization) | New · from the 12.md authorization conditions |
 | **13** | [Project and Reader-Key Lifecycle](#flowchart-13-project-and-reader-key-lifecycle) | Flowchart | [Reader Integration](#reader-integration) | New · from the README lifecycle steps |
-| **14** | [Reader Key States](#flowchart-14-reader-key-states) | State diagram | [Reader Integration](#reader-integration) | New · from the README lifecycle |
-| **15** | [Reader Activation Sequence](#flowchart-15-reader-activation-sequence) | Sequence diagram | [Reader Integration](#reader-integration) | New · from the README Reader API |
+| **14** | [Reader Key States](#flowchart-14-reader-key-states) | Flowchart (key states) | [Reader Integration](#reader-integration) | New · from the README lifecycle |
+| **15** | [Reader Activation Sequence](#flowchart-15-reader-activation-sequence) | Flowchart (request sequence) | [Reader Integration](#reader-integration) | New · from the README Reader API |
 | **16** | [Deletion Safety](#flowchart-16-deletion-safety) | Flowchart | [Reader Integration](#reader-integration) | New · from the README deletion rules |
 | **17** | [Management API Guard](#flowchart-17-management-api-guard) | Flowchart | [REST API Reference](#rest-api-reference) | New · from the README security model |
 | **18** | [Scheduler Run](#flowchart-18-scheduler-run) | Flowchart | [Automation and Data Operations](#automation-and-data-operations) | New · from the README scheduler |
@@ -474,7 +475,7 @@ flowchart TB
     R2 nx02e07@--> R3
     R3 nx02e08@--> R4
 
-    %% Moving dashed flow: native Mermaid edge animation (needs Mermaid v11.3 or newer).
+    %% Moving dashed flow: native Mermaid edge animation (requires Mermaid v11.5.0 or newer).
     %% Keep these lines after all edge definitions.
     nx02e01@{ animate: true }
     nx02e02@{ animate: true }
@@ -502,6 +503,7 @@ flowchart TB
     class A4 nxData;
     class A5 nxCore;
     class R1,R2,R3,R4 nxExternal;
+
 ```
 
 ### System Architecture
@@ -538,7 +540,7 @@ flowchart TD
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Animated neon connection lines
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     class A,B,G nxCore;
     class C,E,F nxProcess;
@@ -548,6 +550,7 @@ flowchart TD
 
     %% Every connection receives animation
     class nx03e01,nx03e02,nx03e03,nx03e04,nx03e05,nx03e06,nx03e07,nx03e08,nx03e09 nxAnimated;
+
 ```
 
 #### Flowchart 04: High-Level Architecture
@@ -593,7 +596,7 @@ flowchart TD
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Animated neon connection lines
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     class A,B,C,K,N nxCore;
     class D,E,F,G,H,I,J nxProcess;
@@ -602,6 +605,7 @@ flowchart TD
 
     %% All 16 edges animated
     class nx04e01,nx04e02,nx04e03,nx04e04,nx04e05,nx04e06,nx04e07,nx04e08,nx04e09,nx04e10,nx04e11,nx04e12,nx04e13,nx04e14,nx04e15,nx04e16 nxAnimated;
+
 
 ```
 
@@ -695,7 +699,7 @@ flowchart LR
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Continuous moving neon dashed lines
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     %% Node colors
     class NX nxCore;
@@ -705,6 +709,7 @@ flowchart LR
 
     %% Animate ALL 23 connections
     class nx05e01,nx05e02,nx05e03,nx05e04,nx05e05,nx05e06,nx05e07,nx05e08,nx05e09,nx05e10,nx05e11,nx05e12,nx05e13,nx05e14,nx05e15,nx05e16,nx05e17,nx05e18,nx05e19,nx05e20,nx05e21,nx05e22,nx05e23 nxAnimated;
+
 
 ```
 
@@ -766,7 +771,7 @@ flowchart LR
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Continuous moving neon animation
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     %% Node styling
     class PJ nxCore;
@@ -778,6 +783,7 @@ flowchart LR
 
     %% ALL 20 CONNECTIONS ANIMATED
     class nx06e01,nx06e02,nx06e03,nx06e04,nx06e05,nx06e06,nx06e07,nx06e08,nx06e09,nx06e10,nx06e11,nx06e12,nx06e13,nx06e14,nx06e15,nx06e16,nx06e17,nx06e18,nx06e19,nx06e20 nxAnimated;
+
 
 ```
 
@@ -822,7 +828,7 @@ flowchart TD
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Moving neon connection animation
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     %% Lifecycle node styling
     class S,FINISH nxCore;
@@ -833,6 +839,7 @@ flowchart TD
 
     %% ALL 11 TRANSITIONS ANIMATED
     class nx07e01,nx07e02,nx07e03,nx07e04,nx07e05,nx07e06,nx07e07,nx07e08,nx07e09,nx07e10,nx07e11 nxAnimated;
+
 
 ```
 
@@ -891,7 +898,7 @@ flowchart TD
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Continuous moving neon dashed animation
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     %% Node styling
     class A,B,I nxCore;
@@ -901,6 +908,7 @@ flowchart TD
 
     %% Animate every connection
     class nx08e01,nx08e02,nx08e03,nx08e04,nx08e05,nx08e06,nx08e07,nx08e08,nx08e09,nx08e10,nx08e11 nxAnimated;
+
 
 ```
 
@@ -1026,7 +1034,7 @@ flowchart TD
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Continuous moving neon animation
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     %% Node styling
     class G0,G4 nxCore;
@@ -1037,6 +1045,7 @@ flowchart TD
 
     %% ALL 9 CONNECTIONS ANIMATED
     class nx09e01,nx09e02,nx09e03,nx09e04,nx09e05,nx09e06,nx09e07,nx09e08,nx09e09 nxAnimated;
+
 
 ```
 
@@ -1083,7 +1092,7 @@ flowchart TD
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Continuous moving neon animation
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     %% Lifecycle node styling
     class S,FINISH nxCore;
@@ -1094,6 +1103,7 @@ flowchart TD
 
     %% ALL 8 CONNECTIONS ANIMATED
     class nx10e01,nx10e02,nx10e03,nx10e04,nx10e05,nx10e06,nx10e07,nx10e08 nxAnimated;
+
 
 ```
 
@@ -1157,11 +1167,12 @@ flowchart TD
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
     %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
     class A nxCore;
     class B,C,D,E,F,G,H,I nxProcess;
     class J nxSuccess;
     class nx09e01,nx09e02,nx09e03,nx09e04,nx09e05,nx09e06,nx09e07,nx09e08,nx09e09 nxAnimated;
+
 ```
 
 ### Authorization Engine
@@ -1207,12 +1218,13 @@ flowchart TD
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
     %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
     class R nxCore;
     class Q1,Q2,Q3,Q4,Q5,Q6,Q7,Q8,Q9 nxDecision;
     class OK nxSuccess;
     class NO nxDanger;
     class nx10e01,nx10e02,nx10e03,nx10e04,nx10e05,nx10e06,nx10e07,nx10e08,nx10e09,nx10e10 nxAnimated;
+
 ```
 
 ### Permission System
@@ -1295,7 +1307,7 @@ flowchart TD
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% Animated edge styling
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
 
     %% Node assignments
     class S1,S2,S3,T1 nxProcess;
@@ -1308,6 +1320,7 @@ flowchart TD
 
     %% Animated edges only
     class nx13e01,nx13e02,nx13e03,nx13e04,nx13e05,nx13e06,nx13e07,nx13e08,nx13e09,nx13e10,nx13e11,nx13e12,nx13e13 nxAnimated;
+
 ```
 
 #### Flowchart 14: Reader Key States
@@ -1338,7 +1351,7 @@ flowchart TD
     classDef nxData fill:#12352d,stroke:#63e6be,stroke-width:2px,color:#e1fff5;
 
     %% Moving neon animation
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 18s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 18s linear infinite;
 
     class START,FINISH nxCore;
     class GENERATED nxSuccess;
@@ -1347,6 +1360,7 @@ flowchart TD
 
     %% ALL 5 TRANSITIONS ANIMATED
     class nx14e01,nx14e02,nx14e03,nx14e04,nx14e05 nxAnimated;
+
 
 ```
 
@@ -1407,9 +1421,10 @@ flowchart TD
     class DB nxData;
 
     %% ANIMATED SIGNAL ROUTES
-    classDef nxAnimated stroke:#35dcff,stroke-width:3px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 2s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:3px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 2s linear infinite;
 
     class e15_01,e15_02,e15_03,e15_04,e15_05,e15_06,e15_07,e15_08,e15_09,e15_10,e15_11,e15_12,e15_13,e15_14 nxAnimated;
+
 ```
 
 ### Reader Integration Contract
@@ -1460,13 +1475,14 @@ flowchart TD
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
     %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
     class D1,A1,U1 nxCore;
     class D2,A2,U2 nxDecision;
     class DX,AX,UX nxDanger;
     class D3,A3,U3 nxProcess;
     class D4,D5,A4 nxData;
     class nx12e01,nx12e02,nx12e03,nx12e04,nx12e05,nx12e06,nx12e07,nx12e08,nx12e09 nxAnimated;
+
 ```
 
 <p align="center"><img src="./assets/omega-key-assets/svg/divider.svg" alt="" width="100%" /></p>
@@ -1625,13 +1641,14 @@ flowchart LR
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
     %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
     class R,H nxCore;
     class T,S,P nxProcess;
     class L,C nxDecision;
     class X nxDanger;
     class A,KA nxSuccess;
     class nx13e01,nx13e02,nx13e03,nx13e04,nx13e05,nx13e06,nx13e07,nx13e08 nxAnimated;
+
 ```
 
 <details>
@@ -1742,7 +1759,7 @@ flowchart TD
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
     %% BLUE MOVING-DASH ANIMATION
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
 
     %% NODE STYLING
     class T,T2 nxExternal;
@@ -1758,6 +1775,7 @@ flowchart TD
 
     %% NO BRANCH: STATIC LINE
     linkStyle 3 stroke:#7297c8,stroke-width:2px;
+
 ```
 
 ### Backup, Import and Replacement
@@ -1769,7 +1787,6 @@ Project backup, restore, conflict handling, and permanent deletion are documente
 *Export previews, validation-only imports, transactional restore, and one-time reveal of replacement credentials.*
 
 ```mermaid
-
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
 
 flowchart LR
@@ -1779,22 +1796,43 @@ flowchart LR
     end
 
     subgraph IMP["Import and restore"]
-        I1["Import preview<br/>validate the bundle without writing"] e19_02@--> I2{"Conflict policy<br/>chosen?"}
+        I1["Import preview<br/>validate the bundle without writing"] e19_02@--> I2{"Bundle valid and<br/>one import mode selected?"}
 
-        I2 e19_03@-->|Yes| I3["Transactional restore"]
+        %% Invalid or missing mode: static rejection path
+        I2 -->|No| X["Reject import<br/>no database writes"]
 
-        I3 e19_04@-->|"on failure"| I4["Rollback"]
+        I2 e19_03@-->|Yes| I3{"Conflict policy?"}
+
+        I3 e19_04@-->|Keep existing| I4["Merge idempotent key/device metadata<br/>skip duplicate webhooks"]
+
+        I3 e19_05@-->|Import as new| I5["Create separate project<br/>resolve conflicting name"]
+
+        I3 e19_06@-->|Replace existing| I6{"Exact existing project name<br/>and replace_confirmed=true?"}
+
+        %% Replacement without both confirmations: static rejection path
+        I6 -->|No| X
+
+        I6 e19_07@-->|Yes| I7["Replace selected project<br/>inside the import transaction"]
+
+        I4 e19_08@--> T["Apply selected import mode<br/>within one database transaction"]
+        I5 e19_09@--> T
+        I7 e19_10@--> T
+
+        T e19_11@--> V{"All database writes<br/>successful?"}
+
+        %% Any validation or SQL failure rolls back: static failure path
+        V -->|No| RB["Rollback the complete import transaction"]
+
+        V e19_12@-->|Yes| DONE["Commit restore<br/>record project.import audit event"]
     end
 
-    subgraph REP["Imported-key replacement"]
-        P1["Replacement preview<br/>eligibility and duplicate protection"] e19_05@--> P2["Generate independent<br/>replacement credentials"]
-
-        P2 e19_06@--> P3["One-time reveal"]
-
-        P2 e19_07@--> P4["History without plaintext"]
+    subgraph REP["Imported-key replacement after restore"]
+        P1["Replacement preview<br/>eligibility and duplicate protection"] e19_14@--> P2["Generate independent<br/>replacement credentials"]
+        P2 e19_15@--> P3["One-time reveal"]
+        P2 e19_16@--> P4["History without plaintext"]
     end
 
-    E2 e19_08@-.->|"bundle"| I1
+    E2 e19_13@-.->|"bundle"| I1
 
     %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
@@ -1807,21 +1845,20 @@ flowchart LR
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
 
-    %% BLUE MOVING DASH ANIMATION
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.8px,stroke-dasharray:9\,5,stroke-dashoffset:900,animation:dash 25s linear infinite;
+    %% Loop-safe blue moving-dash animation: 9 + 5 = 14; 896 is an exact multiple.
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.8px,stroke-dasharray:9\,5,stroke-dashoffset:896,animation:dash 25s linear infinite;
 
-    %% Node styling
     class E1,E2 nxData;
     class I1 nxExternal;
-    class I2 nxDecision;
-    class I3,P3 nxSuccess;
-    class I4 nxDanger;
+    class I2,I3,I6,V nxDecision;
+    class I4,I5,I7,T nxProcess;
+    class DONE,P3 nxSuccess;
+    class X,RB nxDanger;
     class P1,P2 nxWarning;
     class P4 nxInfo;
 
-    %% Apply blue animation to every connection
-    class e19_01,e19_02,e19_03,e19_04,e19_05,e19_06,e19_07,e19_08 nxAnimated;
-
+    %% Animate valid processing routes; rejection and rollback branches stay static.
+    class e19_01,e19_02,e19_03,e19_04,e19_05,e19_06,e19_07,e19_08,e19_09,e19_10,e19_11,e19_12,e19_13,e19_14,e19_15,e19_16 nxAnimated;
 ```
 
 ### Signed Webhooks
@@ -1834,21 +1871,37 @@ Webhooks are signed, and the platform applies SSRF defenses: unsupported schemes
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"darkMode":true,"background":"#07111f","primaryColor":"#102744","primaryTextColor":"#e8f7ff","primaryBorderColor":"#00d9ff","lineColor":"#7297c8","secondaryColor":"#261d45","secondaryTextColor":"#f3eaff","secondaryBorderColor":"#a78bfa","tertiaryColor":"#12332b","tertiaryTextColor":"#e0fff1","tertiaryBorderColor":"#41e6a2","fontFamily":"Inter, Segoe UI, sans-serif","edgeLabelBackground":"#101d34","mainBkg":"#102744","nodeBorder":"#00d9ff","clusterBkg":"#0b1930","clusterBorder":"#6f7dff","actorBkg":"#102744","actorBorder":"#00d9ff","actorTextColor":"#e8f7ff","signalColor":"#64d8ff","signalTextColor":"#e8f7ff","noteBkgColor":"#0e332b","noteBorderColor":"#41e6a2","noteTextColor":"#e0fff1"}}}%%
+
 flowchart TD
-    W1["Webhook target URL"] nx16e01@--> W2{"Supported scheme?"}
-    W2 -->|No| X["Reject"]
-    W2 nx16e02@-->|Yes| W3{"Host resolves?"}
+    W1["Webhook destination URL"] nx20e01@--> W2{"URL format valid?<br/>1–2048 chars; no whitespace,<br/>credentials or fragment"}
+
+    %% Invalid input: static rejection path
+    W2 -->|No| X["Reject unsafe URL or destination"]
+
+    W2 nx20e02@-->|Yes| W3{"Scheme allowed for environment?<br/>HTTPS in production;<br/>HTTP only outside production"}
+
     W3 -->|No| X
-    W3 nx16e03@-->|Yes| W4{"Private or link-local<br/>address?"}
-    W4 -->|Yes| X
-    W4 nx16e04@-->|No| W5["DNS pinning"]
-    W5 nx16e05@--> W6["Signed delivery<br/>TLS controls · timeouts · bounded responses"]
-    W6 nx16e06@--> W7{"Redirect response?"}
-    W7 -->|Yes| X2["Rejected: redirects are not followed"]
-    W7 nx16e07@-->|No| W8["Delivered"]
+
+    W3 nx20e03@-->|Yes| W4{"Hostname not blocked?<br/>No localhost, .local, internal<br/>or metadata hostnames"}
+
+    W4 -->|No| X
+
+    W4 nx20e04@-->|Yes| W5{"DNS resolves and every answer<br/>is globally routable?<br/>Normalize IPv4-mapped IPv6"}
+
+    W5 -->|No| X
+
+    W5 nx20e05@-->|Yes| W6["Pin the validated IP<br/>Do not resolve the hostname again"]
+
+    W6 nx20e06@--> W7["Signed delivery<br/>TLS certificate and hostname verification<br/>SNI and Host preserve original hostname<br/>Connect/read timeouts and bounded bodies"]
+
+    W7 nx20e07@--> W8{"Redirect response?"}
+
+    %% Redirects are rejected and never followed
+    W8 -->|Yes| X2["Reject redirect<br/>never fetch Location"]
+
+    W8 nx20e08@-->|No| W9["Record delivery outcome<br/>classified, bounded error details"]
 
     %% OMEGA NEX-ORA visual classes
-    %% OMEGA NEX-ORA / ULTRA NEON PALETTE
     classDef nxCore fill:#092b49,stroke:#00e5ff,stroke-width:2.5px,color:#e9fbff;
     classDef nxProcess fill:#102b45,stroke:#3dbcf5,stroke-width:1.5px,color:#e9f6ff;
     classDef nxDecision fill:#2b2050,stroke:#b38cff,stroke-width:2px,color:#f3edff;
@@ -1858,14 +1911,18 @@ flowchart TD
     classDef nxExternal fill:#2b2149,stroke:#c4a5ff,stroke-width:2px,color:#f3ecff;
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
-    %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+
+    %% Loop-safe blue moving-dash animation: 8 + 6 = 14; 1008 is an exact multiple.
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
+
     class W1 nxCore;
-    class W2,W3,W4,W7 nxDecision;
+    class W2,W3,W4,W5,W8 nxDecision;
     class X,X2 nxDanger;
-    class W5,W6 nxProcess;
-    class W8 nxSuccess;
-    class nx16e01,nx16e02,nx16e03,nx16e04,nx16e05,nx16e06,nx16e07 nxAnimated;
+    class W6,W7 nxProcess;
+    class W9 nxSuccess;
+
+    %% Animate the validated delivery path; unsafe/rejection paths remain static.
+    class nx20e01,nx20e02,nx20e03,nx20e04,nx20e05,nx20e06,nx20e07,nx20e08 nxAnimated;
 ```
 
 <p align="center"><img src="./assets/omega-key-assets/svg/divider.svg" alt="" width="100%" /></p>
@@ -1906,6 +1963,7 @@ erDiagram
         string status
         timestamp expires_at
     }
+
 ```
 
 ### Database Integrity
@@ -2046,12 +2104,13 @@ flowchart TD
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
     %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
     class C1 nxCore;
     class C2,C3,C4,C5,C6 nxProcess;
     class C7 nxSuccess;
     class C8,C9 nxDanger;
     class nx17e01,nx17e02,nx17e03,nx17e04,nx17e05,nx17e06,nx17e07,nx17e08 nxAnimated;
+
 ```
 
 ### Interface and Experience
@@ -2569,8 +2628,8 @@ flowchart TD
     C nx18e03@--> D["Run Tests"]
     D nx18e04@--> E["Configure Database"]
     E nx18e05@--> G{"Backup / PITR checkpoint and<br/>migration window approved?"}
-    G -->|No| H["Hold: do not apply migrations 005-011<br/>to production"]
-    G nx18e06@-->|Yes| F["Apply Migrations"]
+    G -->|No| H["Hold: do not apply gated migrations 005–013<br/>without approved backup/PITR and migration window"]
+    G nx18e06@-->|Yes| F["Apply approved migrations<br/>in documented order"]
     F nx18e07@--> I["Deploy Application"]
     I nx18e08@--> J["Health Check<br/>GET /api/v1/health"]
     J nx18e09@--> K["Production"]
@@ -2587,12 +2646,13 @@ flowchart TD
     classDef nxInfo fill:#17253e,stroke:#91a7c9,stroke-width:1.5px,color:#e5efff;
     classDef nxWarning fill:#453116,stroke:#fbbf24,stroke-width:2px,color:#fff6d6;
     %% Moving dashed route: Mermaid applies this class to explicitly identified edges.
-    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1000,animation:dash 24s linear infinite;
+    classDef nxAnimated stroke:#35dcff,stroke-width:2.5px,stroke-dasharray:8\,6,stroke-dashoffset:1008,animation:dash 24s linear infinite;
     class A,B,C,D,E,F,I,J nxProcess;
     class G nxDecision;
     class H nxDanger;
     class K nxSuccess;
     class nx18e01,nx18e02,nx18e03,nx18e04,nx18e05,nx18e06,nx18e07,nx18e08,nx18e09 nxAnimated;
+
 ```
 
 ### Production Configuration
