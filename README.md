@@ -31,7 +31,7 @@
   <img src="https://img.shields.io/badge/SECURITY-Argon2id%20%7C%20HMAC--SHA256%20%7C%20RLS-ff2bd6?style=for-the-badge&labelColor=0b1a4a" alt="Security: Argon2id, HMAC-SHA256, Row Level Security" />
   <img src="https://img.shields.io/badge/TESTS%20%28documented%29-282%20passed%20%2F%2026%20skipped-3fffa0?style=for-the-badge&labelColor=0b1a4a" alt="Documented tests: 282 passed, 26 skipped" />
   <img src="https://img.shields.io/badge/READER%20APP-Separate%20repository-ffb020?style=for-the-badge&labelColor=0b1a4a" alt="Reader App: separate repository" />
-  <img src="https://img.shields.io/badge/LICENSE-Proprietary-ff2bd6?style=for-the-badge&labelColor=0b1a4a" alt="License: Proprietary" />
+  <img src="https://img.shields.io/badge/LICENSE-PANC%20v1.1-3fffa0?style=for-the-badge&labelColor=0b1a4a" alt="License: Proprietary" />
 </p>
 
 <p>
@@ -2906,3 +2906,18 @@ NexOra represents an ongoing effort to build a universal and centralized key-man
 <p><a href="#readme-top">↑ Back to top</a></p>
 
 </div>
+
+## License
+
+This repository's licensable first-party materials are distributed under the **NexOra Public Attribution Non-Commercial License v1.1** (`LicenseRef-NexOra-PANC-1.1`). Non-commercial copying, modification, forking, building, running, self-hosting, deployment, and redistribution are permitted subject to attribution and the full license. Commercial use and AI/ML training require prior separate written permission.
+
+The license covers first-party materials in this repository, including integrated SMS, Reader, and Universal Key components, only to the extent the Licensor owns or is authorized to license them. Separate repositories, the separately distributed Android Reader App, third-party materials, user data, live credentials, and operational keys are excluded.
+
+- [Full License](LICENSE)
+- [Attribution](docs/licensing/ATTRIBUTION.md)
+- [Commercial licensing](docs/licensing/COMMERCIAL-LICENSE.md)
+- [License FAQ](docs/licensing/LICENSE-FAQ.md)
+- [Permission matrix](docs/licensing/PERMISSION-MATRIX.md)
+- [Third-party and data scope](docs/licensing/THIRD_PARTY-AND-USER-DATA-SCOPE.md)
+
+This is a source-available non-commercial license, not an OSI-approved Open Source license.
