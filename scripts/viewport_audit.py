@@ -24,7 +24,7 @@ import mimetypes
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from playwright.sync_api import sync_playwright
 
@@ -75,7 +75,15 @@ class FrontendHandler(BaseHTTPRequestHandler):
             target = FRONTEND / "dashboard.html"
         elif path.startswith("/assets/"):
             try:
-                candidate = (FRONTEND / path.lstrip("/")).resolve()
+                asset_rel = path[len("/assets/") :]
+                rel_posix = PurePosixPath(asset_rel)
+                if (
+                    rel_posix.is_absolute()
+                    or ".." in rel_posix.parts
+                    or any(part in ("", ".") for part in rel_posix.parts)
+                ):
+                    raise ValueError("invalid asset path")
+                candidate = (FRONTEND / "assets" / Path(*rel_posix.parts)).resolve()
                 candidate.relative_to(FRONTEND.resolve())
                 target = candidate
             except (ValueError, RuntimeError, OSError):
