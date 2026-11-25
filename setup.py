@@ -137,6 +137,8 @@ def _run_setup() -> None:
         name="nexora",
         version=_version(),
         description="NexOra - Database Key Generator and SMS Reader console.",
+        license="LicenseRef-NexOra-PANC-1.1",
+        license_files=["LICENSE"],
         long_description=_read("README.md"),
         long_description_content_type="text/markdown",
         python_requires=">=3.9",
