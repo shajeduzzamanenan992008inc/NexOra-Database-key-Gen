@@ -74,7 +74,12 @@ class FrontendHandler(BaseHTTPRequestHandler):
         elif path == "/dashboard":
             target = FRONTEND / "dashboard.html"
         elif path.startswith("/assets/"):
-            target = FRONTEND / path.lstrip("/")
+            try:
+                candidate = (FRONTEND / path.lstrip("/")).resolve()
+                candidate.relative_to(FRONTEND.resolve())
+                target = candidate
+            except (ValueError, RuntimeError, OSError):
+                target = None
         else:
             target = None
 
