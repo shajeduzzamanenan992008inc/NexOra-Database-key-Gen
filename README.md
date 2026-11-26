@@ -2525,9 +2525,8 @@ Actual versions come from the repository's dependency configuration.
 │   ├── effect/               # Hero emblem and key-forge banner
 │   ├── branding/             # NexOra brand set and standalone key-forge page
 │   └── omega-key-assets/     # OMEGA KEY kit: animation assets served read-only
-├── scripts/guardian_x_status.py # Optional GUARDIAN-X status and verification probe
 ├── docs/                     # Guides, audits, and delivery reports
-├── scripts/                   # Verification, browser audit, and utility scripts
+├── scripts/                   # Verification, browser audit, utility and optional GUARDIAN-X status probe
 ├── tests/                    # Automated backend and frontend tests
 ├── AGENTS.md                 # Authoritative coding-agent instructions
 ├── run.py                    # Local development launcher
@@ -2560,6 +2559,7 @@ That local mode fails closed until the runtime, link manifest, checkout path, an
 external registration all verify. Profile paths are review guidance, not an OS
 write firewall. See docs/GUARDIAN_X_INTEGRATION.md for the optional-install contract
 and its limitations.
+
 ### Test Results
 
 | Suite | Documented result |
