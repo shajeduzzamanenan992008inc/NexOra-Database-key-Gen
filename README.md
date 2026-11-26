@@ -2525,7 +2525,7 @@ Actual versions come from the repository's dependency configuration.
 │   ├── effect/               # Hero emblem and key-forge banner
 │   ├── branding/             # NexOra brand set and standalone key-forge page
 │   └── omega-key-assets/     # OMEGA KEY kit: animation assets served read-only
-├── GUARDIAN-X/               # In-repository Guardian-X analysis and protection tool
+├── scripts/guardian_x_status.py # Optional GUARDIAN-X status and verification probe
 ├── docs/                     # Guides, audits, and delivery reports
 ├── scripts/                   # Verification, browser audit, and utility scripts
 ├── tests/                    # Automated backend and frontend tests
@@ -2544,25 +2544,22 @@ python -m pytest -v
 
 Run the suite from the full source repository.
 
-### Guardian-X host integration
+### Optional GUARDIAN-X integration
 
-GUARDIAN-X is connected to this repository through its existing OGX mechanisms: a
-verified host profile (`.github/project-profile.json`), project-specific agent
-instructions, a SHA-256 link manifest, an external OGX project registration, and
-read-only Guardian reports. It does not execute project tests, builds, scripts, or
-production actions during a normal scan.
+The GUARDIAN-X engine is distributed separately and is not bundled in this public
+NexOra repository. A fresh clone needs no private engine files, local OGX registry,
+or link manifest. The status probe reports that distinction without pretending the
+engine is connected.
 
-```bash
-python scripts/guardian_x_status.py --verify --local
-python GUARDIAN-X/init.py link status
-python GUARDIAN-X/init.py audit
-```
+    python scripts/guardian_x_status.py
+    python scripts/guardian_x_status.py --verify
 
-The integration is advisory and review-oriented: protected paths in the profile
-are not an OS write firewall. See [`docs/GUARDIAN_X_INTEGRATION.md`](docs/GUARDIAN_X_INTEGRATION.md)
-for the exact connection status, protection limits, bug-fix workflow, automation,
-removal, and owner actions.
-
+Operators who separately provision a complete, trusted GUARDIAN-X runtime and
+link it to this checkout can run python scripts/guardian_x_status.py --verify --local.
+That local mode fails closed until the runtime, link manifest, checkout path, and
+external registration all verify. Profile paths are review guidance, not an OS
+write firewall. See docs/GUARDIAN_X_INTEGRATION.md for the optional-install contract
+and its limitations.
 ### Test Results
 
 | Suite | Documented result |
