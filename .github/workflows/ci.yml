@@ -84,6 +84,8 @@ jobs:
           ]
           for css in core_css:
               text = css.read_text(encoding="utf-8")
+              assert not text.lstrip().startswith("#!"), f"{css}: executable script found instead of CSS"
+              assert "def main(argv)" not in text, f"{css}: Python source found inside stylesheet"
               assert text.count("{") == text.count("}"), f"{css}: unbalanced braces"
               assert "@keyframes" in text, f"{css}: animation system missing"
               assert "prefers-reduced-motion" in text, f"{css}: reduced-motion guard missing"
