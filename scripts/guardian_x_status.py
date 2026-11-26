@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only status for the NexOra <-> GUARDIAN-X integration.
+"""Read-only status for NexOra's optional, separately provisioned GUARDIAN-X tool.
 
-This is a host-specific composition of the existing OGX project registry, link
-manifest, external Guardian reports, shield policy, and approval ledger. It never
-writes into the host repository and never exposes credential values.
+A public clone works without the private/local runtime. Portable verification checks
+repository-owned policy; --verify --local additionally requires a complete runtime,
+link manifest, matching checkout path, and external OGX registration.
 
 Usage:
     python scripts/guardian_x_status.py
@@ -132,6 +132,10 @@ def _link_state() -> dict[str, Any]:
         "healthy": False,
         "error": None,
     }
+    if SHIELD.is_symlink() or MANIFEST.is_symlink():
+        state["unsafe"].append(str(MANIFEST))
+        state["error"] = "refusing symlinked GUARDIAN-X link manifest path"
+        return state
     if not MANIFEST.is_file():
         return state
     data, error = _read_json(MANIFEST)
@@ -280,9 +284,11 @@ def _approval_state(state_home: Path) -> dict[str, Any]:
 
 
 def _policy_state() -> dict[str, Any]:
+    policy_path = SHIELD / "shield.toml"
+    safe_path = not SHIELD.is_symlink() and not policy_path.is_symlink()
     state: dict[str, Any] = {
-        "path": str(SHIELD / "shield.toml"),
-        "present": (SHIELD / "shield.toml").is_file(),
+        "path": str(policy_path),
+        "present": safe_path and policy_path.is_file(),
         "restricted": False,
         "default_mode": None,
         "allow_file_writes": None,
@@ -292,10 +298,13 @@ def _policy_state() -> dict[str, Any]:
         "automatic_commit_push_deploy": None,
         "error": None,
     }
+    if not safe_path:
+        state["error"] = "refusing symlinked GUARDIAN-X policy path"
+        return state
     if not state["present"]:
         return state
     try:
-        data = tomllib.loads((SHIELD / "shield.toml").read_text(encoding="utf-8"))
+        data = tomllib.loads(policy_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         state["error"] = f"{type(exc).__name__}: {exc}"
         return state
@@ -607,6 +616,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--local", action="store_true", help="With --verify, also require this checkout's path and registry entry")
     parser.add_argument("--compact", action="store_true", help="Print compact JSON")
     args = parser.parse_args(argv)
+    if args.local and not args.verify:
+        parser.error("--local requires --verify")
     try:
         status = run_checks(require_local=args.local) if args.verify else collect_status()
     except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
