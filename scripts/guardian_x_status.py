@@ -326,12 +326,117 @@ def _backend_version() -> str | None:
     return None
 
 
-def collect_status() -> dict[str, Any]:
-    state_home = _prepare_core()
-    import ogx
-    from ogx.cli.common import _external_report_dir
+def _runtime_installation() -> dict[str, Any]:
+    """Describe the optional drop-in runtime without executing or modifying it."""
+    state: dict[str, Any] = {
+        "status": "not_installed",
+        "available": False,
+        "path": str(SHIELD),
+        "missing": [],
+        "unsafe": [],
+        "error": None,
+    }
+    if SHIELD.is_symlink():
+        state.update({"status": "unsafe", "unsafe": [str(SHIELD)])
+        return state
+    if not SHIELD.exists():
+        return state
+    if not SHIELD.is_dir():
+        state.update({"status": "unsafe", "unsafe": [str(SHIELD)])
+        return state
 
-    reports = _report_summary(_external_report_dir(ROOT))
+    required = {
+        "entrypoint": SHIELD / "init.py",
+        "core_package": SHIELD / "core" / "ogx" / "__init__.py",
+        "policy": SHIELD / "shield.toml",
+    }
+    for name, path in required.items():
+        parents = [SHIELD]
+        current = SHIELD
+        for part in path.relative_to(SHIELD).parts[:-1]:
+            current = current / part
+            parents.append(current)
+        if any(parent.is_symlink() for parent in parents) or path.is_symlink():
+            state["unsafe"].append(name)
+        elif not path.is_file():
+            state["missing"].append(name)
+
+    if state["unsafe"]:
+        state["status"] = "unsafe"
+    elif state["missing"]:
+        state["status"] = "incomplete"
+    else:
+        state["status"] = "installed"
+        state["available"] = True
+    return state
+
+
+def _empty_registry_state() -> dict[str, Any]:
+    return {
+        "path": None,
+        "present": False,
+        "registered": False,
+        "name": None,
+        "path_matches": False,
+        "error": None,
+    }
+
+
+def _empty_report_summary(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "reason": reason,
+        "directory": None,
+        "last_scan": None,
+        "last_audit": None,
+        "last_maintenance": None,
+        "last_evolution": None,
+        "finding_counts": None,
+        "recommendations": None,
+        "quality_gates": None,
+    }
+
+
+def _empty_approval_state() -> dict[str, Any]:
+    return {"path": None, "available": False, "pending": 0, "statuses": {}}
+
+
+def collect_status() -> dict[str, Any]:
+    installation = _runtime_installation()
+    runtime_version: str | None = None
+    state_home: Path | None = None
+    registry = _empty_registry_state()
+    reports = _empty_report_summary(
+        "The optional GUARDIAN-X runtime is not installed in this checkout."
+    )
+    approvals = _empty_approval_state()
+    guardian_error = installation.get("error")
+
+    if installation["status"] == "installed":
+        try:
+            state_home = _prepare_core()
+            import ogx
+            from ogx.cli.common import _external_report_dir
+
+            runtime_version = ogx.__version__
+            reports = _report_summary(_external_report_dir(ROOT))
+            reports["available"] = True
+            reports["reason"] = None
+            registry = _registry_state(state_home)
+            approvals = _approval_state(state_home)
+        except Exception as exc:
+            # Never expose exception payloads from optional external runtime code.
+            installation["status"] = "error"
+            installation["available"] = False
+            guardian_error = f"{type(exc).__name__}: optional runtime initialization failed"
+            installation["error"] = guardian_error
+            state_home = None
+            reports = _empty_report_summary(guardian_error)
+            registry = _empty_registry_state()
+            approvals = _empty_approval_state()
+
+    policy = _policy_state()
+    available = installation["status"] == "installed"
     return {
         "schema": "nexora.guardian_x_status.v1",
         "generated_at": _now(),
@@ -342,31 +447,43 @@ def collect_status() -> dict[str, Any]:
             "profile": _profile_state(),
         },
         "guardian": {
-            "version": ogx.__version__,
-            "shield": str(SHIELD),
-            "state_home": str(state_home),
-            "policy": _policy_state(),
+            "status": installation["status"],
+            "available": available,
+            "path": str(SHIELD),
+            "missing": installation.get("missing", []),
+            "unsafe": installation.get("unsafe", []),
+            "error": guardian_error,
+            "version": runtime_version,
+            "state_home": str(state_home) if state_home else None,
+            "policy": policy,
         },
         "connection": {
-            "registry": _registry_state(state_home),
+            "registry": registry,
             "link": _link_state(),
         },
         "reports": reports,
-        "approvals": _approval_state(state_home),
+        "approvals": approvals,
         "capabilities": {
-            "analysis": "read-only static scan, inventory, architecture, dependency inventory",
+            "analysis": (
+                "optional local GUARDIAN-X analysis runtime available"
+                if available else "unavailable until the optional GUARDIAN-X runtime is installed"
+            ),
             "tests": reports.get("quality_gates", {}).get("tests") if reports.get("quality_gates") else "not_executed",
             "build": "not_executed_by_guardian",
             "runtime": "not_executed_by_guardian",
             "per_path_write_blocking": "not_implemented",
-            "link_integrity": "sha256_manifest",
-            "safe_removal": "unchanged_managed_files_only",
+            "link_integrity": "sha256_manifest" if available else "not_configured",
+            "safe_removal": "unchanged_managed_files_only" if available else "not_available",
         },
     }
 
 
 def _check(checks: list[dict[str, Any]], check_id: str, ok: bool, detail: str) -> None:
     checks.append({"id": check_id, "status": "pass" if ok else "fail", "detail": detail})
+
+
+def _not_required(checks: list[dict[str, Any]], check_id: str, detail: str) -> None:
+    checks.append({"id": check_id, "status": "not_required", "detail": detail})
 
 
 def run_checks(*, require_local: bool = False) -> dict[str, Any]:
@@ -376,6 +493,7 @@ def run_checks(*, require_local: bool = False) -> dict[str, Any]:
     link = status["connection"]["link"]
     registry = status["connection"]["registry"]
     policy = status["guardian"]["policy"]
+    guardian_status = status["guardian"]["status"]
 
     _check(checks, "profile-present", bool(profile["present"]), profile["path"])
     _check(checks, "profile-valid", bool(profile["valid"]), "schemaVersion 1")
@@ -421,24 +539,64 @@ def run_checks(*, require_local: bool = False) -> dict[str, Any]:
         all(term in agent_text for term in ("Android Reader App", "production", "GUARDIAN-X", "commit")),
         "scope, production, Guardian-X, and commit boundaries present",
     )
-    _check(checks, "shield-policy-restricted", bool(policy["restricted"]), json.dumps({
-        key: policy[key] for key in ("allow_file_writes", "allow_network", "allow_execution")
-    }))
-    _check(
-        checks,
-        "link-manifest",
-        bool(link["integrated"] and link["integrity_ok"] and link["managed_files"] > 0),
-        f"managed={link['managed_files']}, modified={len(link['modified'])}, "
-        f"missing={len(link['missing'])}, unsafe={len(link['unsafe'])}",
-    )
+
+    if guardian_status == "installed":
+        _check(checks, "guardian-runtime", True, status["guardian"]["path"])
+        _check(
+            checks,
+            "shield-policy-restricted",
+            bool(policy["restricted"]),
+            json.dumps({
+                key: policy[key] for key in ("allow_file_writes", "allow_network", "allow_execution")
+            }),
+        )
+        if link["present"]:
+            _check(
+                checks,
+                "link-manifest",
+                bool(link["valid"] and link["integrated"] and link["integrity_ok"] and link["managed_files"] > 0),
+                f"managed={link['managed_files']}, modified={len(link['modified'])}, "
+                f"missing={len(link['missing'])}, unsafe={len(link['unsafe'])}",
+            )
+        elif require_local:
+            _check(checks, "link-manifest", False, f"not configured: {link['manifest']}")
+        else:
+            _not_required(checks, "link-manifest", "Optional Guardian-X is installed but not linked to this checkout.")
+    elif guardian_status == "not_installed" and not require_local:
+        _not_required(
+            checks,
+            "guardian-runtime",
+            "GUARDIAN-X is an optional, separately provisioned tool and is not bundled in public NexOra clones.",
+        )
+        _not_required(checks, "shield-policy-restricted", "No local GUARDIAN-X shield policy is installed to inspect.")
+        _not_required(checks, "link-manifest", "No local GUARDIAN-X link manifest is configured.")
+    else:
+        _check(
+            checks,
+            "guardian-runtime",
+            False,
+            f"GUARDIAN-X installation status is {guardian_status!r}; expected a complete, safe installation.",
+        )
+        _not_required(checks, "shield-policy-restricted", "Runtime policy cannot be evaluated without a valid installation.")
+        _check(checks, "link-manifest", False, "A valid GUARDIAN-X runtime and link manifest are required.")
+
     if require_local:
         _check(checks, "local-host-path", bool(link["host_path_matches"]), link.get("manifest_root", ""))
-        _check(checks, "local-registration", bool(registry["registered"] and registry["path_matches"]),
-               f"registry={registry['path']}, name={registry['name']!r}")
+        _check(
+            checks,
+            "local-registration",
+            bool(registry["registered"] and registry["path_matches"]),
+            f"registry={registry.get('path')!r}, name={registry.get('name')!r}",
+        )
     status["verification"] = {
         "required_local": require_local,
         "checks": checks,
-        "passed": all(item["status"] == "pass" for item in checks),
+        "passed": not any(item["status"] == "fail" for item in checks),
+        "summary": {
+            "passed": sum(item["status"] == "pass" for item in checks),
+            "not_required": sum(item["status"] == "not_required" for item in checks),
+            "failed": sum(item["status"] == "fail" for item in checks),
+        },
     }
     return status
 
