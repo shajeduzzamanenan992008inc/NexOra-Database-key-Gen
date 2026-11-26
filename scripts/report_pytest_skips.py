@@ -35,7 +35,7 @@ def is_expected_optional_sms_skip(
         )
 
     expected_file = SMS_TEST_FILES.get(classname)
-    if expected_file is None or not name.startswith("test_sms_"):
+    if expected_file is None:
         return False
     if message != SMS_SUITE_REASON:
         return False
