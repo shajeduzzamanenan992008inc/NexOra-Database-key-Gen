@@ -141,39 +141,7 @@ jobs:
 
       - name: Report skipped tests
         if: always()
-        run: |
-          if [ -f pytest-results.xml ]; then
-            python - <<'PY'
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          path = Path("pytest-results.xml")
-          if not path.exists():
-              raise SystemExit(0)
-          root = ET.parse(path).getroot()
-          skipped = []
-          for case in root.iter("testcase"):
-              node = case.find("skipped")
-              if node is not None:
-                  skipped.append(
-                      (case.get('classname', ''), case.get('name', ''),
-                       node.get('message', 'skipped'))
-                  )
-          print(f"Skipped tests: {len(skipped)}")
-          for classname, name, message in skipped:
-              print(f"  - {classname}::{name} — {message}")
-          unexpected = [
-              (classname, name)
-              for classname, name, _ in skipped
-              if "test_sms_" not in classname
-          ]
-          if unexpected:
-              print("Unexpected skips (only the optional SMS Reader suite may skip):")
-              for classname, name in unexpected:
-                  print(f"  - {classname}::{name}")
-              raise SystemExit(1)
-          PY
-          fi
+        run: python scripts/report_pytest_skips.py pytest-results.xml
 
       - name: Upload test results
         if: always()

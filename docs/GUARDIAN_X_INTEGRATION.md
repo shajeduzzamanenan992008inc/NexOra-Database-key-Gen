@@ -1,195 +1,120 @@
-# GUARDIAN-X ↔ NexOra host integration
+# Optional GUARDIAN-X <-> NexOra integration
 
-**Status:** configured and locally verified against the repository checkout. This is
-not a production deployment and does not authorize production data access.
+**Public repository status:** the GUARDIAN-X engine is optional and separately
+distributed. It is not present in this public NexOra repository, and a clean clone
+must not claim a local engine, manifest, registry entry, report set, or approval
+ledger. This document describes the supported boundary; it is not evidence of a
+production deployment or a live private-engine connection.
 
-## 1. What is connected
+## 1. What ships in this repository
 
-| Component | Location | Purpose |
-|---|---|---|
-| Host project | repository root | NexOra Flask/PostgreSQL key-management platform |
-| Shield runtime | `GUARDIAN-X/` | OMEGA GUARDIAN X `0.8.0a1` analysis, scanner, Guardian, policy and linker |
-| Host profile | `.github/project-profile.json` | verified NexOra identity, criticality, protected paths, boundaries and CI checks |
-| Agent policy | `AGENTS.md` | authoritative repository instructions for coding agents |
-| Copilot policy | `.github/instructions/nexora-guardian.instructions.md` | path-aware repository guidance |
-| Link manifest | `GUARDIAN-X/link-manifest.json` | SHA-256 ownership of files created by OGX's opt-in linker |
-| External registry | OGX state outside the repository | persistent project shortcut used by `ogx ... --project nexora` |
-| Reports and approvals | OGX external state | scans, Guardian reports and the local approval ledger |
+| Component | Publicly present | Purpose |
+|---|---:|---|
+| NexOra host application | Yes | Flask/PostgreSQL key-management platform |
+| Host profile | Yes | Project identity, protected-path review guidance, CI and verification metadata |
+| Agent policy | Yes | Repository scope, security invariants and approval boundaries |
+| Status probe | Yes | Read-only detection and portable/local verification |
+| GUARDIAN-X engine | No | Separately provisioned local analysis and governance tool |
+| Link manifest and OGX state | No | Created only by an operator's local, opt-in integration |
 
-The integration deliberately keeps the engine and reports outside the host code
-path. The shield is the project control folder; it is not a second application.
+The public repository does not vendor, download, or automatically execute the
+separately distributed engine. Do not add private engine source, runtime .env,
+credentials, local reports, approvals, registry files, or a machine-specific
+link-manifest.json to a public commit.
 
-## 2. Connection commands
+## 2. Public-clone verification
 
-From the repository root:
+From a clean public checkout:
 
-```bash
-python GUARDIAN-X/init.py status
-python GUARDIAN-X/init.py link status
-python GUARDIAN-X/init.py ogx projects list
-python scripts/guardian_x_status.py
-python scripts/guardian_x_status.py --verify --local
-```
+    python scripts/guardian_x_status.py
+    python scripts/guardian_x_status.py --verify
 
-`ogx projects list` is expected to contain a registration whose path resolves to
-this checkout. The status command reports the registry entry, link manifest
-integrity, last scan/audit/maintenance reports, finding counts, pending approvals,
-shield policy, and capability limits. It is read-only and does not print secrets.
+Expected behavior when GUARDIAN-X/ is absent:
 
-The link manifest stores the absolute project root. If the repository is moved, the
-manifest hashes can remain intact while the host-path check reports a mismatch;
-re-run a fresh `link plan`/`apply` after reviewing the target path. Do not edit the
-manifest by hand.
+- Status JSON reports guardian.status = not_installed and available = false.
+- Guardian reports, approvals and registry are reported unavailable, not fabricated.
+- Portable verification passes the repository-owned profile and instruction checks.
+- Runtime-specific checks are marked not_required, not pass.
+- No private runtime code is imported, no external registry is fabricated, and no
+  local installation is claimed.
 
-## 3. Host profile
+A partial or unsafe GUARDIAN-X/ directory is not treated as absent: portable
+verification reports a failed runtime check. This prevents a broken or symlinked
+installation from being silently accepted.
 
-The host profile is `.github/project-profile.json`, not the generic template inside
-the shield distribution. It records:
+## 3. Optional local installation
 
-- Project name, purpose, Flask/PostgreSQL/static-console architecture, Python
-  version, entry points and deployment targets.
-- High criticality and a strict security baseline.
-- Authentication, session, key, activation, device, webhook, audit, scheduler,
-  migration, CI and secret-handling boundaries.
-- Protected paths and critical components for reviewer/agent attention.
-- A mandatory PostgreSQL test database (`TEST_DATABASE_URL`) and focused CI checks.
-- The Android Reader App as a separate repository, not host code.
+An operator may separately provision a complete, trusted GUARDIAN-X drop-in at
+GUARDIAN-X/. This repository does not provide or pin that private distribution.
+Before running the integration, verify the source and version through its own
+maintainer/release process. Do not download untrusted archives or copy private
+configuration into NexOra.
 
-The profile is metadata and review guidance. It is **not** an OS sandbox or a
-server-side write control. Nexus application authorization remains in the Flask
-services and database constraints.
+The status probe requires these local files to recognize a complete drop-in:
 
-## 4. Protection model: what is real
+- GUARDIAN-X/init.py
+- GUARDIAN-X/core/ogx/__init__.py
+- GUARDIAN-X/shield.toml
 
-Implemented and verifiable:
+Then run the local verification commands from the repository root:
 
-- OGX scanner, inventory, architecture, compatibility, SBOM, license inventory and
-  Guardian audit run read-only and write reports outside the host.
-- `shield.toml` is restrict-only: file writes, network and execution are disabled
-  by default.
-- Link-managed files are created create-exclusive and recorded with SHA-256 hashes.
-  `link status` detects modified, missing and unsafe entries.
-- `link remove` deletes only files whose current hash still matches; modified files
-  are preserved for review.
-- The scanner redacts secret values in findings/reports.
-- The profile and agent instructions require explicit approval for protected paths,
-  production actions, dependency changes, migrations, commits, pushes and deploys.
+    python scripts/guardian_x_status.py
+    python scripts/guardian_x_status.py --verify --local
+    python GUARDIAN-X/init.py link status
+    python GUARDIAN-X/init.py ogx projects list
+    python GUARDIAN-X/init.py audit
 
-Not implemented by this integration:
+The local --verify --local mode requires a valid SHA-256 link manifest, a
+manifest root matching this checkout, and an external OGX registration resolving
+to this same checkout. Missing runtime, manifest or registration is a failure in
+local mode. Portable CI does not bypass or weaken this local gate; it tests the
+public-clone contract separately.
 
-- Per-path write blocking or an OS-level policy engine. `protectedPaths` is review
-  and agent guidance, not an enforced firewall.
-- Running project tests, builds, package managers, containers, browsers or live
-  services during a normal scan.
-- A WAF, runtime exploitation test, complete SAST/DAST, or penetration test.
-- Automatic vulnerability fixes, automatic patches, or automatic merging/upgrades.
-- A claim that the project is secure, compliant or production-ready.
+The link manifest is checkout-path-specific. Moving a linked checkout requires a
+new reviewed link plan/apply. Never hand-edit the manifest to force a path match.
 
-Use code review, branch protection, CI, least-privilege credentials and the existing
-NexOra security tests for enforcement. Guardian findings are evidence to investigate,
-not proof of exploitability.
+## 4. Verification and integrity model
 
-## 5. Governed bug-fix workflow
+The public tests cover:
 
-1. Detect a finding or reproduce a failure with evidence.
-2. Identify the affected route/service/database/UI path and root cause.
-3. Run `ogx impact` for a static dependant estimate when useful.
-4. Build a remediation plan with security, data and regression risks.
-5. Obtain explicit approval for protected-path, production or destructive changes.
-6. Implement the smallest coherent fix; do not modify unrelated files.
-7. Add regression tests, run focused checks, then the relevant full suite.
-8. Run browser verification when the change is user-visible and an isolated test
-   database/browser environment is available.
-9. Review the diff for secrets and unrelated changes.
-10. Report exact tests, results, unresolved risks and rollback steps.
+- Required profile paths actually exist in this checkout.
+- Missing optional runtime is reported without an import attempt.
+- Incomplete runtime directories are detected as incomplete.
+- Symlinked runtime roots are rejected.
+- Manifest hash checks correctly distinguish intact from modified files using a
+  temporary fixture; the test never edits live managed files.
+- A missing manifest is not represented as an active connection.
+- Portable verification passes without private/local state.
+- Local verification fails closed when the runtime is absent.
+- CI skip reporting permits only the explicitly documented optional SMS Reader
+  skips and rejects unrelated or incorrectly labeled skips.
 
-Useful read-only commands:
+A status probe is not a security certification. The profile's protectedPaths are
+reviewer/agent guidance and do not implement OS-level write blocking.
+GUARDIAN-X analysis, when separately installed, remains advisory until an approved
+workflow explicitly authorizes a change.
 
-```bash
-python GUARDIAN-X/init.py audit
-python GUARDIAN-X/init.py ogx guardian maintain .
-python GUARDIAN-X/init.py ogx guardian repair-plan .
-python GUARDIAN-X/init.py ogx debug . --logs <sanitized-log>
-python GUARDIAN-X/init.py ogx test-plan .
-python GUARDIAN-X/init.py ogx impact . --file backend/services/project_service.py
-```
+## 5. Operational boundaries
 
-`guardian repair` is deliberately narrow: this alpha only applies allowlisted safe
-fixes such as `.env` ignore patterns, with an external before-image. It does not
-generate arbitrary source patches.
+- NexOra CI uses a disposable TEST_DATABASE_URL; this integration does not access
+  production data.
+- The status probe does not run project tests, build scripts, package managers,
+  containers, browser actions, live services, or production migrations.
+- No production database, migration, deployment, external webhook, scheduled task,
+  or real approval email is exercised by the public-clone verification.
+- No background service or scheduler is installed by this integration.
+- External OGX reports and approval records remain in operator-controlled local
+  state and are not portable repository artifacts.
+- The Android Reader App is a separate project; this integration does not alter it.
 
-## 6. Evolution workflow
+## 6. Removal and rollback
 
-```bash
-python GUARDIAN-X/init.py ogx guardian evolve .
-```
+This public NexOra repository does not include GUARDIAN-X files to remove. If an
+operator has separately installed and linked a local runtime, use that runtime's
+own documented link status and safe-removal workflow. Do not manually delete
+managed files, edit an ownership manifest, reset the repository, or discard
+unrelated local changes.
 
-The evolution output is a proposal, not a self-rewrite. Prioritize critical security
-and data integrity first, then production reliability, bugs, test gaps, dependency
-health, performance, UX and maintainability. Every proposal needs a stated problem,
-benefit, risk, impact analysis, test plan and rollback. Changes to Guardian-X core,
-approval behavior or protection policy require a separate reviewed proposal.
-
-## 7. Automation
-
-No scheduler or background service is installed by this integration. A read-only
-audit can be run by an operator-controlled cron/Task Scheduler entry, for example:
-
-```bash
-python scripts/guardian_x_status.py >/dev/null
-python GUARDIAN-X/init.py audit
-```
-
-Automation rules:
-
-- Default to read-only; reports go to external OGX state.
-- Use bounded intervals and avoid overlapping runs.
-- Never auto-apply patches, delete files, change migrations/secrets, commit, push,
-  publish or deploy.
-- Alert on failures rather than silently retrying destructive actions.
-
-The status command reports the latest available scan/audit/maintenance report but
-does not prove that a scheduled job is currently running. Check the external report
-timestamps and the operator scheduler separately.
-
-## 8. Agent integration
-
-`AGENTS.md` is authoritative for this repository. The Copilot instruction file
-supplements it. Generic `.github/agents` and `.github/instructions` files remain
-project policy and are not silently replaced by OGX. Existing root instruction
-files are preserved by the linker; only missing files are created.
-
-Guardian analysis and external AI output are untrusted inputs. They cannot override
-NexOra's security rules, database rules, repository boundary or approval gates.
-
-## 9. Removal and rollback
-
-Preview first:
-
-```bash
-python GUARDIAN-X/init.py link status
-python GUARDIAN-X/init.py link remove --confirm
-```
-
-Removal deletes only unchanged OGX-created link files and leaves modified files,
-`AGENTS.md`, the host profile, and the shield folder intact. Removing the external
-registration is a separate operator action in OGX state; do not edit repository
-source to hide a registration. The shield folder itself is not removed by `link
-remove`; remove it only under an approved repository decision.
-
-Rollback of host-specific metadata is a normal reviewed revert of the profile,
-agent instructions, status/verification script and documentation. Do not reset the
-repository or discard unrelated user changes.
-
-## 10. Known limitations and owner actions
-
-- The current status/verification command has no web dashboard; it is JSON/CLI.
-- The link manifest is checkout-path-specific by design.
-- External OGX registration and reports are not portable in a fresh clone.
-- The CLI email approval gate is not configured in this environment; future
-  mutating OGX operations should use the owner's configured approval mailbox.
-- `.github/workflows/config-validation.yml` references a missing
-  `_dev/tools/validate_config.rb` path and is not a passing CI control until the
-  owner repairs or removes it. This integration did not fabricate a replacement.
-- No production database, migration, deployment or external webhook was exercised.
-- Browser/UI verification for a future change remains the normal NexOra workflow.
+Repository-owned metadata changes are reverted through a normal reviewed Git
+revert. Local OGX registration, reports, approvals and environment configuration
+are separate operator state and are not removed by reverting this repository.
