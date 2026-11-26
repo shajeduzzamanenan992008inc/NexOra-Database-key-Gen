@@ -31,7 +31,7 @@
   <img src="https://img.shields.io/badge/SECURITY-Argon2id%20%7C%20HMAC--SHA256%20%7C%20RLS-ff2bd6?style=for-the-badge&labelColor=0b1a4a" alt="Security: Argon2id, HMAC-SHA256, Row Level Security" />
   <img src="https://img.shields.io/badge/TESTS%20%28documented%29-282%20passed%20%2F%2026%20skipped-3fffa0?style=for-the-badge&labelColor=0b1a4a" alt="Documented tests: 282 passed, 26 skipped" />
   <img src="https://img.shields.io/badge/READER%20APP-Separate%20repository-ffb020?style=for-the-badge&labelColor=0b1a4a" alt="Reader App: separate repository" />
-  <img src="https://img.shields.io/badge/LICENSE-PANC%20v1.1-3fffa0?style=for-the-badge&labelColor=0b1a4a" alt="License: Proprietary" />
+  <img src="https://img.shields.io/badge/LICENSE-PANC%20v1.1-3fffa0?style=for-the-badge&labelColor=0b1a4a" alt="License: Source-available non-commercial, PANC v1.1" />
 </p>
 
 <p>
@@ -143,7 +143,7 @@ The repository also contains the **OMEGA NEX-ORA Universal Key Platform** (`/pla
 | **Deployment** | Configurable |
 | **Repository** | `NexOra-Database-key-Gen` |
 | **Builder / rights holder** | Shajeduzzaman Enan |
-| **License** | OMEGA NEX-ORA Proprietary Software and Content License |
+| **License** | NexOra Public Attribution Non-Commercial License v1.1 (`LicenseRef-NexOra-PANC-1.1`) |
 
 ### The NexOra Concept
 
@@ -2917,17 +2917,17 @@ Development prioritizes, in order: **1.** Security · **2.** Reliability · **3.
 
 ### Third-Party Notices
 
-The Admin HTML and the standalone key-forge page (`assets/branding/NexOra Database Key Gen.html`) load the **Orbitron** and **Share Tech Mono** font families from Google Fonts. Those fonts and the Google Fonts service are third-party resources and are not covered by the project's proprietary license. The SVG assets only name fonts in fallback stacks and request nothing externally. The badges at the top of this README are rendered by shields.io. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). A complete dependency inventory was not included in the supplied ZIP.
+The Admin HTML and the standalone key-forge page (`assets/branding/NexOra Database Key Gen.html`) load the **Orbitron** and **Share Tech Mono** font families from Google Fonts. Those fonts and the Google Fonts service are third-party resources and are not covered by this repository's NexOra PANC v1.1 license; they remain subject to their own terms. The SVG assets only name fonts in fallback stacks and request nothing externally. The badges at the top of this README are rendered by shields.io. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). A complete dependency inventory was not included in the supplied ZIP.
 
 ### License
 
 **Copyright (c) 2026 Shajeduzzaman Enan. All rights reserved.**
 
-OMEGA NEX-ORA is distributed under the custom **OMEGA NEX-ORA Proprietary Software and Content License**, available in [`LICENSE`](LICENSE). It is **not an open-source license**. No general permission is granted to copy, modify, publish, redistribute, sublicense, integrate, host, or commercially use the original Project Materials without prior written authorization from the rights holder, except where applicable law provides a non-waivable right.
+This repository's licensable first-party materials are distributed under the **NexOra Public Attribution Non-Commercial License v1.1** (`LicenseRef-NexOra-PANC-1.1`), available in [`LICENSE`](LICENSE). It permits non-commercial copying, modification, forking, deployment, and redistribution subject to attribution and the complete license terms. Commercial use requires prior separate written permission. This is a source-available non-commercial license, not an OSI-approved Open Source license.
 
-The license applies only to original materials owned or controlled by the rights holder. Third-party fonts, libraries, services, and other externally owned materials remain subject to their own terms. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+The license applies only to first-party materials in this repository that the Licensor owns or is legally authorized to license. Separate repositories, the separately distributed Android Reader App, third-party materials, user data, live credentials, and operational keys are excluded. See [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-The project identity supplied for this documentation names **Shajeduzzaman Enan** as the builder. The copyright notice is prepared on that basis; before public or commercial release, the named person should confirm that they personally own or are authorized to license all original materials covered by this notice. This document is a practical license draft, not jurisdiction-specific legal advice.
+The Licensor grants only rights in materials that the Licensor owns or is legally authorized to license. Repository presence alone does not establish ownership of third-party components or contributions; see Sections 1, 3, and 9 of the [`LICENSE`](LICENSE).
 
 ### Acknowledgements
 
