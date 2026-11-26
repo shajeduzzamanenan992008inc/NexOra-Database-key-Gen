@@ -44,9 +44,9 @@ Explicit owner approval is required before changing:
 - `db/migrations/`, `backend/migrations.py`, `backend/db.py`, or `backend/config.py`.
 - `.github/workflows/`, `.github/project-profile.json`, dependency manifests,
   `pytest.ini`, `.env.example`, or this file.
-- `GUARDIAN-X/init.py`, `GUARDIAN-X/shield.toml`, or `GUARDIAN-X/core/ogx/`.
-  Guardian-X self-improvement must be a reviewed proposal with tests; no autonomous
-  security-policy or approval bypass.
+- `scripts/guardian_x_status.py`, `scripts/report_pytest_skips.py`,
+  `docs/GUARDIAN_X_INTEGRATION.md`, or the CI/profile configuration. These files
+  define public verification and CI policy; changes require regression tests.
 
 Never commit, push, release, deploy, rotate credentials, run a production migration,
 or delete production data without explicit authorization.
@@ -83,29 +83,34 @@ or delete production data without explicit authorization.
 7. Review the diff for secrets, unrelated changes, and security regressions.
 8. Do not commit, push, deploy, or alter production data unless explicitly authorized.
 
-## Guardian-X connection
+## Optional GUARDIAN-X integration
 
-Guardian-X is the in-repository protection and analysis tool at `GUARDIAN-X/`.
-Its analysis is advisory until an approved task authorizes implementation.
+The GUARDIAN-X engine is distributed separately and is **not bundled in this public
+NexOra repository**. A clean public clone must work without private engine files,
+external registry state, or a link manifest. Do not copy private engine sources,
+credentials, local reports, or host-specific manifests into this repository.
 
-Read-only status and audit commands:
+Portable, read-only status and CI verification:
 
-```bash
-python scripts/guardian_x_status.py
-python scripts/guardian_x_status.py --verify --local
-python GUARDIAN-X/init.py link status
-python GUARDIAN-X/init.py detect .
-python GUARDIAN-X/init.py audit
-python GUARDIAN-X/init.py ogx guardian maintain .
-python GUARDIAN-X/init.py ogx impact . --file <changed-file>
-```
+    python scripts/guardian_x_status.py
+    python scripts/guardian_x_status.py --verify
 
-Guardian-X does not execute project tests, build scripts, or arbitrary code during
-normal scans, and its current alpha does not enforce per-path write blocking.
-Link-managed files have SHA-256 ownership and safe removal; unrelated host files
-are preserved. See `docs/GUARDIAN_X_INTEGRATION.md` for status, limitations,
-automation, and removal.
+When an operator has separately provisioned a complete, trusted GUARDIAN-X drop-in
+under GUARDIAN-X/, linked this checkout, and registered it in local OGX state,
+the operator may additionally run:
 
+    python scripts/guardian_x_status.py --verify --local
+    python GUARDIAN-X/init.py link status
+    python GUARDIAN-X/init.py detect .
+    python GUARDIAN-X/init.py audit
+    python GUARDIAN-X/init.py ogx guardian maintain .
+    python GUARDIAN-X/init.py ogx impact . --file <changed-file>
+
+The local mode fails closed when the runtime, link manifest, matching checkout path,
+or external registration is absent. Public CI tests the portable contract and hash
+integrity logic with temporary fixtures; it does not claim the private/local runtime
+is installed. Guardian findings remain advisory; profile paths are not an OS
+write firewall. See docs/GUARDIAN_X_INTEGRATION.md for exact boundaries.
 ## Reporting
 
 Report in the user's language. For this owner's integration reports, Bangla is
