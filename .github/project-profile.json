@@ -102,9 +102,9 @@
       ".env.example",
       ".gitignore",
       "README.md",
-      "GUARDIAN-X/init.py",
-      "GUARDIAN-X/shield.toml",
-      "GUARDIAN-X/core/ogx/"
+      "scripts/guardian_x_status.py",
+      "scripts/report_pytest_skips.py",
+      "docs/GUARDIAN_X_INTEGRATION.md"
     ],
     "approvalRules": [
       "Explicit human approval is required before changing authentication, authorization, session, key, activation, device, webhook, audit, scheduler, migration, CI, or secret-handling behavior.",
@@ -209,8 +209,7 @@
     "guardianStatusCommand": [
       "python",
       "scripts/guardian_x_status.py",
-      "--verify",
-      "--local"
+      "--verify"
     ],
     "documentation": [
       "docs/GUARDIAN_X_INTEGRATION.md",
