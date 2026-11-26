@@ -40,4 +40,4 @@ jobs:
           persist-credentials: false
 
       - name: Validate GitHub configuration
-        run: ruby _dev/tools/validate_config.rb
+        run: ruby .github/scripts/validate_github_config.rb
