@@ -30,7 +30,7 @@ def is_expected_optional_sms_skip(
     if classname == "" and name == "tests.test_sms_auth":
         return (
             message == "collection skipped"
-            and re.search(r"(?:^|/)tests/test_sms_auth\.py,\s*\d+,", normalized) is not None
+            and re.search(r"(?:^|/)tests/test_sms_auth\.py['"]?,\s*\d+,", normalized) is not None
             and SMS_AUTH_REASON in normalized
         )
 
