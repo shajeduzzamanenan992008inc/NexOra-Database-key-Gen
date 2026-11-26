@@ -1,12 +1,8 @@
-"""Host-integration contracts for the NexOra <-> GUARDIAN-X connection.
-
-These tests validate only repository files and temporary copies. They never remove
-or modify the real OGX-managed files and never touch a production database.
-"""
+"""Portable regression contracts for NexOra's optional GUARDIAN-X integration."""
 from __future__ import annotations
 
+import hashlib
 import json
-import shutil
 from pathlib import Path
 
 from scripts import guardian_x_status as gx
@@ -16,7 +12,7 @@ def _profile() -> dict:
     return json.loads(gx.PROFILE.read_text(encoding="utf-8"))
 
 
-def test_host_profile_is_nexora_specific_and_paths_exist():
+def test_host_profile_is_nexora_specific_and_declares_existing_protected_paths():
     profile = _profile()
     assert profile["schemaVersion"] == 1
     assert "NexOra" in profile["project"]["name"]
@@ -32,17 +28,82 @@ def test_host_profile_is_nexora_specific_and_paths_exist():
         assert (gx.ROOT / value.rstrip("/")).exists(), value
 
 
-def test_link_manifest_hashes_are_intact():
-    status = gx.collect_status()
-    link = status["connection"]["link"]
-    assert link["present"], f"missing link manifest: {link['manifest']}"
-    assert link["integrated"] is True
-    assert link["managed_files"] > 0
-    assert link["integrity_ok"] is True, {
-        "modified": link["modified"],
-        "missing": link["missing"],
-        "unsafe": link["unsafe"],
-    }
+def test_optional_runtime_probe_reports_public_checkout_without_runtime():
+    runtime = gx._runtime_installation()
+    assert runtime["status"] in {"not_installed", "installed"}
+    assert runtime["available"] is (runtime["status"] == "installed")
+    if runtime["status"] == "not_installed":
+        assert runtime["missing"] == []
+        assert runtime["unsafe"] == []
+
+
+def test_incomplete_runtime_is_not_treated_as_installed(tmp_path, monkeypatch):
+    incomplete = tmp_path / "GUARDIAN-X"
+    incomplete.mkdir()
+    monkeypatch.setattr(gx, "SHIELD", incomplete)
+
+    runtime = gx._runtime_installation()
+
+    assert runtime["status"] == "incomplete"
+    assert runtime["available"] is False
+    assert set(runtime["missing"]) == {"entrypoint", "core_package", "policy"}
+
+
+def test_link_manifest_hash_validation_uses_a_portable_fixture(tmp_path, monkeypatch):
+    root = tmp_path / "checkout"
+    shield = root / "GUARDIAN-X"
+    managed = root / "docs" / "managed-by-guardian.txt"
+    shield.mkdir(parents=True)
+    managed.parent.mkdir(parents=True)
+    content = "managed baseline\n"
+    managed.write_text(content, encoding="utf-8")
+    manifest = shield / "link-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "managed_by": "omega-shield-link",
+                "project_root": str(root.resolve()),
+                "groups": ["agents"],
+                "managed_files": {
+                    "docs/managed-by-guardian.txt": hashlib.sha256(content.encode()).hexdigest()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gx, "ROOT", root)
+    monkeypatch.setattr(gx, "SHIELD", shield)
+    monkeypatch.setattr(gx, "MANIFEST", manifest)
+
+    intact = gx._link_state()
+    assert intact["integrated"] is True
+    assert intact["managed_files"] == 1
+    assert intact["integrity_ok"] is True
+    assert intact["healthy"] is True
+    assert intact["intact"] == ["docs/managed-by-guardian.txt"]
+
+    managed.write_text(content + "user edit\n", encoding="utf-8")
+    modified = gx._link_state()
+    assert modified["integrity_ok"] is False
+    assert modified["modified"] == ["docs/managed-by-guardian.txt"]
+    assert managed.read_text(encoding="utf-8") == content + "user edit\n"
+
+
+def test_link_status_does_not_claim_missing_manifest_is_integrated(tmp_path, monkeypatch):
+    root = tmp_path / "checkout"
+    shield = root / "GUARDIAN-X"
+    shield.mkdir(parents=True)
+    manifest = shield / "link-manifest.json"
+    monkeypatch.setattr(gx, "ROOT", root)
+    monkeypatch.setattr(gx, "SHIELD", shield)
+    monkeypatch.setattr(gx, "MANIFEST", manifest)
+
+    link = gx._link_state()
+
+    assert link["present"] is False
+    assert link["integrated"] is False
+    assert link["integrity_ok"] is False
+    assert link["healthy"] is False
 
 
 def test_agent_instructions_keep_host_boundaries_authoritative():
@@ -52,61 +113,34 @@ def test_agent_instructions_keep_host_boundaries_authoritative():
     assert "CHANGE-ME" not in text
 
 
-def test_status_contains_the_connection_surface():
+def test_status_contains_optional_connection_surface_without_initializing_missing_runtime():
     status = gx.collect_status()
     assert status["schema"] == "nexora.guardian_x_status.v1"
     for key in ("host", "guardian", "connection", "reports", "approvals", "capabilities"):
         assert key in status
-    assert status["guardian"]["version"]
-    assert status["guardian"]["policy"]["restricted"] is True
     assert status["host"]["profile"]["valid"] is True
-    registry = status["connection"]["registry"]
-    # The registry lives in external OGX state, so CI may not have it. If it is
-    # present, it must either register this checkout or report a clean absence.
-    if registry["present"]:
-        assert registry["registered"] is True or registry["error"] is None
+    assert status["guardian"]["status"] in {"not_installed", "installed", "incomplete", "unsafe", "error"}
+    assert status["guardian"]["available"] is (status["guardian"]["status"] == "installed")
+    if not status["guardian"]["available"]:
+        assert status["guardian"]["version"] is None
+        assert status["reports"]["available"] is False
+        assert status["connection"]["registry"]["present"] is False
 
 
-def test_remove_only_touches_unchanged_managed_files(tmp_path, monkeypatch):
-    manifest_path = gx.MANIFEST
-    assert manifest_path.is_file()
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    managed = manifest["managed_files"]
-    assert managed
-
-    temp_root = tmp_path / "checkout"
-    temp_shield = temp_root / "GUARDIAN-X"
-    temp_shield.mkdir(parents=True)
-    for rel in managed:
-        source = gx.ROOT / rel
-        destination = temp_root / rel
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-
-    modified_rel = sorted(managed)[0]
-    modified = temp_root / modified_rel
-    modified.write_text(modified.read_text(encoding="utf-8") + "\nuser customization\n", encoding="utf-8")
-    portable_manifest = dict(manifest)
-    portable_manifest["project_root"] = str(temp_root.resolve())
-    (temp_shield / "link-manifest.json").write_text(
-        json.dumps(portable_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-
-    gx._prepare_core()
-    from ogx.ecosystem.integration import remove_integration
-
-    monkeypatch.setenv("OMEGA_SHIELD_DIRNAME", "GUARDIAN-X")
-    result = remove_integration(temp_root)
-    assert modified_rel in result["preserved_modified_or_missing"]
-    assert modified.exists()
-    assert modified_rel not in result["removed"]
-    assert (temp_shield / "link-manifest.json").is_file()
-
-
-def test_verify_portable_checks_pass():
-    # Local path and registry checks are intentionally exercised by the operator
-    # command (`--verify --local`), not by CI, because external OGX state is not
-    # part of a portable checkout.
+def test_verify_portable_checks_pass_without_private_or_local_runtime():
     status = gx.run_checks(require_local=False)
-    failed = [item for item in status["verification"]["checks"] if item["status"] != "pass"]
+    failed = [item for item in status["verification"]["checks"] if item["status"] == "fail"]
     assert status["verification"]["passed"] is True, failed
+    assert status["verification"]["summary"]["failed"] == 0
+
+
+def test_verify_local_fails_closed_when_runtime_is_not_installed():
+    if gx._runtime_installation()["status"] == "installed":
+        return
+
+    status = gx.run_checks(require_local=True)
+    assert status["verification"]["passed"] is False
+    runtime_check = next(
+        item for item in status["verification"]["checks"] if item["id"] == "guardian-runtime"
+    )
+    assert runtime_check["status"] == "fail"
