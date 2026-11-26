@@ -142,6 +142,7 @@ jobs:
       - name: Report skipped tests
         if: always()
         run: python scripts/report_pytest_skips.py pytest-results.xml
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
