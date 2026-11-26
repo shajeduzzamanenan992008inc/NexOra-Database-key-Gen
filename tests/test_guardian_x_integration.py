@@ -37,6 +37,34 @@ def test_optional_runtime_probe_reports_public_checkout_without_runtime():
         assert runtime["unsafe"] == []
 
 
+
+
+def test_symlinked_runtime_root_is_rejected(tmp_path, monkeypatch):
+    class SymlinkRoot:
+        def is_symlink(self):
+            return True
+
+        def __str__(self):
+            return str(tmp_path / "outside-runtime")
+
+    monkeypatch.setattr(gx, "SHIELD", SymlinkRoot())
+    runtime = gx._runtime_installation()
+    assert runtime["status"] == "unsafe"
+    assert runtime["available"] is False
+    assert runtime["unsafe"]
+
+
+def test_status_does_not_import_runtime_when_it_is_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(gx, "SHIELD", tmp_path / "not-installed")
+    monkeypatch.setattr(
+        gx,
+        "_prepare_core",
+        lambda: (_ for _ in ()).throw(AssertionError("optional runtime must not be imported")),
+    )
+    status = gx.collect_status()
+    assert status["guardian"]["status"] == "not_installed"
+    assert status["guardian"]["available"] is False
+
 def test_incomplete_runtime_is_not_treated_as_installed(tmp_path, monkeypatch):
     incomplete = tmp_path / "GUARDIAN-X"
     incomplete.mkdir()
