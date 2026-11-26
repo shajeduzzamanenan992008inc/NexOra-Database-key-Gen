@@ -337,12 +337,12 @@ def _runtime_installation() -> dict[str, Any]:
         "error": None,
     }
     if SHIELD.is_symlink():
-        state.update({"status": "unsafe", "unsafe": [str(SHIELD)])
+        state.update({"status": "unsafe", "unsafe": [str(SHIELD)]})
         return state
     if not SHIELD.exists():
         return state
     if not SHIELD.is_dir():
-        state.update({"status": "unsafe", "unsafe": [str(SHIELD)])
+        state.update({"status": "unsafe", "unsafe": [str(SHIELD)]})
         return state
 
     required = {
