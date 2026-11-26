@@ -111,6 +111,7 @@ or external registration is absent. Public CI tests the portable contract and ha
 integrity logic with temporary fixtures; it does not claim the private/local runtime
 is installed. Guardian findings remain advisory; profile paths are not an OS
 write firewall. See docs/GUARDIAN_X_INTEGRATION.md for exact boundaries.
+
 ## Reporting
 
 Report in the user's language. For this owner's integration reports, Bangla is
